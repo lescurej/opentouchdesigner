@@ -1,4 +1,6 @@
-use egui::{Color32, CornerRadius, Pos2, RichText, Stroke, Vec2};
+use egui::{
+    Align2, Color32, CornerRadius, FontId, Pos2, RichText, Sense, Stroke, StrokeKind, Vec2,
+};
 use otd_core::Family;
 
 use crate::app::OtdApp;
@@ -13,6 +15,8 @@ const TABS: [Family; 6] = [
 ];
 
 const COLS: usize = 6;
+const CELL_W: f32 = 110.0;
+const CELL_H: f32 = 22.0;
 
 fn default_pos(ctx: &egui::Context) -> Pos2 {
     let r = ctx.content_rect();
@@ -115,50 +119,84 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
             entries.sort_by_key(|(_, label, _, _)| label.to_lowercase());
 
             let list_bg = tab_color(active).gamma_multiply(0.72);
+            let grid_line = tab_color(active).gamma_multiply(1.0);
+            let cell_stroke = Stroke::new(1.0, grid_line);
+            let stripe_b = list_bg.gamma_multiply(0.86);
             egui::Frame::NONE
                 .fill(list_bg)
-                .inner_margin(10.0)
+                .inner_margin(0.0)
                 .show(ui, |ui| {
                     let rows = entries.len().div_ceil(COLS).max(1);
                     egui::ScrollArea::vertical()
                         .max_height(360.0)
                         .show(ui, |ui| {
-                            ui.set_min_width(660.0);
-                            ui.columns(COLS, |columns| {
-                                for (col, col_ui) in columns.iter_mut().enumerate() {
-                                    col_ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        for row in 0..rows {
-                                            let idx = row + col * rows;
-                                            let Some((type_name, label, summary, hit)) =
-                                                entries.get(idx)
-                                            else {
-                                                continue;
-                                            };
+                            ui.set_min_width(COLS as f32 * CELL_W);
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            for row in 0..rows {
+                                let row_bg = if row % 2 == 0 {
+                                    list_bg
+                                } else {
+                                    stripe_b
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+                                    for col in 0..COLS {
+                                        let idx = row + col * rows;
+                                        let sense = entries
+                                            .get(idx)
+                                            .map(|(_, _, _, hit)| {
+                                                if *hit {
+                                                    Sense::click()
+                                                } else {
+                                                    Sense::hover()
+                                                }
+                                            })
+                                            .unwrap_or(Sense::hover());
+                                        let (rect, resp) = ui.allocate_exact_size(
+                                            Vec2::new(CELL_W, CELL_H),
+                                            sense,
+                                        );
+                                        let mut fill = row_bg;
+                                        if let Some((_, _, _, hit)) = entries.get(idx) {
+                                            if *hit && resp.hovered() {
+                                                fill = tab_color(active).gamma_multiply(1.08);
+                                            }
+                                        }
+                                        let painter = ui.painter();
+                                        painter.rect_filled(rect, CornerRadius::ZERO, fill);
+                                        painter.rect_stroke(
+                                            rect,
+                                            CornerRadius::ZERO,
+                                            cell_stroke,
+                                            StrokeKind::Inside,
+                                        );
+                                        if let Some((type_name, label, summary, hit)) =
+                                            entries.get(idx)
+                                        {
                                             let label_color = if *hit {
-                                                Color32::from_gray(235)
+                                                if resp.hovered() {
+                                                    Color32::WHITE
+                                                } else {
+                                                    Color32::from_gray(235)
+                                                }
                                             } else {
-                                                Color32::from_gray(180)
+                                                Color32::from_gray(140)
                                             };
-                                            let resp = ui.add_enabled(
-                                                *hit,
-                                                egui::Button::new(
-                                                    RichText::new(*label)
-                                                        .color(label_color)
-                                                        .size(13.0),
-                                                )
-                                                .fill(Color32::TRANSPARENT)
-                                                .stroke(Stroke::NONE)
-                                                .corner_radius(CornerRadius::ZERO),
+                                            painter.text(
+                                                rect.left_center() + Vec2::new(6.0, 0.0),
+                                                Align2::LEFT_CENTER,
+                                                *label,
+                                                FontId::proportional(13.0),
+                                                label_color,
                                             );
-                                            if resp.clicked() {
+                                            if *hit && resp.clicked() {
                                                 chosen = Some(type_name.to_string());
                                             }
                                             resp.on_hover_text(*summary);
                                         }
-                                    });
-                                }
-                            });
+                                    }
+                                });
+                            }
                         });
                 });
 
