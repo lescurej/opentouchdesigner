@@ -3,6 +3,7 @@
 mod app;
 mod assistant;
 mod canvas;
+mod create_dialog;
 mod media;
 mod params;
 mod watch;
