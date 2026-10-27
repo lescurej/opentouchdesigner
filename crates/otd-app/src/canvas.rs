@@ -147,7 +147,7 @@ fn empty_hint(app: &mut OtdApp, ui: &mut egui::Ui, rect: Rect) {
     painter.text(
         centre + Vec2::new(0.0, 84.0),
         Align2::CENTER_CENTER,
-        "or press Tab for any of the 126 operators",
+        "or press Tab or double-click here for any of the 126 operators",
         FontId::proportional(13.0),
         Color32::from_gray(110),
     );
@@ -178,6 +178,14 @@ fn handle_view_input(
     }
     if response.clicked() {
         app.clear_selection();
+    }
+    if response.double_clicked() {
+        if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+            ui.ctx()
+                .memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
+            let world_pos = app.view.to_world(origin, pointer);
+            app.open_create_operator_dialog(world_pos);
+        }
     }
 }
 

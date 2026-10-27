@@ -15,7 +15,7 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
     let Some(id) = app.selected.filter(|s| app.graph.contains(*s)) else {
         ui.label(RichText::new("No operator selected").weak());
         ui.add_space(8.0);
-        ui.label(RichText::new("Tab  add operator").weak().small());
+        ui.label(RichText::new("Tab / double-click network  add operator").weak().small());
         ui.label(RichText::new("Double-click  set viewer").weak().small());
         ui.label(
             RichText::new("B  bypass    Space  play/pause")

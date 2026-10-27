@@ -546,6 +546,15 @@ impl OtdApp {
         }
     }
 
+    pub(crate) fn open_create_operator_dialog(&mut self, world_pos: egui::Vec2) {
+        self.create_dialog = Some(CreateDialog {
+            filter: String::new(),
+            world_pos,
+            focus: true,
+            connect_from: self.selected,
+        });
+    }
+
     /// Tab opens the operator picker. Handled before the menu bar so egui's
     /// focus cycle (Edit → File → Media …) does not swallow it; only a real
     /// text field should block the shortcut.
@@ -567,12 +576,7 @@ impl OtdApp {
         } else {
             egui::Vec2::ZERO
         };
-        self.create_dialog = Some(CreateDialog {
-            filter: String::new(),
-            world_pos,
-            focus: true,
-            connect_from: self.selected,
-        });
+        self.open_create_operator_dialog(world_pos);
     }
 
     /// Cmd/Ctrl+S, and Cmd/Ctrl+Shift+S for Save As.
