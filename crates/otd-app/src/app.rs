@@ -490,7 +490,7 @@ impl OtdApp {
     /// Behind the text-focus guard: Cmd+A in a parameter field is select-all
     /// *text*, and stealing it would make the fields hard to edit.
     fn selection_keys(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.text_edit_focused() {
             return;
         }
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
@@ -528,7 +528,7 @@ impl OtdApp {
     /// panel focused and in perform mode too. While a text field has focus,
     /// egui's own character-level undo is the right behaviour and wins.
     fn history_keys(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.text_edit_focused() {
             return;
         }
         let (undo, redo) = ctx.input(|i| {
@@ -544,6 +544,35 @@ impl OtdApp {
         } else if undo {
             self.undo();
         }
+    }
+
+    /// Tab opens the operator picker. Handled before the menu bar so egui's
+    /// focus cycle (Edit → File → Media …) does not swallow it; only a real
+    /// text field should block the shortcut.
+    fn create_operator_tab_key(&mut self, ctx: &egui::Context) {
+        if self.perform || ctx.text_edit_focused() {
+            return;
+        }
+        let tab = ctx.input(|i| i.key_pressed(egui::Key::Tab) && !i.modifiers.any());
+        if !tab {
+            return;
+        }
+        ctx.memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
+        let pointer = ctx
+            .pointer_latest_pos()
+            .unwrap_or_else(|| self.canvas_rect.center());
+        let origin = self.canvas_rect.min;
+        let world_pos = if self.canvas_rect.is_positive() {
+            self.view.to_world(origin, pointer)
+        } else {
+            egui::Vec2::ZERO
+        };
+        self.create_dialog = Some(CreateDialog {
+            filter: String::new(),
+            world_pos,
+            focus: true,
+            connect_from: self.selected,
+        });
     }
 
     /// Cmd/Ctrl+S, and Cmd/Ctrl+Shift+S for Save As.
@@ -861,6 +890,7 @@ impl eframe::App for OtdApp {
         // textures we just rendered into.
         self.cook_frame();
 
+        self.create_operator_tab_key(ui.ctx());
         self.history_keys(ui.ctx());
         self.file_keys(ui.ctx());
         self.selection_keys(ui.ctx());

@@ -787,7 +787,7 @@ fn node_menu(app: &mut OtdApp, resp: &egui::Response, id: NodeId) {
     });
 }
 
-fn handle_keys(app: &mut OtdApp, ui: &egui::Ui, origin: Pos2, rect: Rect) {
+fn handle_keys(app: &mut OtdApp, ui: &egui::Ui, _origin: Pos2, _rect: Rect) {
     // Releasing the mouse ends any drag. A wire dropped on empty canvas is
     // simply cancelled; the connection itself is made by the input port's own
     // hover handler, which runs before this.
@@ -798,20 +798,11 @@ fn handle_keys(app: &mut OtdApp, ui: &egui::Ui, origin: Pos2, rect: Rect) {
         app.history.end_gesture();
     }
 
-    if ui.ctx().egui_wants_keyboard_input() {
+    if ui.ctx().text_edit_focused() {
         return;
     }
 
-    let pointer = ui.ctx().pointer_hover_pos().unwrap_or(rect.center());
     ui.ctx().input(|i| {
-        if i.key_pressed(egui::Key::Tab) {
-            app.create_dialog = Some(CreateDialog {
-                filter: String::new(),
-                world_pos: app.view.to_world(origin, pointer),
-                focus: true,
-                connect_from: app.selected,
-            });
-        }
         if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
             app.delete_selected();
         }
