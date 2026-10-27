@@ -1,8 +1,42 @@
-use egui::Ui;
+use egui::{Color32, CornerRadius, Pos2, RichText, Stroke, Vec2};
+use otd_core::Family;
 
 use crate::app::OtdApp;
 
-pub fn show(app: &mut OtdApp, ui: &Ui) {
+const TABS: [Family; 6] = [
+    Family::Comp,
+    Family::Top,
+    Family::Chop,
+    Family::Sop,
+    Family::Mat,
+    Family::Dat,
+];
+
+const COLS: usize = 6;
+
+fn default_pos(ctx: &egui::Context) -> Pos2 {
+    let r = ctx.content_rect();
+    Pos2::new(r.center().x - 340.0, r.top() + 56.0)
+}
+
+fn op_matches(type_name: &str, label: &str, filter: &str) -> bool {
+    filter.is_empty()
+        || type_name.to_lowercase().contains(filter)
+        || label.to_lowercase().contains(filter)
+}
+
+fn tab_color(family: Family) -> Color32 {
+    match family {
+        Family::Comp => Color32::from_rgb(78, 82, 92),
+        Family::Top => Color32::from_rgb(92, 68, 128),
+        Family::Chop => Color32::from_rgb(58, 128, 78),
+        Family::Sop => Color32::from_rgb(52, 108, 118),
+        Family::Mat => Color32::from_rgb(128, 102, 52),
+        Family::Dat => Color32::from_rgb(128, 58, 98),
+    }
+}
+
+pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
     let Some(dialog) = &mut app.create_dialog else {
         return;
     };
@@ -10,52 +44,126 @@ pub fn show(app: &mut OtdApp, ui: &Ui) {
     let mut close_requested = false;
     let mut chosen: Option<String> = None;
     let filter = dialog.filter.to_lowercase();
+    let active = dialog.family;
     let world_pos = dialog.world_pos;
     let connect_from = dialog.connect_from;
-    let focus = std::mem::take(&mut dialog.focus);
 
-    let window = egui::Window::new("Add operator")
+    let window = egui::Window::new("OP Create Dialog")
+        .id(egui::Id::new("op_create_dialog"))
         .collapsible(false)
         .resizable(false)
+        .movable(true)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
+        .default_pos(default_pos(ui.ctx()))
+        .default_width(680.0)
         .show(ui.ctx(), |ui| {
+            ui.set_width(680.0);
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut app.create_dialog.as_mut().unwrap().filter)
-                    .hint_text("type to filter…")
-                    .desired_width(320.0),
+                    .hint_text("Search")
+                    .desired_width(f32::INFINITY),
             );
-            if focus {
+            if app.create_dialog.as_mut().unwrap().focus {
                 edit.request_focus();
+                if edit.has_focus() {
+                    app.create_dialog.as_mut().unwrap().focus = false;
+                }
             }
-            ui.separator();
-            let matches: Vec<(&str, &str, &str)> = app
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for family in TABS {
+                    let selected = active == family;
+                    let base = tab_color(family);
+                    let fill = if selected {
+                        base
+                    } else {
+                        base.gamma_multiply(0.55)
+                    };
+                    let label = RichText::new(family.suffix())
+                        .color(Color32::WHITE)
+                        .size(13.0);
+                    let stroke = if selected {
+                        Stroke::new(1.0, Color32::from_gray(220))
+                    } else {
+                        Stroke::NONE
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(label)
+                                .fill(fill)
+                                .stroke(stroke)
+                                .corner_radius(CornerRadius::ZERO)
+                                .min_size(Vec2::new(72.0, 24.0)),
+                        )
+                        .clicked()
+                    {
+                        app.create_dialog.as_mut().unwrap().family = family;
+                    }
+                }
+            });
+
+            let mut entries: Vec<(&str, &str, &str, bool)> = app
                 .registry
                 .iter()
-                .filter(|d| {
-                    filter.is_empty()
-                        || d.type_name.to_lowercase().contains(&filter)
-                        || d.label.to_lowercase().contains(&filter)
+                .filter(|d| d.family == active)
+                .map(|d| {
+                    let hit = op_matches(d.type_name, d.label, &filter);
+                    (d.type_name, d.label, d.summary, hit)
                 })
-                .map(|d| (d.type_name, d.label, d.summary))
                 .collect();
+            entries.sort_by_key(|(_, label, _, _)| label.to_lowercase());
 
-            egui::ScrollArea::vertical()
-                .max_height(280.0)
+            let list_bg = tab_color(active).gamma_multiply(0.72);
+            egui::Frame::NONE
+                .fill(list_bg)
+                .inner_margin(10.0)
                 .show(ui, |ui| {
-                    for (type_name, label, summary) in &matches {
-                        if ui
-                            .selectable_label(false, format!("{label}  ({type_name})"))
-                            .on_hover_text(*summary)
-                            .clicked()
-                        {
-                            chosen = Some(type_name.to_string());
-                        }
-                    }
+                    let rows = entries.len().div_ceil(COLS).max(1);
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(660.0);
+                            ui.columns(COLS, |columns| {
+                                for (col, col_ui) in columns.iter_mut().enumerate() {
+                                    col_ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                        for row in 0..rows {
+                                            let idx = row + col * rows;
+                                            let Some((type_name, label, summary, hit)) =
+                                                entries.get(idx)
+                                            else {
+                                                continue;
+                                            };
+                                            let label_color = if *hit {
+                                                Color32::from_gray(235)
+                                            } else {
+                                                Color32::from_gray(180)
+                                            };
+                                            let resp = ui.add_enabled(
+                                                *hit,
+                                                egui::Button::new(
+                                                    RichText::new(*label)
+                                                        .color(label_color)
+                                                        .size(13.0),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .stroke(Stroke::NONE)
+                                                .corner_radius(CornerRadius::ZERO),
+                                            );
+                                            if resp.clicked() {
+                                                chosen = Some(type_name.to_string());
+                                            }
+                                            resp.on_hover_text(*summary);
+                                        }
+                                    });
+                                }
+                            });
+                        });
                 });
 
             if ui.ctx().input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Some((type_name, ..)) = matches.first() {
+                if let Some((type_name, ..)) = entries.iter().find(|(_, _, _, hit)| *hit) {
                     chosen = Some(type_name.to_string());
                 }
             }

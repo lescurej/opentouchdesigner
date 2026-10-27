@@ -103,6 +103,7 @@ pub struct OtdApp {
 
 pub struct CreateDialog {
     pub filter: String,
+    pub family: otd_core::Family,
     /// Where the new node lands, in canvas space.
     pub world_pos: egui::Vec2,
     pub focus: bool,
@@ -551,8 +552,14 @@ impl OtdApp {
     }
 
     pub(crate) fn open_create_operator_dialog(&mut self, world_pos: egui::Vec2) {
+        let family = self
+            .selected
+            .filter(|id| self.graph.contains(*id))
+            .map(|id| self.graph.node(id).family)
+            .unwrap_or(otd_core::Family::Top);
         self.create_dialog = Some(CreateDialog {
             filter: String::new(),
+            family,
             world_pos,
             focus: true,
             connect_from: self.selected,
