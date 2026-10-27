@@ -698,13 +698,11 @@ fn params_chop_to_top() -> IndexMap<String, Param> {
 
 fn params_movie_in() -> IndexMap<String, Param> {
     params! {
-        "file" => Param::str("").with_label("File").as_file_ref(),
-        "play" => Param::menu("loop", &["loop", "once", "hold"]).with_label("Play"),
-        "speed" => Param::float(1.0).with_label("Speed").with_range(-4.0, 4.0),
-        // Not a resolution: the picture's own size wins. This is what to
-        // show before the first frame arrives, and if the file is missing.
-        "resw" => Param::int(1280).with_label("Fallback W").with_range(1.0, 16384.0),
-        "resh" => Param::int(720).with_label("Fallback H").with_range(1.0, 16384.0),
+        "file" => Param::str("").with_label("File").as_file_ref().with_page("Play"),
+        "play" => Param::menu("loop", &["loop", "once", "hold"]).with_label("Play Mode").with_page("Play"),
+        "speed" => Param::float(1.0).with_label("Speed").with_range(-4.0, 4.0).with_page("Play"),
+        "resw" => Param::int(1280).with_label("Fallback W").with_range(1.0, 16384.0).with_page("Image"),
+        "resh" => Param::int(720).with_label("Fallback H").with_range(1.0, 16384.0).with_page("Image"),
     }
 }
 

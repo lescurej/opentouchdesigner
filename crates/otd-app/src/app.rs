@@ -86,6 +86,8 @@ pub struct OtdApp {
     /// Draft state for the "add a component parameter" row.
     pub new_param_name: String,
     pub new_param_type: String,
+    /// Active inspector tab per node (TouchDesigner-style pages).
+    pub param_inspector_page: HashMap<NodeId, String>,
 
     thumbs: HashMap<NodeId, (TextureId, u64)>,
     /// Nodes that were on screen last frame — the visible cook roots.
@@ -158,6 +160,7 @@ impl OtdApp {
             input_state: otd_chop::InputState::default(),
             new_param_name: String::new(),
             new_param_type: "float".to_string(),
+            param_inspector_page: HashMap::new(),
             thumbs: HashMap::new(),
             visible: Vec::new(),
             history: History::default(),
@@ -675,10 +678,25 @@ impl OtdApp {
         if self.selection.is_empty() {
             return;
         }
+        let doomed: Vec<NodeId> = self
+            .selection
+            .iter()
+            .copied()
+            .filter(|id| self.graph.contains(*id) && !self.graph.node(*id).flags.lock)
+            .collect();
+        if doomed.is_empty() {
+            self.status = "Selection is locked".into();
+            return;
+        }
         self.edit("delete");
         self.history.end_gesture();
-        let doomed: Vec<NodeId> = std::mem::take(&mut self.selection).into_iter().collect();
-        self.selected = None;
+        for id in &doomed {
+            self.selection.remove(id);
+        }
+        self.selected = self
+            .selected
+            .filter(|s| self.selection.contains(s))
+            .or_else(|| self.selection.iter().next().copied());
         self.delete_all(&doomed);
     }
 

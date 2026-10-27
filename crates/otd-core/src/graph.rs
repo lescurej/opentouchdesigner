@@ -95,6 +95,8 @@ pub struct NodeFlags {
     pub bypass: bool,
     /// This node is a cook root even if nothing downstream wants it.
     pub render: bool,
+    /// Edits, wiring and moves are blocked (TouchDesigner lock).
+    pub lock: bool,
 }
 
 impl Default for NodeFlags {
@@ -103,6 +105,7 @@ impl Default for NodeFlags {
             display: true,
             bypass: false,
             render: false,
+            lock: false,
         }
     }
 }

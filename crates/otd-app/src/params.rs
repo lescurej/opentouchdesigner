@@ -33,12 +33,19 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
         .get(&op_type)
         .map(|d| d.summary.to_string())
         .unwrap_or_default();
+    let op_label = crate::inspector::op_display_label(app, id);
+    let locked = app.graph.node(id).flags.lock;
 
-    ui.horizontal(|ui| {
-        ui.strong(&path);
-        ui.label(RichText::new(&op_type).weak());
-    });
+    crate::inspector::header_bar(app, ui, id, &op_label);
+    ui.label(RichText::new(&path).weak().small());
     ui.label(RichText::new(summary).weak().small());
+    if locked {
+        ui.label(
+            RichText::new("Locked — unlock to edit parameters or wiring")
+                .small()
+                .color(Color32::from_rgb(220, 180, 100)),
+        );
+    }
 
     // What the node itself has to say — a missing ffmpeg, a camera that has
     // not been granted, a shader that did not compile. It is already on the
@@ -67,56 +74,30 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
         });
     }
 
-    ui.horizontal(|ui| {
-        let mut bypass = app.graph.node(id).flags.bypass;
-        if ui.checkbox(&mut bypass, "Bypass").changed() {
-            app.edit("bypass");
-            app.history.end_gesture();
-            app.graph.node_mut(id).flags.bypass = bypass;
-        }
-        let mut display = app.graph.node(id).flags.display;
-        if ui
-            .checkbox(&mut display, "Viewer")
-            .on_hover_text("Cook this node even when nothing downstream needs it")
-            .changed()
-        {
-            app.edit("display flag");
-            app.history.end_gesture();
-            app.graph.node_mut(id).flags.display = display;
-        }
-        if ui.button("Set as output").clicked() {
-            app.viewer = Some(id);
-        }
-    });
-
-    ui.horizontal(|ui| {
-        let mut name = app.graph.node(id).name.clone();
-        ui.label("Name");
-        if ui.text_edit_singleline(&mut name).changed() {
-            let parent = app.graph.node(id).parent.unwrap_or(app.graph.root());
-            let trimmed = name.trim().to_string();
-            if !trimmed.is_empty() && !app.graph.name_taken(parent, &trimmed) {
-                app.edit(&format!("rename:{id:?}"));
-                app.graph.node_mut_quiet(id).name = trimmed;
-            }
-        }
-    });
-
     channel_list(app, ui, id);
     component_links(app, ui, id);
     custom_param_editor(app, ui, id);
     ui.separator();
 
+    let pages = crate::inspector::collect_pages(&app.graph.node(id).params);
+    let has_pages = pages.first().is_some_and(|p| p != "Parameters");
+    let active_page = crate::inspector::page_tabs(app, ui, id, &pages);
+
     let keys: Vec<String> = app.graph.node(id).params.keys().cloned().collect();
     let eval_ctx = app.time.eval_ctx();
 
+    ui.add_enabled_ui(!locked, |ui| {
     for key in keys {
-        // A shader source gets a code editor across the full panel width
-        // rather than a one-line text field, with its compile error directly
-        // underneath. Live-coding is only usable if the error is where you
-        // are looking.
+        if !crate::inspector::param_on_page(&app.graph.node(id).params[&key], &active_page, has_pages)
+        {
+            continue;
+        }
         if key == "source" {
-            shader_editor(app, ui, id);
+            if crate::inspector::is_python_source(app, id) {
+                script_editor(app, ui, id);
+            } else if crate::inspector::is_shader_source(app, id) {
+                shader_editor(app, ui, id);
+            }
             continue;
         }
         // Keyframes get a curve editor rather than a text field. The text is
@@ -184,7 +165,13 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
         // The whole row is a drop zone: dragging a channel here exports it.
         let (_, dropped) = ui.dnd_drop_zone::<ChannelDrag, _>(egui::Frame::NONE, |ui| {
             ui.horizontal(|ui| {
-                ui.add_sized([120.0, 18.0], egui::Label::new(&label).truncate());
+                ui.allocate_ui_with_layout(
+                    egui::vec2(140.0, 18.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.add(egui::Label::new(&label).truncate());
+                    },
+                );
 
                 // Mode button — the whole point of the panel.
                 let (glyph, tint) = match mode {
@@ -236,7 +223,18 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                         );
                     }
                     ParamMode::Constant => {
-                        changed |= value_widget(ui, &key, &mut value, range, menu.as_deref());
+                        changed |= match (&mut value, range) {
+                            (Value::Float(_) | Value::Int(_), Some(_)) => {
+                                crate::inspector::td_slider_field(ui, &key, &mut value, range)
+                            }
+                            _ => crate::inspector::value_widget_basic(
+                                ui,
+                                &key,
+                                &mut value,
+                                range,
+                                menu.as_deref(),
+                            ),
+                        };
                     }
                 }
             });
@@ -306,6 +304,7 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
             }
         }
     }
+    });
 }
 
 /// Where a component's contents come from: a shared file, or another
@@ -596,6 +595,36 @@ fn file_row(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId, key: &str
     }
 }
 
+fn script_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
+    let mut source = app.graph.node(id).params["source"].value.as_str();
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.strong("Source");
+        ui.label(
+            RichText::new("Python — set `rows` for Script DAT; `def onFrameStart` for Execute DATs")
+                .weak()
+                .small(),
+        );
+    });
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut source)
+            .code_editor()
+            .desired_rows(16)
+            .desired_width(f32::INFINITY),
+    );
+    if response.changed() {
+        app.edit(&format!("script:{id:?}"));
+        let _ = app.graph.set_param(id, "source", Value::Str(source));
+    }
+    if let Some(err) = app.engines.node_status(&app.graph, id) {
+        ui.colored_label(
+            Color32::from_rgb(235, 120, 120),
+            RichText::new(err).small().monospace(),
+        );
+    }
+    ui.add_space(4.0);
+}
+
 fn shader_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
     let mut source = app.graph.node(id).params["source"].value.as_str();
     let is_glsl = app
@@ -670,86 +699,6 @@ fn format_value(v: &Value) -> String {
     match v {
         Value::Float(f) => format!("{f:.4}"),
         other => other.as_str(),
-    }
-}
-
-/// Draw the editor appropriate to the value's type. Returns true on edit.
-fn value_widget(
-    ui: &mut egui::Ui,
-    key: &str,
-    value: &mut Value,
-    range: Option<(f64, f64)>,
-    menu: Option<&[String]>,
-) -> bool {
-    if let Some(items) = menu {
-        let mut current = value.as_str();
-        let mut changed = false;
-        egui::ComboBox::from_id_salt(key)
-            .selected_text(&current)
-            .show_ui(ui, |ui| {
-                for item in items {
-                    if ui.selectable_label(current == *item, item).clicked() {
-                        current = item.clone();
-                        changed = true;
-                    }
-                }
-            });
-        if changed {
-            *value = Value::Str(current);
-        }
-        return changed;
-    }
-
-    match value {
-        Value::Float(v) => match range {
-            Some((lo, hi)) => ui.add(egui::Slider::new(v, lo..=hi)).changed(),
-            None => ui.add(egui::DragValue::new(v).speed(0.01)).changed(),
-        },
-        Value::Int(v) => match range {
-            Some((lo, hi)) => ui
-                .add(egui::Slider::new(v, lo as i64..=hi as i64))
-                .changed(),
-            None => ui.add(egui::DragValue::new(v).speed(1.0)).changed(),
-        },
-        Value::Bool(v) => ui.checkbox(v, "").changed(),
-        Value::Str(v) => ui.text_edit_singleline(v).changed(),
-        Value::Vec2(v) => {
-            let mut changed = false;
-            for c in v.iter_mut() {
-                changed |= ui.add(egui::DragValue::new(c).speed(0.01)).changed();
-            }
-            changed
-        }
-        Value::Vec3(v) => {
-            let mut changed = false;
-            for c in v.iter_mut() {
-                changed |= ui.add(egui::DragValue::new(c).speed(0.01)).changed();
-            }
-            changed
-        }
-        Value::Vec4(v) => {
-            // A four-component parameter named "color" gets a colour picker;
-            // anything else gets four numbers.
-            if key.contains("color") {
-                let mut rgba = [v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32];
-                if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
-                    *v = [
-                        rgba[0] as f64,
-                        rgba[1] as f64,
-                        rgba[2] as f64,
-                        rgba[3] as f64,
-                    ];
-                    return true;
-                }
-                false
-            } else {
-                let mut changed = false;
-                for c in v.iter_mut() {
-                    changed |= ui.add(egui::DragValue::new(c).speed(0.01)).changed();
-                }
-                changed
-            }
-        }
     }
 }
 

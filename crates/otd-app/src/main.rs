@@ -5,6 +5,7 @@ mod assistant;
 mod canvas;
 mod create_dialog;
 mod media;
+mod inspector;
 mod params;
 mod watch;
 

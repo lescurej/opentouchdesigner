@@ -31,6 +31,9 @@ pub struct Param {
     /// Human label for the parameter panel. Falls back to the key if empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
+    /// Inspector tab (TouchDesigner-style pages). Definition-only, not stored in `.otd`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub page: String,
     /// The constant value, and the declared type of the parameter.
     pub value: Value,
     #[serde(default, skip_serializing_if = "is_default_mode")]
@@ -145,6 +148,7 @@ impl Param {
     pub fn new(value: impl Into<Value>) -> Self {
         Param {
             label: String::new(),
+            page: String::new(),
             value: value.into(),
             mode: ParamMode::Constant,
             expression: String::new(),
@@ -222,6 +226,15 @@ impl Param {
     pub fn with_label(mut self, label: &str) -> Self {
         self.label = label.to_string();
         self
+    }
+
+    pub fn with_page(mut self, page: &str) -> Self {
+        self.page = page.to_string();
+        self
+    }
+
+    pub fn page(&self) -> &str {
+        &self.page
     }
 
     pub fn with_range(mut self, lo: f64, hi: f64) -> Self {

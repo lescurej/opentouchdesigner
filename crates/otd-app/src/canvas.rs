@@ -9,6 +9,7 @@
 //!    dimmed, and each node carries its own cook time.
 
 use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+use otd_chop::ChopData;
 use otd_core::{Family, NodeId};
 
 use crate::app::OtdApp;
@@ -342,6 +343,64 @@ pub fn channel_color(index: usize) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
 }
 
+fn chop_bar_mode(data: &ChopData) -> bool {
+    !data.channels.is_empty() && data.channels.iter().all(|c| c.samples.len() <= 1)
+}
+
+fn draw_chop_bars(
+    painter: &egui::Painter,
+    data: &ChopData,
+    body: Rect,
+    zoom: f32,
+) {
+    let channels: Vec<_> = data.channels.iter().take(8).collect();
+    let mut peak = 0.0f32;
+    for ch in &channels {
+        if let Some(&v) = ch.samples.first() {
+            if v.is_finite() {
+                peak = peak.max(v.abs());
+            }
+        }
+    }
+    let peak = peak.max(1e-3);
+    let label_h = 10.0 * zoom.max(0.5);
+    let plot = Rect::from_min_max(
+        body.min,
+        Pos2::new(body.max.x, body.max.y - label_h - 2.0),
+    );
+    let slot = plot.width() / channels.len().max(1) as f32;
+    let mid_y = plot.center().y;
+    let half_h = plot.height() * 0.42;
+
+    painter.line_segment(
+        [Pos2::new(plot.min.x, mid_y), Pos2::new(plot.max.x, mid_y)],
+        Stroke::new(1.0, Color32::from_rgb(50, 52, 58)),
+    );
+
+    for (ci, ch) in channels.iter().enumerate() {
+        let v = ch.samples.first().copied().unwrap_or(0.0);
+        let color = channel_color(ci);
+        let cx = plot.min.x + (ci as f32 + 0.5) * slot;
+        let bar_w = (slot * 0.55).max(2.0);
+        let top = mid_y - (v / peak) * half_h;
+        let bar = Rect::from_min_max(
+            Pos2::new(cx - bar_w * 0.5, top.min(mid_y)),
+            Pos2::new(cx + bar_w * 0.5, top.max(mid_y)),
+        );
+        painter.rect_filled(bar, 1.0, color);
+        if zoom > 0.45 {
+            let name: String = ch.name.chars().take(8).collect();
+            painter.text(
+                Pos2::new(cx, body.max.y - 1.0),
+                Align2::CENTER_BOTTOM,
+                name,
+                FontId::proportional(7.5 * zoom),
+                color,
+            );
+        }
+    }
+}
+
 fn draw_chop_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32) {
     let Some(data) = app.engines.chop_data(id) else {
         return;
@@ -351,50 +410,39 @@ fn draw_chop_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32
     }
     let painter = ui.painter_at(body);
 
-    // One shared vertical scale across channels, so their relative sizes are
-    // readable. A flat signal still gets a visible line rather than filling
-    // the box.
-    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
-    for ch in &data.channels {
-        lo = lo.min(ch.min());
-        hi = hi.max(ch.max());
-    }
-    if !lo.is_finite() || !hi.is_finite() {
+    if chop_bar_mode(&data) {
+        draw_chop_bars(&painter, &data, body, zoom);
         return;
     }
-    let span = (hi - lo).max(1e-3);
-    let (lo, hi) = (lo - span * 0.1, hi + span * 0.1);
 
-    let y_of = |v: f32| {
-        let t = (v - lo) / (hi - lo).max(1e-6);
-        body.max.y - t * body.height()
-    };
-
-    // Zero line, when zero is in range.
-    if lo < 0.0 && hi > 0.0 {
-        painter.line_segment(
-            [
-                Pos2::new(body.min.x, y_of(0.0)),
-                Pos2::new(body.max.x, y_of(0.0)),
-            ],
-            Stroke::new(1.0, Color32::from_rgb(50, 52, 58)),
-        );
+    let mut peak = 0.0f32;
+    for ch in &data.channels {
+        for &v in &ch.samples {
+            if v.is_finite() {
+                peak = peak.max(v.abs());
+            }
+        }
     }
+    if !peak.is_finite() {
+        return;
+    }
+    let range = (peak * 1.08).max(1e-3);
+    let mid_y = body.center().y;
+    let half_h = body.height() * 0.46;
+    let y_of = |v: f32| mid_y - (v / range) * half_h;
+
+    painter.line_segment(
+        [
+            Pos2::new(body.min.x, mid_y),
+            Pos2::new(body.max.x, mid_y),
+        ],
+        Stroke::new(1.0, Color32::from_rgb(50, 52, 58)),
+    );
 
     for (ci, ch) in data.channels.iter().enumerate().take(8) {
         let color = channel_color(ci);
         let n = ch.samples.len();
-        if n == 0 {
-            continue;
-        }
-        if n == 1 {
-            // A time-sliced control channel is one sample per frame: draw it
-            // as a level rather than as a dot in the corner.
-            let y = y_of(ch.samples[0]);
-            painter.line_segment(
-                [Pos2::new(body.min.x, y), Pos2::new(body.max.x, y)],
-                Stroke::new(1.5 * zoom.max(0.5), color),
-            );
+        if n < 2 {
             continue;
         }
         let step = body.width() / (n - 1) as f32;
@@ -408,16 +456,16 @@ fn draw_chop_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32
             points,
             Stroke::new(1.2 * zoom.max(0.5), color),
         ));
-    }
-
-    if zoom > 0.6 {
-        painter.text(
-            body.left_top() + Vec2::new(3.0, 2.0),
-            Align2::LEFT_TOP,
-            format!("{} ch  {} samp", data.num_channels(), data.num_samples()),
-            FontId::proportional(8.5 * zoom),
-            Color32::from_rgb(120, 122, 130),
-        );
+        if zoom > 0.55 && ci == 0 {
+            let name: String = ch.name.chars().take(12).collect();
+            painter.text(
+                body.left_top() + Vec2::new(3.0, 2.0),
+                Align2::LEFT_TOP,
+                name,
+                FontId::proportional(8.0 * zoom),
+                color,
+            );
+        }
     }
 }
 
@@ -431,25 +479,60 @@ fn draw_dat_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32)
         return;
     }
     let painter = ui.painter_at(body);
+
+    if data.is_text {
+        let line = 10.0 * zoom;
+        let font = FontId::monospace(8.5 * zoom);
+        let text = data.as_text();
+        let max_lines = ((body.height() / line) as usize).max(1);
+        for (i, line_text) in text.lines().take(max_lines).enumerate() {
+            let shown: String = line_text.chars().take(40).collect();
+            painter.text(
+                body.left_top() + Vec2::new(4.0, 2.0 + i as f32 * line),
+                Align2::LEFT_TOP,
+                shown,
+                font.clone(),
+                Color32::from_rgb(160, 162, 172),
+            );
+        }
+        return;
+    }
+
+    let cols = data.num_cols().max(1);
+    let col_w = body.width() / cols as f32;
     let line = 11.0 * zoom;
-    let font = FontId::monospace(9.0 * zoom);
+    let font = FontId::monospace(8.5 * zoom);
     let max_rows = ((body.height() / line) as usize).max(1);
 
+    for c in 0..=cols {
+        let x = body.min.x + c as f32 * col_w;
+        painter.line_segment(
+            [Pos2::new(x, body.min.y), Pos2::new(x, body.max.y)],
+            Stroke::new(1.0, Color32::from_rgb(42, 44, 50)),
+        );
+    }
+
     for (r, row) in data.rows.iter().take(max_rows).enumerate() {
-        // The first row of a table is nearly always headings.
-        let colour = if r == 0 && !data.is_text {
+        let y = body.min.y + r as f32 * line;
+        painter.line_segment(
+            [Pos2::new(body.min.x, y), Pos2::new(body.max.x, y)],
+            Stroke::new(1.0, Color32::from_rgb(42, 44, 50)),
+        );
+        let colour = if r == 0 {
             Color32::from_rgb(200, 202, 212)
         } else {
             Color32::from_rgb(150, 152, 162)
         };
-        let text: String = row.join("  ").chars().take(30).collect();
-        painter.text(
-            body.left_top() + Vec2::new(4.0, 2.0 + r as f32 * line),
-            Align2::LEFT_TOP,
-            text,
-            font.clone(),
-            colour,
-        );
+        for (c, cell) in row.iter().enumerate().take(cols) {
+            let shown: String = cell.chars().take(12).collect();
+            painter.text(
+                Pos2::new(body.min.x + c as f32 * col_w + 3.0, y + 1.0),
+                Align2::LEFT_TOP,
+                shown,
+                font.clone(),
+                colour,
+            );
+        }
     }
     if data.num_rows() > max_rows {
         painter.text(
@@ -472,6 +555,7 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
     let is_viewer = app.viewer == Some(id);
     let animated = app.cook.is_time_dependent(id);
     let bypassed = node.flags.bypass;
+    let locked = node.flags.lock;
     let name = node.name.clone();
     let op_label = node.op_type.clone();
     let input_count = node.inputs.len();
@@ -511,6 +595,10 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
         Pos2::new(rect.max.x - 2.0, rect.max.y - FOOTER_H * zoom),
     );
     painter.rect_filled(body, 2.0, Color32::from_rgb(18, 18, 20));
+    let cached_preview = node.flags.display
+        && !animated
+        && app.cook.has_cooked(id)
+        && !app.cook.cooked_this_frame(id, app.time.frame);
     match family {
         Family::Top => {
             if let Some((tid, size)) = app.thumbnail(id) {
@@ -536,6 +624,9 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
         Family::Chop => draw_chop_body(app, ui, id, body, zoom),
         Family::Dat => draw_dat_body(app, ui, id, body, zoom),
         _ => {}
+    }
+    if cached_preview {
+        painter.rect_filled(body, 2.0, Color32::from_black_alpha(90));
     }
 
     let painter = ui.painter();
@@ -576,6 +667,15 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
             radius,
             Stroke::new(2.0, Color32::from_rgb(220, 190, 90)),
             StrokeKind::Outside,
+        );
+    }
+    if locked {
+        painter.text(
+            header.right_center() - Vec2::new(8.0 * zoom, 0.0),
+            Align2::RIGHT_CENTER,
+            "L",
+            FontId::proportional(10.0 * zoom),
+            Color32::from_rgb(220, 180, 90),
         );
     }
     if shader_error {
@@ -702,7 +802,7 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
             app.viewer = Some(id);
         }
     }
-    if body_resp.drag_started() {
+    if body_resp.drag_started() && !locked {
         if let Some(pointer) = ui.ctx().pointer_interact_pos() {
             let world = app.view.to_world(origin, pointer);
             let p = app.graph.node(id).pos;
@@ -731,7 +831,7 @@ fn draw_node(app: &mut OtdApp, ui: &mut egui::Ui, id: NodeId, rect: Rect, origin
     // Dragging a node moves it without dirtying it — layout is not a cook
     // input.
     if let Some(DragState::Node { id: drag_id, grab }) = app.drag {
-        if drag_id == id {
+        if drag_id == id && !app.graph.node(id).flags.lock {
             if let Some(pointer) = ui.ctx().pointer_latest_pos() {
                 // One entry for the whole drag: the tag names the node, so
                 // every frame of it coalesces.
@@ -796,6 +896,16 @@ fn node_menu(app: &mut OtdApp, resp: &egui::Response, id: NodeId) {
             app.edit("bypass");
             app.history.end_gesture();
             app.graph.node_mut(id).flags.bypass = !bypassed;
+            ui.close();
+        }
+        let locked = app.graph.node(id).flags.lock;
+        if ui
+            .selectable_label(locked, "Lock")
+            .on_hover_text("Block edits and wiring")
+            .clicked()
+        {
+            app.edit("lock");
+            app.graph.node_mut(id).flags.lock = !locked;
             ui.close();
         }
         if ui.button("Delete").clicked() {

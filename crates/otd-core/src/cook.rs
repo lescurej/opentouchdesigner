@@ -153,6 +153,8 @@ struct NodeCookState {
     /// second is cheaper than something modest that cooks every frame.
     resolve_count: u64,
     has_cooked: bool,
+    /// Frame number when the operator last ran (not a cache hit).
+    last_cook_frame: i64,
     /// Set while this node is on the pull stack. Wired cycles are impossible
     /// (rejected at connect time) but a parameter-named reference can form
     /// one — two Select TOPs pointing at each other — and that must degrade
@@ -342,9 +344,17 @@ impl CookEngine {
             st.avg_cook_us * 0.9 + elapsed as f64 * 0.1
         };
         st.has_cooked = true;
+        st.last_cook_frame = ctx.frame;
         self.stats.cooked += 1;
         self.stats.total_cook_us += elapsed;
         Ok(st.output_version)
+    }
+
+    /// True when this node's operator actually ran on this frame (not served from cache).
+    pub fn cooked_this_frame(&self, id: NodeId, frame: i64) -> bool {
+        self.state
+            .get(id)
+            .is_some_and(|s| s.last_cook_frame == frame)
     }
 
     /// Forget all cached state. Call after loading a project.
