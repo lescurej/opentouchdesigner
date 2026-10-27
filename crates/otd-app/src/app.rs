@@ -564,6 +564,7 @@ impl OtdApp {
             focus: true,
             connect_from: self.selected,
         });
+        self.create_dialog_rect = None;
     }
 
     /// Tab opens the operator picker. Handled before the menu bar so egui's
@@ -943,6 +944,9 @@ impl eframe::App for OtdApp {
         }
         crate::assistant::bar(self, ui.ctx());
         crate::assistant::window(self, ui.ctx());
+        if !self.perform {
+            crate::create_dialog::show(self, ui);
+        }
         self.output_viewport(ui.ctx());
 
         // Files can be dropped in either mode: a performer swapping a clip

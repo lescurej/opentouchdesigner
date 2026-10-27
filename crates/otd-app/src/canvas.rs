@@ -90,7 +90,6 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                 empty_hint(app, ui, rect);
             }
             handle_keys(app, ui, origin, rect);
-            crate::create_dialog::show(app, ui);
             handle_canvas_scroll(app, ui, origin, rect);
         });
 }

@@ -15,6 +15,10 @@ const TABS: [Family; 6] = [
 ];
 
 const COLS: usize = 6;
+
+fn search_id() -> egui::Id {
+    egui::Id::new("op_create_dialog_search")
+}
 const CELL_W: f32 = 110.0;
 const CELL_H: f32 = 22.0;
 
@@ -62,13 +66,16 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
         .default_width(680.0)
         .show(ui.ctx(), |ui| {
             ui.set_width(680.0);
+            let want_focus = app.create_dialog.as_mut().unwrap().focus;
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut app.create_dialog.as_mut().unwrap().filter)
+                    .id(search_id())
                     .hint_text("Search")
                     .desired_width(f32::INFINITY),
             );
-            if app.create_dialog.as_mut().unwrap().focus {
+            if want_focus {
                 edit.request_focus();
+                ui.ctx().memory_mut(|mem| mem.request_focus(search_id()));
                 if edit.has_focus() {
                     app.create_dialog.as_mut().unwrap().focus = false;
                 }
