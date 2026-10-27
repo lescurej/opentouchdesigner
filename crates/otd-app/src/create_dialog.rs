@@ -14,7 +14,7 @@ pub fn show(app: &mut OtdApp, ui: &Ui) {
     let connect_from = dialog.connect_from;
     let focus = std::mem::take(&mut dialog.focus);
 
-    egui::Window::new("Add operator")
+    let window = egui::Window::new("Add operator")
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -63,6 +63,7 @@ pub fn show(app: &mut OtdApp, ui: &Ui) {
                 close_requested = true;
             }
         });
+    app.create_dialog_rect = window.as_ref().map(|r| r.response.rect);
     let open = open && !close_requested;
 
     if let Some(type_name) = chosen {
@@ -72,7 +73,9 @@ pub fn show(app: &mut OtdApp, ui: &Ui) {
             }
         }
         app.create_dialog = None;
+        app.create_dialog_rect = None;
     } else if !open {
         app.create_dialog = None;
+        app.create_dialog_rect = None;
     }
 }

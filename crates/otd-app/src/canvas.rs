@@ -11,7 +11,7 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use otd_core::{Family, NodeId};
 
-use crate::app::{CreateDialog, OtdApp};
+use crate::app::OtdApp;
 
 pub const NODE_W: f32 = 176.0;
 pub const HEADER_H: f32 = 20.0;
@@ -91,6 +91,7 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
             }
             handle_keys(app, ui, origin, rect);
             crate::create_dialog::show(app, ui);
+            handle_canvas_scroll(app, ui, origin, rect);
         });
 }
 
@@ -158,20 +159,8 @@ fn handle_view_input(
     ui: &egui::Ui,
     response: &egui::Response,
     origin: Pos2,
-    rect: Rect,
+    _rect: Rect,
 ) {
-    // Zoom about the pointer, so the thing under the cursor stays put.
-    if let Some(pointer) = ui.ctx().pointer_hover_pos() {
-        if rect.contains(pointer) {
-            let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.0 {
-                let before = app.view.to_world(origin, pointer);
-                app.view.zoom = (app.view.zoom * (1.0 + scroll * 0.002)).clamp(0.15, 3.0);
-                let after = app.view.to_world(origin, pointer);
-                app.view.pan += after - before;
-            }
-        }
-    }
     // Dragging empty background pans.
     if response.dragged() && app.drag.is_none() {
         app.view.pan += response.drag_delta() / app.view.zoom;
@@ -186,6 +175,28 @@ fn handle_view_input(
             let world_pos = app.view.to_world(origin, pointer);
             app.open_create_operator_dialog(world_pos);
         }
+    }
+}
+
+fn handle_canvas_scroll(app: &mut OtdApp, ui: &egui::Ui, origin: Pos2, rect: Rect) {
+    let Some(pointer) = ui.ctx().pointer_hover_pos() else {
+        return;
+    };
+    if !rect.contains(pointer) {
+        return;
+    }
+    if app
+        .create_dialog_rect
+        .is_some_and(|r| r.contains(pointer))
+    {
+        return;
+    }
+    let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+    if scroll.abs() > 0.0 {
+        let before = app.view.to_world(origin, pointer);
+        app.view.zoom = (app.view.zoom * (1.0 + scroll * 0.002)).clamp(0.15, 3.0);
+        let after = app.view.to_world(origin, pointer);
+        app.view.pan += after - before;
     }
 }
 

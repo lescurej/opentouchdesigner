@@ -60,6 +60,9 @@ pub struct OtdApp {
     pub canvas_rect: egui::Rect,
     pub drag: Option<DragState>,
     pub create_dialog: Option<CreateDialog>,
+    /// Screen rect of the Add operator window, for blocking canvas zoom while
+    /// the pointer is over it.
+    pub create_dialog_rect: Option<egui::Rect>,
     pub show_perf: bool,
     /// The performance monitor window.
     pub show_monitor: bool,
@@ -142,6 +145,7 @@ impl OtdApp {
             canvas_rect: egui::Rect::NOTHING,
             drag: None,
             create_dialog: None,
+            create_dialog_rect: None,
             show_perf: true,
             show_monitor: false,
             perform: false,
