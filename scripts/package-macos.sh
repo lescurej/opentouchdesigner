@@ -92,6 +92,16 @@ PLIST
 echo "==> icon"
 "$ROOT/scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
+if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
+  echo "==> bundling ffmpeg (from PATH)"
+  mkdir -p "$APP/Contents/Resources/bin"
+  cp "$(command -v ffmpeg)" "$APP/Contents/Resources/bin/ffmpeg"
+  cp "$(command -v ffprobe)" "$APP/Contents/Resources/bin/ffprobe"
+  chmod +x "$APP/Contents/Resources/bin/ffmpeg" "$APP/Contents/Resources/bin/ffprobe"
+else
+  echo "!! ffmpeg not on PATH — movies need brew install ffmpeg or rebuild after installing it"
+fi
+
 echo "==> signing (ad-hoc)"
 # Ad-hoc, not a Developer ID — but *a* signature over the bundle, which is a
 # different thing from the linker-signed binary cargo leaves behind. Without
