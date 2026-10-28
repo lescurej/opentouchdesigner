@@ -2,9 +2,9 @@
 
 Generated from the operator registry — the same table the editor builds its menus and parameter pages from, so this cannot drift from what the operators actually do.
 
-171 operators.
+174 operators.
 
-**CHOP** (51)
+**CHOP** (52)
 
 - [analyzeCHOP](#analyze--analyzechop) — Reduce each channel to one number.
 - [animationCHOP](#animation--animationchop) — Keyframed curves over time.
@@ -42,6 +42,7 @@ Generated from the operator registry — the same table the editor builds its me
 - [oscoutCHOP](#osc-out--oscoutchop) — Sends its channels as one OSC message per frame.
 - [outCHOP](#out--outchop) — This component's channel output.
 - [panelCHOP](#panel--panelchop) — Panel widget values as channels.
+- [parameterCHOP](#parameter--parameterchop) — Another operator's parameter values as channels (does not cook that operator).
 - [particleCHOP](#particle--particlechop) — Stateful 2D particle emitter with velocity, gravity, lifetime and respawn. tx/ty/tz are instance positions (6 scene units across); size/life fade to zero. Emitter coordinates are normalized, origin top-left. Connect via geometryCOMP.instancechop; set sx/sy/sz to size. Active stops births; existing particles finish. Reset clears the simulation. CPU, at most 4096 particles; dt capped at 0.1s; no collisions or flocking.
 - [patternCHOP](#pattern--patternchop) — A fixed-length waveform buffer.
 - [renameCHOP](#rename--renamechop) — Rename channels by pattern.
@@ -58,18 +59,19 @@ Generated from the operator registry — the same table the editor builds its me
 - [trailCHOP](#trail--trailchop) — The last few seconds of each channel as one buffer, oldest sample first — draw a waveform, or lay out one instance per sample.
 - [triggerCHOP](#trigger--triggerchop) — An attack/decay/sustain/release envelope per channel.
 
-**COMP** (8)
+**COMP** (9)
 
 - [buttonCOMP](#button--buttoncomp) — A button on the output. Its state is the Value parameter.
 - [cameraCOMP](#camera--cameracomp) — A viewpoint for a Render TOP.
-- [containerCOMP](#container--containercomp) — A component that holds a sub-network.
+- [containerCOMP](#container--containercomp) — Groups panel COMPs (buttons, sliders, fields, nested containers) with layout and alignment.
 - [fieldCOMP](#field--fieldcomp) — An editable text field on the output.
 - [geometryCOMP](#geometry--geometrycomp) — Places a SOP in the scene, optionally instanced.
 - [lightCOMP](#light--lightcomp) — A directional light, aimed from its position at the origin.
 - [replicatorCOMP](#replicator--replicatorcomp) — Keeps one clone of a master component per row of a table.
 - [sliderCOMP](#slider--slidercomp) — A fader on the output. Its position is the Value parameter.
+- [windowCOMP](#window--windowcomp) — Opens a separate OS window showing an operator (TouchDesigner Window COMP).
 
-**DAT** (19)
+**DAT** (20)
 
 - [chopexecuteDAT](#chop-execute--chopexecutedat) — Python callbacks when a watched channel changes or crosses a threshold.
 - [choptodatDAT](#chop-to-dat--choptodatdat) — Channels as a table of numbers.
@@ -80,6 +82,7 @@ Generated from the operator registry — the same table the editor builds its me
 - [mergeDAT](#merge--mergedat) — Join two DATs by rows or by columns.
 - [nullDAT](#null--nulldat) — Pass-through. A stable name to reference.
 - [outDAT](#out--outdat) — This component's data output.
+- [panelexecuteDAT](#panel-execute--panelexecutedat) — Python callbacks when a panel value changes.
 - [parameterexecuteDAT](#parameter-execute--parameterexecutedat) — Python callbacks when a watched parameter changes.
 - [scriptDAT](#script--scriptdat) — Rows produced by a Python script.
 - [selectDAT](#select--selectdat) — Pick rows and columns, by name or index.
@@ -613,6 +616,8 @@ Smooth or random noise over time.
 | Type | `type` | `smooth` | `smooth` · `random` |
 | Channels | `channels` | `1` | 1 … 8 |
 | Name | `name` | `noise` |  |
+| Length | `length` | `600` | 1 … 8192 |
+| Time Slice | `timeslice` | `false` |  |
 | Period | `period` | `1` | 0.01 … 10 |
 | Amplitude | `amplitude` | `1` | 0 … 4 |
 | Offset | `offset` | `0` | -2 … 2 |
@@ -669,6 +674,18 @@ Panel widget values as channels.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Panel COMPs (paths) | `ops` | *(empty)* |  |
+
+### Parameter — `parameterCHOP`
+
+Another operator's parameter values as channels (does not cook that operator).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Operator | `op` | `..` |  |
+| Parameters | `parameters` | `value` |  |
+| Channel Name | `name` | `v` |  |
 
 ### Particle — `particleCHOP`
 
@@ -885,6 +902,7 @@ A button on the output. Its state is the Value parameter.
 | Y | `y` | `0.05` | 0 … 1 |
 | Width | `w` | `0.2` | 0 … 1 |
 | Height | `h` | `0.08` | 0 … 1 |
+| Align Order | `alignorder` | `0` |  |
 | Label | `label` | *(empty)* |  |
 
 ### Camera — `cameraCOMP`
@@ -906,9 +924,35 @@ A viewpoint for a Render TOP.
 
 ### Container — `containerCOMP`
 
-A component that holds a sub-network.
+Groups panel COMPs (buttons, sliders, fields, nested containers) with layout and alignment.
+
+Groups **panel** COMPs — Button, Slider, Field, and nested Containers — into a control surface on the perform output. **Layout** (x, y, width, height) is in fractions of the parent panel; **Children → Align** lays out child panels in a row, column, or grid with spacing and margins, like TouchDesigner's Container COMP.
+
+Still holds a normal operator network (Out TOP, effects, etc.); panel layout is independent of network wiring.
 
 *No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0` | 0 … 1 |
+| Y | `y` | `0` | 0 … 1 |
+| Width | `w` | `1` | 0 … 1 |
+| Height | `h` | `1` | 0 … 1 |
+| Align Order | `alignorder` | `0` |  |
+| Label | `label` | *(empty)* |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.08` | 0 … 1 |
+| Background G | `bgcolorg` | `0.09` | 0 … 1 |
+| Background B | `bgcolorb` | `0.11` | 0 … 1 |
+| Background Alpha | `bgalpha` | `0.85` | 0 … 1 |
+| Align | `align` | `none` | `none` · `horizlr` · `horizrl` · `verttb` · `vertbt` · `gridrows` · `gridcols` |
+| Spacing | `spacing` | `0.02` | 0 … 0.5 |
+| Margin L | `marginl` | `0.02` | 0 … 0.5 |
+| Margin R | `marginr` | `0.02` | 0 … 0.5 |
+| Margin T | `margint` | `0.02` | 0 … 0.5 |
+| Margin B | `marginb` | `0.02` | 0 … 0.5 |
 
 ### Field — `fieldCOMP`
 
@@ -923,6 +967,7 @@ An editable text field on the output.
 | Y | `y` | `0.05` | 0 … 1 |
 | Width | `w` | `0.2` | 0 … 1 |
 | Height | `h` | `0.08` | 0 … 1 |
+| Align Order | `alignorder` | `0` |  |
 | Label | `label` | *(empty)* |  |
 
 ### Geometry — `geometryCOMP`
@@ -1001,7 +1046,28 @@ A fader on the output. Its position is the Value parameter.
 | Y | `y` | `0.05` | 0 … 1 |
 | Width | `w` | `0.2` | 0 … 1 |
 | Height | `h` | `0.08` | 0 … 1 |
+| Align Order | `alignorder` | `0` |  |
 | Label | `label` | *(empty)* |  |
+
+### Window — `windowCOMP`
+
+Opens a separate OS window showing an operator (TouchDesigner Window COMP).
+
+Turn **Open** on to show **Operator** (`winop`) in its own window — a TOP directly, or a COMP via its Out TOP. Leave **Operator** blank to use this component's own Out TOP.
+
+**Performance** sets the perform output to the COMP that owns what you are showing and switches the main window into perform mode, like TouchDesigner's perform window pulse.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Operator | `winop` | *(empty)* |  |
+| Title | `title` | `Window` |  |
+| Width | `winw` | `1280` | 64 … 16384 |
+| Height | `winh` | `720` | 64 … 16384 |
+| Borders | `borders` | `true` |  |
+| Open | `open` | `false` |  |
+| Performance | `performance` | `false` |  |
 
 ---
 
@@ -1097,6 +1163,26 @@ This component's data output.
 
 **Inputs:** in
 
+### Panel Execute — `panelexecuteDAT`
+
+Python callbacks when a panel value changes.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Panels | `panels` | `..` |  |
+| Panel Value | `panelvalue` | `value` |  |
+| Off to On | `offtoon` | `true` |  |
+| On to Off | `ontooff` | `true` |  |
+| Value Change | `valuechange` | `true` |  |
+| While On | `whileon` | `false` |  |
+| While Off | `whileoff` | `false` |  |
+| Callbacks | `source` | *(multi-line)* |  |
+
 ### Parameter Execute — `parameterexecuteDAT`
 
 Python callbacks when a watched parameter changes.
@@ -1108,8 +1194,9 @@ Python callbacks when a watched parameter changes.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Active | `active` | `true` |  |
-| Watch Operator | `op` | *(empty)* |  |
+| OPs | `op` | *(empty)* |  |
 | Parameters | `parameters` | `*` |  |
+| Value Change | `valuechange` | `true` |  |
 | Callbacks | `source` | *(multi-line)* |  |
 
 ### Script — `scriptDAT`
@@ -2030,7 +2117,7 @@ The picture's own size wins: `Fallback W`/`H` is only what to show before the fi
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | File | `file` | *(empty)* |  |
-| Play | `play` | `loop` | `loop` · `once` · `hold` |
+| Play Mode | `play` | `loop` | `loop` · `once` · `hold` |
 | Speed | `speed` | `1` | -4 … 4 |
 | Fallback W | `resw` | `1280` | 1 … 16384 |
 | Fallback H | `resh` | `720` | 1 … 16384 |
