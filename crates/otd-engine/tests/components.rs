@@ -5,7 +5,9 @@
 //! caches and it animates by the same rules — while being a whole network
 //! inside.
 
-use otd_core::{CookContext, CookEngine, Graph, NodeId, OpRegistry, Value};
+use otd_core::{
+    copy_selection, paste, CookContext, CookEngine, Graph, NodeId, OpRegistry, Value,
+};
 use otd_engine::{Engines, registry};
 use otd_gpu::{GpuContext, read_pixels_rgba8};
 
@@ -31,7 +33,7 @@ fn add(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, op: &str, name: &str
 
 /// A component that darkens whatever is fed to it.
 fn darkener(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, name: &str) -> NodeId {
-    let comp = add(graph, reg, parent, "containerCOMP", name);
+    let comp = add(graph, reg, parent, "baseCOMP", name);
     let inp = add(graph, reg, comp, "inTOP", "in1");
     let level = add(graph, reg, comp, "levelTOP", "level1");
     let outp = add(graph, reg, comp, "outTOP", "out1");
@@ -48,7 +50,7 @@ fn an_in_operator_becomes_a_connector_on_the_component() {
     let reg = registry();
     let mut graph = Graph::new();
     let root = graph.root();
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "comp1");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "comp1");
 
     assert_eq!(
         graph.node(comp).inputs.len(),
@@ -68,6 +70,24 @@ fn an_in_operator_becomes_a_connector_on_the_component() {
     assert_eq!(graph.output_family(comp), None);
     let _out = add(&mut graph, &reg, comp, "outTOP", "out1");
     assert_eq!(graph.output_family(comp), Some(otd_core::Family::Top));
+}
+
+#[test]
+fn a_component_with_two_out_operators_exposes_both_connectors() {
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "dual");
+    let _chop_out = add(&mut graph, &reg, comp, "outCHOP", "out1");
+    let _top_out = add(&mut graph, &reg, comp, "outTOP", "out2");
+    assert_eq!(graph.comp_out_connectors(comp).len(), 2);
+    assert_eq!(graph.output_family_at(comp, 0), Some(otd_core::Family::Chop));
+    assert_eq!(graph.output_family_at(comp, 1), Some(otd_core::Family::Top));
+
+    let null = add(&mut graph, &reg, root, "nullCHOP", "null1");
+    let out = add(&mut graph, &reg, root, "nullTOP", "out1");
+    graph.connect_from_output(comp, 0, null, 0).unwrap();
+    graph.connect_from_output(comp, 1, out, 0).unwrap();
 }
 
 #[test]
@@ -262,7 +282,7 @@ fn custom_parameters_are_a_components_api() {
     let root = graph.root();
 
     // A component with one knob, read by the Level inside it.
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "tint");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "tint");
     graph.add_custom_param(
         comp,
         "gain",
@@ -318,7 +338,7 @@ fn a_custom_parameter_round_trips_with_its_definition() {
     let reg = registry();
     let mut graph = Graph::new();
     let root = graph.root();
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "tint");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "tint");
     graph.add_custom_param(
         comp,
         "gain",
@@ -352,7 +372,7 @@ fn a_chop_component_works_the_same_way() {
     let mut graph = Graph::new();
     let root = graph.root();
 
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "smooth");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "smooth");
     let inp = add(&mut graph, &reg, comp, "inCHOP", "in1");
     let lag = add(&mut graph, &reg, comp, "lagCHOP", "lag1");
     let outp = add(&mut graph, &reg, comp, "outCHOP", "out1");
@@ -372,4 +392,24 @@ fn a_chop_component_works_the_same_way() {
         .connect(lfo, comp, 0)
         .expect("CHOP into a CHOP connector");
     assert_eq!(graph.output_family(comp), Some(otd_core::Family::Chop));
+}
+
+#[test]
+fn indat_cut_pastes_into_another_base() {
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let a = add(&mut graph, &reg, root, "baseCOMP", "a");
+    let b = add(&mut graph, &reg, root, "baseCOMP", "b");
+    let in_a = add(&mut graph, &reg, a, "inDAT", "in1");
+
+    let clip = copy_selection(&graph, a, &[in_a], &reg);
+    assert_eq!(clip.nodes.len(), 1);
+    assert_eq!(clip.nodes[0].op, "inDAT");
+    assert_eq!(clip.nodes[0].path, "in1");
+
+    graph.remove(in_a).unwrap();
+    let pasted = paste(&mut graph, b, &reg, &clip, [40.0, 20.0]).unwrap();
+    assert_eq!(pasted.len(), 1);
+    assert_eq!(graph.node(b).input_families, vec![otd_core::Family::Dat]);
 }
