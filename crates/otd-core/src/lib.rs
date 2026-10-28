@@ -6,6 +6,8 @@
 //! (PLAN.md §3).
 
 pub mod bundle;
+pub mod channel_pattern;
+pub mod clipboard;
 pub mod component;
 pub mod cook;
 pub mod crossing;
@@ -22,6 +24,13 @@ pub mod value;
 mod test_ops;
 
 pub use bundle::Bundle;
+pub use channel_pattern::{
+    channel_count_from_name, channel_name_at, expand_channel_names, numbered_pattern_matches,
+    parse_numbered_pattern, pattern_matches_channel, rename_to_at, NumberedPattern,
+};
+pub use clipboard::{
+    copy_selection, decode_operator_clipboard, encode_operator_clipboard, paste, NodeClipboard,
+};
 pub use component::Component;
 pub use cook::{CookContext, CookEngine, CookError, Cooker, FrameStats};
 pub use crossing::{ChannelView, Crossing, Crossings};
@@ -30,7 +39,7 @@ pub use expr::{ChannelSource, EvalContext, Expr};
 pub use graph::{Connector, Family, Graph, GraphError, Node, NodeFlags, NodeId, OpDef, OpRegistry};
 pub use history::History;
 pub use param::{Param, ParamMode};
-pub use project::Project;
+pub use project::{Project, ProjectSettings};
 pub use value::Value;
 
 pub use indexmap;
