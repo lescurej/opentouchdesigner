@@ -263,7 +263,7 @@ fn looks_like_an_image(path: &std::path::Path) -> bool {
 /// what the drop will do. An overlay that says "Movie File In" over a bar
 /// that is about to attach a reference is worse than no overlay.
 pub fn would_claim(app: &OtdApp, paths: &[std::path::PathBuf], at: Option<egui::Pos2>) -> bool {
-    if !app.assistant.bar || app.assistant.collapsed || app.perform {
+    if !app.assistant.bar || app.assistant.collapsed || app.perform_preview_only() {
         return false;
     }
     let Some(at) = at else { return false };
@@ -386,7 +386,7 @@ pub fn bar(app: &mut OtdApp, ctx: &egui::Context) {
     if app.assistant.watch.is_some() {
         ctx.request_repaint();
     }
-    if app.perform {
+    if app.perform_preview_only() {
         return;
     }
 
@@ -1247,7 +1247,9 @@ fn land(app: &mut OtdApp, plan: &patch::Plan, broken: Vec<(String, String)>) -> 
     match patch::apply(&mut app.graph, current, &app.registry, plan) {
         Ok((applied, viewer)) => {
             if let Some(viewer) = viewer {
-                app.viewer = Some(viewer);
+                if app.graph.node(viewer).family == otd_core::Family::Comp {
+                    app.set_perform_ui(viewer);
+                }
             }
             // A plan may now remove nodes, so ids held outside the graph can
             // be stale the moment it lands. The cook takes a removed node as
@@ -1261,7 +1263,14 @@ fn land(app: &mut OtdApp, plan: &patch::Plan, broken: Vec<(String, String)>) -> 
             if let Some(id) = app.selected {
                 app.select_only(id);
             }
-            if !app.viewer.map(|id| app.graph.contains(id)).unwrap_or(false) {
+            if !app
+                .viewer
+                .map(|id| {
+                    app.graph.contains(id)
+                        && app.graph.node(id).family == otd_core::Family::Comp
+                })
+                .unwrap_or(false)
+            {
                 app.viewer = None;
             }
 
