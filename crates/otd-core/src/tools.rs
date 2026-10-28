@@ -27,6 +27,30 @@ pub const MEDIA_DIRECTORIES: &[&str] = &[
     "/snap/bin",
 ];
 
+/// Directories next to this executable where a shipped copy of ffmpeg may live.
+pub fn bundled_tool_directories() -> Vec<PathBuf> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let mut out = vec![dir.to_path_buf()];
+    if let Some(mac_os) = dir
+        .parent()
+        .and_then(|contents| contents.parent())
+        .filter(|p| p.file_name().is_some_and(|n| n == "Contents"))
+    {
+        out.push(mac_os.join("Resources/bin"));
+        out.push(mac_os.join("Resources"));
+    }
+    if let Some(parent) = dir.parent() {
+        out.push(parent.join("bin"));
+        out.push(parent.join("lib/otd/bin"));
+    }
+    out
+}
+
 /// A file that exists and can be run.
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
@@ -61,6 +85,12 @@ pub fn find_in(name: &str, path: &std::ffi::OsStr, also: &[&str]) -> Option<Path
     } else {
         name.to_string()
     };
+    for dir in bundled_tool_directories() {
+        let candidate = dir.join(&exe);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
     std::env::split_paths(path)
         .chain(also.iter().map(PathBuf::from))
         .map(|dir| dir.join(&exe))
@@ -94,9 +124,18 @@ pub fn media_tools_installed() -> bool {
 
 /// One wording for the one thing the user has to do about it.
 pub fn missing_ffmpeg() -> String {
-    "ffmpeg is not installed, or not where this app can find it \
-     (macOS: brew install ffmpeg)"
-        .to_string()
+    let install = if cfg!(target_os = "macos") {
+        "Install: brew install ffmpeg — or ship ffmpeg in the app bundle \
+         (Contents/Resources/bin/ffmpeg)."
+    } else if cfg!(target_os = "windows") {
+        "Install ffmpeg and add it to PATH, or place ffmpeg.exe next to the app."
+    } else {
+        "Install ffmpeg (your package manager), or place it next to the executable."
+    };
+    format!(
+        "ffmpeg is not installed or not where this app can find it. {install} \
+         Stills (PNG/JPEG/…) work without ffmpeg; movies and cameras need it today."
+    )
 }
 
 #[cfg(test)]

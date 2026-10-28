@@ -24,6 +24,14 @@ use crate::param::Param;
 pub const FORMAT_ID: &str = "opentouchdesigner-project";
 pub const FORMAT_VERSION: u32 = 1;
 
+fn normalize_legacy_comp_op(op: &str) -> &str {
+    if op == "container" {
+        "baseCOMP"
+    } else {
+        op
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
     #[error("not an OpenTouchDesigner project file")]
@@ -79,6 +87,34 @@ fn is_default_flags(f: &NodeFlags) -> bool {
     *f == NodeFlags::default()
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ProjectSettings {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub main_perform_window: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub main_perform_ui: String,
+    #[serde(default)]
+    pub start_in_perform_mode: bool,
+    #[serde(default)]
+    pub designer_custom_position: bool,
+    #[serde(default)]
+    pub designer_x: f32,
+    #[serde(default)]
+    pub designer_y: f32,
+    #[serde(default = "default_designer_w")]
+    pub designer_w: f32,
+    #[serde(default = "default_designer_h")]
+    pub designer_h: f32,
+}
+
+fn default_designer_w() -> f32 {
+    1600.0
+}
+
+fn default_designer_h() -> f32 {
+    980.0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     pub format: String,
@@ -86,6 +122,8 @@ pub struct Project {
     #[serde(default = "default_fps")]
     pub fps: f64,
     pub nodes: Vec<NodeEntry>,
+    #[serde(default)]
+    pub settings: ProjectSettings,
 }
 
 fn default_fps() -> f64 {
@@ -118,6 +156,7 @@ impl Project {
             version: FORMAT_VERSION,
             fps,
             nodes: entries.into_values().collect(),
+            settings: ProjectSettings::default(),
         }
     }
 
@@ -170,8 +209,9 @@ impl Project {
                     .get(&parent_path)
                     .ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?
             };
+            let op = normalize_legacy_comp_op(&entry.op);
             let def = registry
-                .get(&entry.op)
+                .get(op)
                 .ok_or_else(|| ProjectError::UnknownOp {
                     op: entry.op.clone(),
                     path: entry.path.clone(),
@@ -221,6 +261,12 @@ impl Project {
 
         // Clones can only be resolved once every node exists.
         graph.sync_clones(registry);
+
+        for id in graph.walk() {
+            if graph.node(id).family == crate::graph::Family::Comp {
+                graph.sync_connectors(id);
+            }
+        }
 
         Ok(graph)
     }
