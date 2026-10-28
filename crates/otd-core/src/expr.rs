@@ -15,10 +15,12 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
     Num(f64),
+    Str(String),
     Var(String),
     Neg(Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
+    Subscript(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,10 +84,19 @@ pub trait ChannelSource {
         Vec::new()
     }
 
-    /// A custom parameter on the component containing `node_path` — how the
-    /// operators inside a component read its API (`parent.speed`).
+    /// A parameter on the parent component of `node_path` (`parent.label`, etc.).
     fn parent_param(&self, _node_path: &str, _param: &str) -> Option<crate::value::Value> {
         None
+    }
+
+    /// Turn a reference-parameter path into an absolute operator path, from
+    /// the operator at `from_operator_path`. Default: only absolute paths.
+    fn resolve_operator_path(
+        &self,
+        _from_operator_path: &str,
+        reference: &str,
+    ) -> Option<String> {
+        reference.starts_with('/').then(|| reference.to_string())
     }
 
     /// Evaluate an expression the built-in language could not parse.
@@ -163,21 +174,62 @@ impl Expr {
     /// This is what drives `time_dependent` propagation in the cook engine.
     pub fn is_time_dependent(&self) -> bool {
         match self {
-            Expr::Num(_) => false,
+            Expr::Num(_) | Expr::Str(_) => false,
             Expr::Var(name) => TIME_VARS.contains(&name.as_str()),
             Expr::Neg(e) => e.is_time_dependent(),
             Expr::Bin(_, a, b) => a.is_time_dependent() || b.is_time_dependent(),
-            Expr::Call(_, args) => args.iter().any(|a| a.is_time_dependent()),
+            Expr::Call(name, args) => {
+                name == "ch"
+                    || name == "par"
+                    || name == "op"
+                    || args.iter().any(|a| a.is_time_dependent())
+            }
+            Expr::Subscript(a, b) => a.is_time_dependent() || b.is_time_dependent(),
+        }
+    }
+
+    pub fn referenced_paths(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_referenced_paths(&mut out);
+        out
+    }
+
+    fn collect_referenced_paths(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Subscript(a, b) => {
+                a.collect_referenced_paths(out);
+                b.collect_referenced_paths(out);
+            }
+            Expr::Call(name, args) if matches!(name.as_str(), "ch" | "par" | "op") => {
+                if let Some(Expr::Str(p)) = args.first() {
+                    let p = p.trim();
+                    if !p.is_empty() && !out.iter().any(|x| x == p) {
+                        out.push(p.to_string());
+                    }
+                }
+                for a in args {
+                    a.collect_referenced_paths(out);
+                }
+            }
+            Expr::Neg(e) => e.collect_referenced_paths(out),
+            Expr::Bin(_, a, b) => {
+                a.collect_referenced_paths(out);
+                b.collect_referenced_paths(out);
+            }
+            Expr::Call(_, args) => {
+                for a in args {
+                    a.collect_referenced_paths(out);
+                }
+            }
+            _ => {}
         }
     }
 
     pub fn eval(&self, ctx: &EvalContext) -> Result<f64, ExprError> {
         match self {
             Expr::Num(v) => Ok(*v),
+            Expr::Str(_) => Err(ExprError("string literal is not a number".into())),
             Expr::Var(name) => {
-                // `parent.speed` reads a custom parameter on the enclosing
-                // component — the mechanism that turns a component into a
-                // reusable thing with knobs.
                 if let Some(param) = name.strip_prefix("parent.") {
                     if let (Some(net), Some(path)) = (ctx.channels, ctx.path) {
                         if let Some(v) = net.parent_param(path, param) {
@@ -185,7 +237,7 @@ impl Expr {
                         }
                     }
                     return Err(ExprError(format!(
-                        "no custom parameter `{param}` on the parent component"
+                        "no parameter `{param}` on the parent component"
                     )));
                 }
                 eval_var(name, ctx)
@@ -208,12 +260,27 @@ impl Expr {
                     BinOp::Ne => bool_f64(a != b),
                 })
             }
-            Expr::Call(name, args) => {
-                let a: Result<Vec<f64>, ExprError> = args.iter().map(|e| e.eval(ctx)).collect();
-                eval_call(name, &a?)
-            }
+            Expr::Call(name, args) => eval_call_expr(name, args, ctx),
+            Expr::Subscript(base, key) => eval_subscript(base, key, ctx),
         }
     }
+}
+
+fn eval_subscript(base: &Expr, key: &Expr, ctx: &EvalContext) -> Result<f64, ExprError> {
+    let Expr::Call(name, args) = base else {
+        return Err(ExprError("subscript is only supported on op(...)".into()));
+    };
+    if name != "op" || args.len() != 1 {
+        return Err(ExprError("subscript is only supported on op(...)".into()));
+    }
+    let op = resolve_op_path(expr_string(&args[0])?, ctx);
+    let chan = expr_string(key)?;
+    let Some(net) = ctx.channels else {
+        return Err(ExprError("op()['chan'] needs a cooked network".into()));
+    };
+    net.channel(&op, &chan)
+        .map(f64::from)
+        .ok_or_else(|| ExprError(format!("no channel `{chan}` on `{op}`")))
 }
 
 fn bool_f64(b: bool) -> f64 {
@@ -239,6 +306,65 @@ fn eval_var(name: &str, ctx: &EvalContext) -> Result<f64, ExprError> {
         "False" | "false" => 0.0,
         other => return Err(ExprError(format!("unknown name `{other}`"))),
     })
+}
+
+fn expr_string(e: &Expr) -> Result<&str, ExprError> {
+    match e {
+        Expr::Str(s) => Ok(s.as_str()),
+        _ => Err(ExprError("expected a string literal".into())),
+    }
+}
+
+fn resolve_op_path(op: &str, ctx: &EvalContext) -> String {
+    let op = op.trim();
+    if op.starts_with('/') {
+        return op.to_string();
+    }
+    let Some(path) = ctx.path else {
+        return format!("/{op}");
+    };
+    let base = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+    if base.is_empty() {
+        format!("/{op}")
+    } else {
+        format!("{base}/{op}")
+    }
+}
+
+fn eval_call_expr(name: &str, args: &[Expr], ctx: &EvalContext) -> Result<f64, ExprError> {
+    if name == "ch" {
+        if args.len() != 2 {
+            return Err(ExprError("ch() takes 2 arguments".into()));
+        }
+        let op = resolve_op_path(expr_string(&args[0])?, ctx);
+        let chan = expr_string(&args[1])?;
+        let Some(net) = ctx.channels else {
+            return Err(ExprError("ch() needs a cooked network".into()));
+        };
+        return net
+            .channel(&op, chan)
+            .map(f64::from)
+            .ok_or_else(|| ExprError(format!("no channel `{chan}` on `{op}`")));
+    }
+    if name == "op" {
+        return Err(ExprError("op(...) must be followed by ['channel']".into()));
+    }
+    if name == "par" {
+        if args.len() != 2 {
+            return Err(ExprError("par() takes 2 arguments".into()));
+        }
+        let op = resolve_op_path(expr_string(&args[0])?, ctx);
+        let param = expr_string(&args[1])?;
+        let Some(net) = ctx.channels else {
+            return Err(ExprError("par() needs a cooked network".into()));
+        };
+        return net
+            .param_value(&op, param)
+            .map(|v| v.as_f64())
+            .ok_or_else(|| ExprError(format!("no parameter `{param}` on `{op}`")));
+    }
+    let a: Result<Vec<f64>, ExprError> = args.iter().map(|e| e.eval(ctx)).collect();
+    eval_call(name, &a?)
 }
 
 fn eval_call(name: &str, a: &[f64]) -> Result<f64, ExprError> {
@@ -316,10 +442,13 @@ fn eval_call(name: &str, a: &[f64]) -> Result<f64, ExprError> {
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Num(f64),
+    Str(String),
     Ident(String),
     Op(BinOp),
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     Comma,
     Minus,
 }
@@ -338,6 +467,14 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, ExprError> {
             }
             ')' => {
                 out.push(Tok::RParen);
+                i += 1;
+            }
+            '[' => {
+                out.push(Tok::LBracket);
+                i += 1;
+            }
+            ']' => {
+                out.push(Tok::RBracket);
                 i += 1;
             }
             ',' => {
@@ -360,6 +497,20 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, ExprError> {
                     out.push(Tok::Op(BinOp::Mul));
                     i += 1;
                 }
+            }
+            '\'' | '"' => {
+                let quote = c;
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i] != quote {
+                    i += 1;
+                }
+                if i >= chars.len() {
+                    return Err(ExprError("unterminated string".into()));
+                }
+                let s: String = chars[start..i].iter().collect();
+                out.push(Tok::Str(s));
+                i += 1;
             }
             '/' => {
                 out.push(Tok::Op(BinOp::Div));
@@ -466,21 +617,24 @@ impl Parser {
     }
 
     fn parse_atom(&mut self) -> Result<Expr, ExprError> {
-        match self.tokens.get(self.pos).cloned() {
+        let atom = match self.tokens.get(self.pos).cloned() {
             Some(Tok::Minus) => {
                 self.pos += 1;
-                // Unary minus binds tighter than * but looser than **.
-                Ok(Expr::Neg(Box::new(self.parse_expr(4)?)))
+                Expr::Neg(Box::new(self.parse_expr(4)?))
             }
             Some(Tok::Num(v)) => {
                 self.pos += 1;
-                Ok(Expr::Num(v))
+                Expr::Num(v)
+            }
+            Some(Tok::Str(s)) => {
+                self.pos += 1;
+                Expr::Str(s)
             }
             Some(Tok::LParen) => {
                 self.pos += 1;
                 let e = self.parse_expr(0)?;
                 self.expect(Tok::RParen)?;
-                Ok(e)
+                e
             }
             Some(Tok::Ident(name)) => {
                 self.pos += 1;
@@ -498,19 +652,32 @@ impl Parser {
                         }
                     }
                     self.expect(Tok::RParen)?;
-                    Ok(Expr::Call(name, args))
+                    Expr::Call(name, args)
                 } else {
-                    Ok(Expr::Var(name))
+                    Expr::Var(name)
                 }
             }
-            other => Err(ExprError(format!(
-                "expected a value, found {}",
-                match other {
-                    None => "end of input".to_string(),
-                    Some(t) => format!("{t:?}"),
-                }
-            ))),
+            other => {
+                return Err(ExprError(format!(
+                    "expected a value, found {}",
+                    match other {
+                        None => "end of input".to_string(),
+                        Some(t) => format!("{t:?}"),
+                    }
+                )));
+            }
+        };
+        self.parse_suffix(atom)
+    }
+
+    fn parse_suffix(&mut self, mut atom: Expr) -> Result<Expr, ExprError> {
+        while self.peek() == Some(&Tok::LBracket) {
+            self.pos += 1;
+            let key = self.parse_expr(0)?;
+            self.expect(Tok::RBracket)?;
+            atom = Expr::Subscript(Box::new(atom), Box::new(key));
         }
+        Ok(atom)
     }
 
     fn expect(&mut self, t: Tok) -> Result<(), ExprError> {
@@ -565,6 +732,56 @@ mod tests {
         assert!(Expr::parse("sin(absTime * 2)").unwrap().is_time_dependent());
         assert!(Expr::parse("frame % 30").unwrap().is_time_dependent());
         assert!(!Expr::parse("1 + 2 * pi").unwrap().is_time_dependent());
+        assert!(Expr::parse("ch('/lfo1', 'chan1')").unwrap().is_time_dependent());
+    }
+
+    struct FakeNet;
+    impl ChannelSource for FakeNet {
+        fn channel(&self, op_path: &str, channel: &str) -> Option<f32> {
+            matches!((op_path, channel), ("/lfo1", "chan1") | ("/geo1/lfo1", "chan1"))
+                .then_some(0.25)
+        }
+        fn param_value(&self, op_path: &str, name: &str) -> Option<crate::Value> {
+            (op_path == "/blur1" && name == "size").then_some(crate::Value::Float(8.0))
+        }
+    }
+
+    #[test]
+    fn ch_and_par_read_the_network() {
+        let net = FakeNet;
+        let ctx = EvalContext {
+            frame: 0,
+            time: 0.0,
+            abs_time: 0.0,
+            fps: 60.0,
+            channels: Some(&net),
+            path: Some("/geo1/noise1"),
+            locals: &[],
+        };
+        let v = Expr::parse("ch('/lfo1', 'chan1')")
+            .unwrap()
+            .eval(&ctx)
+            .unwrap();
+        assert!((v - 0.25).abs() < 1e-6);
+        let v = Expr::parse("ch('lfo1', 'chan1')")
+            .unwrap()
+            .eval(&ctx)
+            .unwrap();
+        assert!((v - 0.25).abs() < 1e-6);
+        let v = Expr::parse("op('lfo1')['chan1']")
+            .unwrap()
+            .eval(&ctx)
+            .unwrap();
+        assert!((v - 0.25).abs() < 1e-6);
+        let refs = Expr::parse("op('lfo1')['chan1']")
+            .unwrap()
+            .referenced_paths();
+        assert_eq!(refs, vec!["lfo1"]);
+        let p = Expr::parse("par('/blur1', 'size')")
+            .unwrap()
+            .eval(&ctx)
+            .unwrap();
+        assert!((p - 8.0).abs() < 1e-6);
     }
 
     #[test]
