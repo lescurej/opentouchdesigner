@@ -97,75 +97,6 @@ pub fn classify(path: &Path) -> DropKind {
 
 /// Effects offered as "add this on top of what is selected", in submenus.
 ///
-/// Still a curated list rather than the registry: all 163 operators are a Tab
-/// away in the create dialog, and a menu of everything is a menu nobody reads.
-/// But the flat thirteen stopped being enough once the operator set tripled —
-/// a Corner Pin or a Luma Blur is exactly an "add this on top of that" move,
-/// and one that was only findable by knowing its name to type. Grouping is
-/// what buys the room: eight headings a person can scan beats thirty-five
-/// rows they have to read.
-///
-/// What is deliberately NOT here: operators that are plumbing rather than a
-/// look (RGB to HSV and back, Reorder), and the blend modes past the common
-/// few, which are one Composite TOP and its Operation menu.
-pub const EFFECT_GROUPS: &[(&str, &[&str])] = &[
-    (
-        "Colour",
-        &[
-            "levelTOP",
-            "lumalevelTOP",
-            "hsvadjustTOP",
-            "monochromeTOP",
-            "channelmixTOP",
-            "functionTOP",
-            "limitTOP",
-            "lookupTOP",
-        ],
-    ),
-    (
-        "Blur & Sharpen",
-        &["blurTOP", "lumablurTOP", "convolveTOP", "antialiasTOP"],
-    ),
-    (
-        "Edges",
-        &[
-            "edgeTOP",
-            "embossTOP",
-            "slopeTOP",
-            "normalmapTOP",
-            "thresholdTOP",
-            "toonTOP",
-        ],
-    ),
-    ("Keying", &["chromakeyTOP", "rgbkeyTOP", "matteTOP"]),
-    (
-        "Shape",
-        &[
-            "transformTOP",
-            "cornerpinTOP",
-            "lensdistortTOP",
-            "cropTOP",
-            "fitTOP",
-            "tileTOP",
-            "mirrorTOP",
-            "flipTOP",
-        ],
-    ),
-    ("Warp", &["displaceTOP", "remapTOP", "flowTOP"]),
-    (
-        "Blend",
-        &[
-            "compositeTOP",
-            "overTOP",
-            "addTOP",
-            "multiplyTOP",
-            "screenTOP",
-            "differenceTOP",
-        ],
-    ),
-    ("Time", &["feedbackTOP", "cacheTOP"]),
-];
-
 // ------------------------------------------------------------------ the loop
 
 /// Called once a frame. Reads what the window system dropped on us and turns
@@ -299,45 +230,86 @@ pub fn import_dialog(app: &mut OtdApp) {
 pub fn add_webcam(app: &mut OtdApp) {
     let pos = default_pos(app);
     if let Some(id) = create_named(app, otd_gpu::ops::VIDEO_DEVICE_IN, pos, "camera") {
-        app.viewer = Some(id);
+        app.graph.node_mut(id).flags.viewer = true;
         app.status =
             "Video Device In — the first frame arrives once the camera permission is granted"
                 .into();
     }
 }
 
-/// The effects list, as menu rows. Shared by the Media menu and the node's
-/// own right-click menu so the two cannot drift apart.
-pub fn effects_menu(app: &mut OtdApp, ui: &mut egui::Ui) {
-    // Collected up front: the registry lookup borrows `app`, and the click
-    // handler needs it mutably.
-    let groups: Vec<(
-        &'static str,
-        Vec<(&'static str, &'static str, &'static str)>,
-    )> = EFFECT_GROUPS
+const ADD_OP_FAMILIES: [otd_core::Family; 6] = [
+    otd_core::Family::Top,
+    otd_core::Family::Chop,
+    otd_core::Family::Sop,
+    otd_core::Family::Dat,
+    otd_core::Family::Mat,
+    otd_core::Family::Comp,
+];
+
+fn op_wires_after(def: &otd_core::OpDef, src: otd_core::Family) -> bool {
+    if def.inputs.is_empty() {
+        return true;
+    }
+    def.input_families
+        .first()
+        .copied()
+        .unwrap_or(def.family)
+        == src
+}
+
+/// Add-operator submenu. With `only_family`, lists that family only (node RMB).
+/// Otherwise one submenu per family. Operators are filtered to wire after the
+/// selected node when they have an input.
+pub fn add_operator_menu(
+    app: &mut OtdApp,
+    ui: &mut egui::Ui,
+    only_family: Option<otd_core::Family>,
+) {
+    let src_family = app
+        .selected
+        .filter(|s| app.graph.contains(*s))
+        .map(|s| app.graph.node(s).family);
+
+    let by_family: Vec<(otd_core::Family, Vec<(&str, &str, &str)>)> = ADD_OP_FAMILIES
         .iter()
-        .map(|(group, ops)| {
-            let rows = ops
+        .copied()
+        .filter(|family| only_family.is_none_or(|only| only == *family))
+        .map(|family| {
+            let mut ops: Vec<_> = app
+                .registry
                 .iter()
-                .filter_map(|t| app.registry.get(t))
+                .filter(|d| d.family == family)
+                .filter(|d| src_family.is_none_or(|src| op_wires_after(d, src)))
                 .map(|d| (d.type_name, d.label, d.summary))
                 .collect();
-            (*group, rows)
+            ops.sort_by_key(|(_, label, _)| label.to_lowercase());
+            (family, ops)
         })
         .collect();
 
-    for (group, rows) in groups {
-        ui.menu_button(group, |ui| {
-            for (type_name, label, summary) in rows {
-                if ui.button(label).on_hover_text(summary).clicked() {
-                    add_effect(app, type_name);
-                    ui.close();
-                }
-            }
-        });
+    for (family, ops) in &by_family {
+        if ops.is_empty() {
+            continue;
+        }
+        let mut list = |ui: &mut egui::Ui| {
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for (type_name, label, summary) in ops {
+                        if ui.button(*label).on_hover_text(*summary).clicked() {
+                            add_effect(app, type_name);
+                            ui.close();
+                        }
+                    }
+                });
+        };
+        if only_family.is_some() {
+            list(ui);
+        } else {
+            ui.menu_button(format!("Add {}", family.suffix()), list);
+        }
     }
-    // Whole chains, not one operator: the video recipes wire from the
-    // selected node the same way a single effect does.
+
     ui.separator();
     ui.menu_button("Recipes", |ui| {
         for recipe in otd_ai::recipes::all()
@@ -391,7 +363,7 @@ pub fn replace_file(app: &mut OtdApp, id: NodeId) {
     app.history.end_gesture();
     let stored = stored_path(app, &path);
     let _ = app.graph.set_param(id, "file", Value::Str(stored));
-    app.viewer = Some(id);
+    app.graph.node_mut(id).flags.viewer = true;
     app.status = format!(
         "{} -> {}",
         path.file_name().unwrap_or_default().to_string_lossy(),
@@ -429,7 +401,7 @@ pub fn add_effect(app: &mut OtdApp, type_name: &str) {
     if let Some(key) = by_param {
         let source = app.graph.node(src).name.clone();
         let _ = app.graph.set_param(id, key, Value::Str(source.clone()));
-        app.viewer = Some(id);
+        app.graph.node_mut(id).flags.viewer = true;
         app.status = format!("{} {key} = {source}", app.graph.node(id).name);
         return;
     }
@@ -438,7 +410,7 @@ pub fn add_effect(app: &mut OtdApp, type_name: &str) {
     // of the same action — undoing the effect has to take its wire with it.
     match app.graph.connect(src, id, 0) {
         Ok(()) => {
-            app.viewer = Some(id);
+            app.graph.node_mut(id).flags.viewer = true;
             app.status = format!(
                 "{} -> {}",
                 app.graph.node(src).name,
@@ -530,7 +502,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
             let _ = app.graph.set_param(id, "file", Value::Str(stored));
             // Show it. Somebody who just dropped a clip wants to see the clip,
             // not to be told which node to double-click.
-            app.viewer = Some(id);
+            app.graph.node_mut(id).flags.viewer = true;
             app.status = format!(
                 "{} — drop another on this node to swap the clip",
                 app.graph.node(id).name
@@ -563,6 +535,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
         DropKind::Component => {
             let id = app.import_component_at(path)?;
             app.graph.node_mut_quiet(id).pos = [pos.x, pos.y];
+            app.set_perform_ui(id);
             Some(id)
         }
         DropKind::Isf => {
@@ -573,7 +546,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
             let id = create_named(app, otd_gpu::ops::GLSL, pos, &stem)?;
             let count = isf.params.len();
             otd_gpu::isf::apply(&mut app.graph, id, &isf);
-            app.viewer = Some(id);
+            app.graph.node_mut(id).flags.viewer = true;
             app.status = format!("{stem} — {count} parameter(s)");
             Some(id)
         }
@@ -584,7 +557,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
                 .graph
                 .set_param(id, "language", Value::Str(language.into()));
             let _ = app.graph.set_param(id, "source", Value::Str(source));
-            app.viewer = Some(id);
+            app.graph.node_mut(id).flags.viewer = true;
             Some(id)
         }
         DropKind::Table(delimiter) => {
@@ -608,7 +581,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
             let id = create_named(app, otd_gpu::ops::TEXT, pos, &stem)?;
             let _ = app.graph.set_param(id, "font", Value::Str(stored));
             let _ = app.graph.set_param(id, "text", Value::Str(stem));
-            app.viewer = Some(id);
+            app.graph.node_mut(id).flags.viewer = true;
             Some(id)
         }
         DropKind::Project | DropKind::Unknown => None,
@@ -637,7 +610,7 @@ fn retarget(app: &mut OtdApp, target: NodeId, path: &Path) -> bool {
         app.edit("set file");
         app.history.end_gesture();
         let _ = app.graph.set_param(target, "file", Value::Str(stored));
-        app.viewer = Some(target);
+        app.graph.node_mut(target).flags.viewer = true;
         app.selected = Some(target);
         app.status = format!(
             "{} -> {}",
@@ -677,7 +650,7 @@ fn retarget(app: &mut OtdApp, target: NodeId, path: &Path) -> bool {
         Ok(()) => {
             // Keep the eye on the node being fed, not on the raw clip: the
             // point of dropping onto a blur is to see the blurred clip.
-            app.viewer = Some(target);
+            app.graph.node_mut(target).flags.viewer = true;
             app.status = format!(
                 "{} -> {}",
                 app.graph.node(id).name,
@@ -887,39 +860,20 @@ mod tests {
     }
 
     #[test]
-    fn every_effect_in_the_menu_exists() {
+    fn add_operator_menu_lists_every_registered_op_by_family() {
         let registry = otd_engine::registry();
-        for (group, ops) in EFFECT_GROUPS {
-            for type_name in *ops {
-                assert!(
-                    registry.get(type_name).is_some(),
-                    "{type_name} is offered under {group} but is not registered"
-                );
-            }
+        for family in ADD_OP_FAMILIES {
+            let count = registry.iter().filter(|d| d.family == family).count();
+            assert!(count > 0, "no {family:?} operators in registry");
         }
     }
 
-    /// A menu row that silently does nothing is worse than a missing one.
-    ///
-    /// `add_effect` puts the new operator downstream of what is selected, so
-    /// every entry needs somewhere for that source to go: an input to wire
-    /// into, or one of the two operators `add_effect` fills by parameter.
-    /// Anything else appears in the menu, gets clicked, and sits unconnected.
     #[test]
-    fn every_effect_in_the_menu_can_be_given_the_selected_node() {
+    fn add_operator_wiring_filter_accepts_matching_first_input() {
         let registry = otd_engine::registry();
-        for (_, ops) in EFFECT_GROUPS {
-            for type_name in *ops {
-                let def = registry.get(type_name).unwrap();
-                let by_param =
-                    *type_name == otd_gpu::ops::FEEDBACK || *type_name == otd_gpu::ops::SELECT;
-                assert!(
-                    !def.inputs.is_empty() || by_param,
-                    "{type_name} has no input and is not filled by parameter, so \
-                     adding it after a node leaves it unconnected"
-                );
-            }
-        }
+        let blur = registry.get("blurTOP").unwrap();
+        assert!(op_wires_after(blur, otd_core::Family::Top));
+        assert!(!op_wires_after(blur, otd_core::Family::Chop));
     }
 
     /// Filling Feedback's target must not make it a cook dependency.
@@ -939,17 +893,4 @@ mod tests {
         );
     }
 
-    /// No operator offered twice, under two headings.
-    #[test]
-    fn the_effect_groups_do_not_overlap() {
-        let mut seen: Vec<&str> = EFFECT_GROUPS
-            .iter()
-            .flat_map(|(_, o)| *o)
-            .copied()
-            .collect();
-        let total = seen.len();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(total, seen.len(), "an effect is listed under two groups");
-    }
 }
