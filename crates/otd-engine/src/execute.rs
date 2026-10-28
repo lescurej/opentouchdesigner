@@ -31,6 +31,9 @@ pub fn roots(graph: &Graph) -> Vec<NodeId> {
 pub fn is_execute(op_type: &str) -> bool {
     matches!(
         op_type,
-        otd_dat::ops::EXECUTE | "chopexecuteDAT" | "parameterexecuteDAT"
+        otd_dat::ops::EXECUTE
+            | "chopexecuteDAT"
+            | "parameterexecuteDAT"
+            | otd_dat::ops::PANEL_EXECUTE
     )
 }
