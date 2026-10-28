@@ -1,8 +1,9 @@
 //! Application state and the per-frame loop.
 //!
 //! The loop is: advance time -> collect cook roots -> pull -> draw. Roots are
-//! the big viewer plus every node whose viewer is on *and* which is currently
-//! on screen. That last condition is what makes the demand-driven engine
+//! the perform-output operator, every node whose viewer flag is on and on
+//! screen, and render/cook roots. That visibility rule is what makes the
+//! demand-driven engine
 //! visible to the user: pan a heavy branch off screen and it stops costing
 //! anything (PLAN.md §4).
 
@@ -13,7 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use egui::TextureId;
-use otd_core::{CookContext, CookEngine, Graph, History, NodeId, OpRegistry, Project, Value};
+use otd_core::{
+    copy_selection, paste, CookContext, CookEngine, Graph, History, NodeClipboard, NodeId,
+    OpRegistry, Project, Value,
+};
 use otd_engine::Engines;
 use otd_gpu::GpuContext;
 
@@ -50,6 +54,8 @@ pub struct OtdApp {
     /// Everything selected, primary included. Delete and drag act on all of
     /// it; the parameter panel acts on `selected`.
     pub selection: BTreeSet<NodeId>,
+    pub selected_wire: Option<(NodeId, usize)>,
+    /// Legacy cache; use [`Self::perform_ui`] (Window Placement → Perform UI container).
     pub viewer: Option<NodeId>,
     /// The component whose network is on screen. Entering a component is
     /// just changing this — the graph is one tree throughout.
@@ -66,9 +72,14 @@ pub struct OtdApp {
     pub show_perf: bool,
     /// The performance monitor window.
     pub show_monitor: bool,
+    pub show_textport: bool,
+    pub textport: crate::textport::Textport,
     /// Perform mode: the editor is gone and the main window shows only the
     /// output. F1 in, F1 or Escape out.
     pub perform: bool,
+    /// Edit the Perform UI container (network + parameters) without leaving
+    /// perform mode — F1 returns to fullscreen preview.
+    pub perform_edit: bool,
     /// What we last told the OS about the main window, so the fullscreen
     /// command is sent on the edge rather than every frame.
     perform_applied: bool,
@@ -77,9 +88,22 @@ pub struct OtdApp {
     /// A second window showing only the viewer output — the projector feed.
     pub output_window: bool,
     pub output_fullscreen: bool,
+    pub show_window_placement: bool,
+    pub main_perform_window: Option<NodeId>,
+    pub main_perform_window_path: String,
+    pub main_perform_ui_path: String,
+    pub start_in_perform_mode: bool,
+    pub designer_custom_position: bool,
+    pub designer_x: f32,
+    pub designer_y: f32,
+    pub designer_w: f32,
+    pub designer_h: f32,
+    pub(crate) designer_position_pending: bool,
     /// Set from inside the output viewport when the user closes it. The
     /// viewport callback is `'static` and cannot reach `self`.
     output_closed: Arc<AtomicBool>,
+    pub(crate) window_close_flags: HashMap<NodeId, Arc<AtomicBool>>,
+    pub open_container_views: BTreeSet<NodeId>,
 
     /// Mouse and keyboard, sampled each frame for the input CHOPs.
     pub input_state: otd_chop::InputState,
@@ -101,6 +125,23 @@ pub struct OtdApp {
     pub project_path: Option<PathBuf>,
     pub status: String,
     pub cook_error: Option<String>,
+    /// Last channel expression copied from the panel or a CHOP tile (for Apply).
+    pub channel_expr_clipboard: String,
+    node_clipboard: NodeClipboard,
+    paste_count: u32,
+    blur_params_on_select: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WireDrop {
+    FromOutput {
+        from: NodeId,
+        output: usize,
+    },
+    ToInput {
+        dst: NodeId,
+        input: usize,
+    },
 }
 
 pub struct CreateDialog {
@@ -111,6 +152,7 @@ pub struct CreateDialog {
     pub focus: bool,
     /// Wire this node's output into the new node's first input, if types allow.
     pub connect_from: Option<NodeId>,
+    pub wire_drop: Option<WireDrop>,
 }
 
 impl OtdApp {
@@ -142,6 +184,7 @@ impl OtdApp {
             smoothed_cook_ms: 0.0,
             selected: None,
             selection: BTreeSet::new(),
+            selected_wire: None,
             viewer: None,
             current: NodeId::default(),
             view: CanvasView::default(),
@@ -151,12 +194,28 @@ impl OtdApp {
             create_dialog_rect: None,
             show_perf: true,
             show_monitor: false,
+            show_textport: false,
+            textport: crate::textport::Textport::default(),
             perform: false,
+            perform_edit: false,
             perform_applied: false,
             recorder: None,
             output_window: false,
             output_fullscreen: false,
+            show_window_placement: false,
+            main_perform_window: None,
+            main_perform_window_path: String::new(),
+            main_perform_ui_path: String::new(),
+            start_in_perform_mode: false,
+            designer_custom_position: false,
+            designer_x: 100.0,
+            designer_y: 100.0,
+            designer_w: 1600.0,
+            designer_h: 980.0,
+            designer_position_pending: false,
             output_closed: Arc::new(AtomicBool::new(false)),
+            window_close_flags: HashMap::new(),
+            open_container_views: BTreeSet::new(),
             input_state: otd_chop::InputState::default(),
             new_param_name: String::new(),
             new_param_type: "float".to_string(),
@@ -168,19 +227,28 @@ impl OtdApp {
             project_path: None,
             status: String::new(),
             cook_error: None,
+            channel_expr_clipboard: String::new(),
+            node_clipboard: NodeClipboard::default(),
+            paste_count: 0,
+            blur_params_on_select: false,
         };
         // Not `starter`: that patch is the Phase 0 exit criterion, and an
         // animated grey noise field is a bad first argument for what this
         // tool is. `tunnel` is nine nodes, no shader, and looks like the
         // thing somebody opened the program hoping to make.
         app.load_demo("tunnel");
+        app.textport
+            .info(0, "Textport — cook errors, callbacks, and Python (Enter to run).");
+        if let Some(e) = app.engines.python_error() {
+            app.textport.error(0, e);
+        }
         Ok(app)
     }
 
     /// Load one of the built-in patches (see `otd_gpu::demo`). The editor
     /// opens on `starter`, which is the Phase 0 exit criterion made visible.
     pub fn load_demo(&mut self, name: &str) {
-        let Some((graph, out)) = otd_engine::demo::by_name(name, &self.registry) else {
+        let Some((graph, _out)) = otd_engine::demo::by_name(name, &self.registry) else {
             self.status = format!("no built-in patch called `{name}`");
             return;
         };
@@ -193,7 +261,12 @@ impl OtdApp {
         self.project_path = None;
         self.time = CookContext::default();
         self.current = self.graph.root();
-        self.viewer = Some(out);
+        self.viewer = self
+            .graph
+            .walk()
+            .into_iter()
+            .rev()
+            .find(|&id| self.graph.node(id).family == otd_core::Family::Comp);
         self.clear_selection();
         if let Some(first) = self.graph.walk().into_iter().nth(1) {
             self.select_only(first);
@@ -203,8 +276,69 @@ impl OtdApp {
 
     // -------------------------------------------------------------- cooking
 
+    pub fn perform_ui(&self) -> Option<NodeId> {
+        crate::window_comp::resolve_perform_ui(&self.graph, &self.main_perform_ui_path)
+    }
+
+    pub fn perform_preview_only(&self) -> bool {
+        self.perform && !self.perform_edit
+    }
+
+    pub fn focus_perform_ui_for_edit(&mut self) {
+        let Some(comp) = self.perform_ui() else {
+            return;
+        };
+        if self.graph.node(comp).family == otd_core::Family::Comp {
+            self.enter(comp);
+        }
+        self.select_only(comp);
+    }
+
+    pub fn leave_perform_for_edit(&mut self) {
+        self.perform = false;
+        self.perform_edit = false;
+        self.focus_perform_ui_for_edit();
+    }
+
+    pub fn view_panel_comp(&mut self, id: NodeId) {
+        if !self.graph.contains(id) || self.graph.node(id).family != otd_core::Family::Comp {
+            return;
+        }
+        if !otd_engine::panel::is_panel_type(&self.graph.node(id).op_type) {
+            return;
+        }
+        if self.graph.node(id).op_type == otd_engine::panel::CONTAINER {
+            self.open_container_views.insert(id);
+            self.viewer = Some(id);
+            return;
+        }
+        self.set_perform_ui(id);
+        self.perform = true;
+        self.perform_edit = false;
+    }
+
     fn cook_roots(&self) -> Vec<NodeId> {
-        cook_roots(&self.graph, self.viewer, &self.visible)
+        let perform_ui = self.perform_ui();
+        let mut roots = cook_roots(&self.graph, perform_ui, &self.visible, self.current);
+        crate::window_comp::append_cook_roots(&self.graph, &mut roots);
+        if let Some(top) = crate::window_comp::perform_display_top(
+            &self.graph,
+            self.main_perform_window,
+            perform_ui,
+        ) {
+            if !roots.contains(&top) {
+                roots.push(top);
+            }
+        }
+        if let Some(comp) = perform_ui {
+            crate::canvas::comp_display::append_perform_panel_cook_roots(
+                &self.graph,
+                comp,
+                &mut roots,
+            );
+        }
+        crate::container_view::append_cook_roots(&self.graph, &self.open_container_views, &mut roots);
+        roots
     }
 
     fn cook_frame(&mut self) {
@@ -247,24 +381,78 @@ impl OtdApp {
         self.engines.end_frame();
 
         self.cook_error = result.err().map(|e| e.to_string());
+        let frame = self.time.frame;
+        if let Some(err) = &self.cook_error {
+            if self.textport.last_cook_error.as_deref() != Some(err.as_str()) {
+                self.textport.error(frame, err.clone());
+                self.textport.last_cook_error = Some(err.clone());
+            }
+        } else {
+            self.textport.last_cook_error = None;
+        }
 
         // Between frames, where the graph is held mutably, is the only place a
         // callback's parameter change can land. See `otd_core::edit`.
         let edits = self.engines.take_edits();
         if !edits.is_empty() {
             let (applied, problems) = otd_core::edit::apply(&mut self.graph, &edits);
+            for p in &problems {
+                self.textport.warn(frame, p);
+            }
             if let Some(first) = problems.first() {
                 self.status = format!("callback: {first}");
             } else if applied > 0 {
                 self.status = format!("callback set {applied} parameter(s)");
+                self.textport
+                    .info(frame, format!("callback applied {applied} parameter edit(s)"));
             }
         }
+        for line in self.engines.take_script_log() {
+            self.textport.info(frame, line);
+        }
+
         let ms = self.cook.stats.total_cook_us as f64 / 1000.0;
         self.smoothed_cook_ms = self.smoothed_cook_ms * 0.9 + ms * 0.1;
     }
 
     /// The egui texture handle for a node's current output, registering or
     /// refreshing it only when the underlying texture object changed.
+    pub fn set_perform_ui(&mut self, id: NodeId) {
+        if !self.graph.contains(id) {
+            return;
+        }
+        if self.graph.node(id).family != otd_core::Family::Comp {
+            self.status = "Perform UI must be a COMP".into();
+            return;
+        }
+        self.edit("perform UI");
+        self.history.end_gesture();
+        self.main_perform_ui_path = self.graph.path(id);
+        self.viewer = Some(id);
+        self.enter(id);
+        self.select_only(id);
+    }
+
+    pub fn toggle_perform_ui(&mut self, id: NodeId) {
+        if self.perform_ui() == Some(id) {
+            self.edit("perform UI");
+            self.history.end_gesture();
+            self.main_perform_ui_path.clear();
+            self.viewer = None;
+        } else {
+            self.set_perform_ui(id);
+        }
+    }
+
+    pub fn perform_output_thumbnail(&mut self) -> Option<(TextureId, [u32; 2])> {
+        let out = crate::window_comp::perform_display_top(
+            &self.graph,
+            self.main_perform_window,
+            self.perform_ui(),
+        )?;
+        self.thumbnail(out)
+    }
+
     pub fn thumbnail(&mut self, id: NodeId) -> Option<(TextureId, [u32; 2])> {
         let tex = self.engines.top.output(&self.graph, id)?.clone();
         let size = [tex.key.width, tex.key.height];
@@ -340,7 +528,7 @@ impl OtdApp {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "component".into());
-        let def = self.registry.get("containerCOMP").cloned()?;
+        let def = self.registry.get(otd_engine::comp::BASE).cloned()?;
         let parent = self.current;
         self.edit("import component");
         self.history.end_gesture();
@@ -454,6 +642,8 @@ impl OtdApp {
         self.selection.clear();
         self.selection.insert(id);
         self.selected = Some(id);
+        self.selected_wire = None;
+        self.blur_params_on_select = true;
     }
 
     /// Shift- or Cmd-click: add if absent, remove if present.
@@ -487,22 +677,137 @@ impl OtdApp {
     pub fn clear_selection(&mut self) {
         self.selection.clear();
         self.selected = None;
+        self.selected_wire = None;
     }
 
     pub fn is_selected(&self, id: NodeId) -> bool {
         self.selection.contains(&id)
     }
 
-    /// Cmd/Ctrl+A, and Escape to drop the selection.
-    ///
-    /// Behind the text-focus guard: Cmd+A in a parameter field is select-all
-    /// *text*, and stealing it would make the fields hard to edit.
-    fn selection_keys(&mut self, ctx: &egui::Context) {
-        if ctx.text_edit_focused() {
+    fn clipboard_keys(&mut self, ctx: &egui::Context) {
+        crate::canvas::input::operator_clipboard_keys(self, ctx);
+    }
+
+    pub fn has_operator_clipboard(&self) -> bool {
+        !self.node_clipboard.nodes.is_empty()
+    }
+
+    pub fn copy_selection(&mut self, ctx: &egui::Context) {
+        let ids: Vec<NodeId> = if !self.selection.is_empty() {
+            self.selection.iter().copied().collect()
+        } else {
+            self.selected.into_iter().collect()
+        };
+        if ids.is_empty() {
             return;
         }
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
-            self.select_all();
+        self.node_clipboard = copy_selection(&self.graph, self.current, &ids, &self.registry);
+        if self.node_clipboard.nodes.is_empty() {
+            self.status = "Nothing to copy (locked or outside this network)".into();
+        } else {
+            self.paste_count = 0;
+            self.status = format!("Copied {} operator(s)", self.node_clipboard.nodes.len());
+            if let Some(text) = otd_core::encode_operator_clipboard(&self.node_clipboard) {
+                ctx.copy_text(text);
+            }
+        }
+    }
+
+    pub fn cut_selection(&mut self, ctx: &egui::Context) {
+        self.copy_selection(ctx);
+        if !self.node_clipboard.nodes.is_empty() {
+            self.delete_selected();
+        }
+    }
+
+    pub fn load_operator_clipboard_from_text(&mut self, text: &str) -> bool {
+        let Some(clip) = otd_core::decode_operator_clipboard(text) else {
+            return false;
+        };
+        if clip.nodes.is_empty() {
+            return false;
+        }
+        self.node_clipboard = clip;
+        self.paste_count = 0;
+        true
+    }
+
+    pub fn paste_clipboard(&mut self, origin: [f32; 2]) {
+        if self.node_clipboard.nodes.is_empty() {
+            return;
+        }
+        self.paste_count += 1;
+        let nudge = (self.paste_count.saturating_sub(1) as f32) * 24.0;
+        let at = [origin[0] + nudge, origin[1] + nudge];
+        self.edit("paste");
+        self.history.end_gesture();
+        match paste(
+            &mut self.graph,
+            self.current,
+            &self.registry,
+            &self.node_clipboard,
+            at,
+        ) {
+            Ok(ids) => {
+                self.clear_selection();
+                for id in &ids {
+                    self.selection.insert(*id);
+                }
+                self.selected = ids.last().copied();
+                self.status = format!("Pasted {} operator(s)", ids.len());
+            }
+            Err(e) => self.status = format!("Paste failed: {e}"),
+        }
+    }
+
+    fn selection_keys(&mut self, ctx: &egui::Context) {
+        let cmd_a = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A));
+        if !cmd_a {
+            return;
+        }
+        let over_network = ctx
+            .pointer_latest_pos()
+            .map(|p| self.canvas_rect.contains(p))
+            .unwrap_or(true);
+        if ctx.text_edit_focused() && !over_network {
+            return;
+        }
+        if !ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
+            return;
+        }
+        crate::canvas::input::release_param_focus(ctx);
+        self.select_all();
+    }
+
+    fn flag_keys(&mut self, ctx: &egui::Context) {
+        if self.perform_preview_only() {
+            return;
+        }
+        let count = self.selection.len();
+        if count == 0 && self.selected.is_none() {
+            return;
+        }
+        if ctx.text_edit_focused() && count <= 1 {
+            return;
+        }
+        let flag = ctx.input_mut(|i| {
+            if i.modifiers.command || i.modifiers.ctrl || i.modifiers.alt {
+                return None;
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::V) {
+                Some(crate::canvas::input::SelectionFlag::Viewer)
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::D) {
+                Some(crate::canvas::input::SelectionFlag::Display)
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::L) {
+                Some(crate::canvas::input::SelectionFlag::Lock)
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::B) {
+                Some(crate::canvas::input::SelectionFlag::Bypass)
+            } else {
+                None
+            }
+        });
+        if let Some(flag) = flag {
+            crate::canvas::input::toggle_flag_on_selection(self, flag);
         }
     }
 
@@ -566,15 +871,66 @@ impl OtdApp {
             world_pos,
             focus: true,
             connect_from: self.selected,
+            wire_drop: None,
         });
         self.create_dialog_rect = None;
+    }
+
+    pub(crate) fn open_create_operator_dialog_for_wire(
+        &mut self,
+        world_pos: egui::Vec2,
+        wire: WireDrop,
+    ) {
+        use crate::canvas::ports::output_port_family;
+
+        let family = match wire {
+            WireDrop::FromOutput { from, output } => output_port_family(&self.graph, from, output),
+            WireDrop::ToInput { dst, input } => self
+                .graph
+                .node(dst)
+                .input_families
+                .get(input)
+                .copied()
+                .unwrap_or(self.graph.node(dst).family),
+        };
+        self.create_dialog = Some(CreateDialog {
+            filter: String::new(),
+            family,
+            world_pos,
+            focus: true,
+            connect_from: None,
+            wire_drop: Some(wire),
+        });
+        self.create_dialog_rect = None;
+    }
+
+    pub(crate) fn connect_created_node(&mut self, new_id: NodeId, dialog: &CreateDialog) {
+        if let Some(wire) = dialog.wire_drop {
+            let result = match wire {
+                WireDrop::FromOutput { from, output } => {
+                    self.graph.connect_from_output(from, output, new_id, 0)
+                }
+                WireDrop::ToInput { dst, input } => {
+                    self.graph.connect_from_output(new_id, 0, dst, input)
+                }
+            };
+            match result {
+                Ok(()) => self.status.clear(),
+                Err(e) => self.status = e.to_string(),
+            }
+        } else if let Some(src) = dialog.connect_from.filter(|s| self.graph.contains(*s)) {
+            match self.graph.connect(src, new_id, 0) {
+                Ok(()) => self.status.clear(),
+                Err(e) => self.status = e.to_string(),
+            }
+        }
     }
 
     /// Tab opens the operator picker. Handled before the menu bar so egui's
     /// focus cycle (Edit → File → Media …) does not swallow it; only a real
     /// text field should block the shortcut.
     fn create_operator_tab_key(&mut self, ctx: &egui::Context) {
-        if self.perform || ctx.text_edit_focused() {
+        if self.perform_preview_only() || ctx.text_edit_focused() {
             return;
         }
         let tab = ctx.input(|i| i.key_pressed(egui::Key::Tab) && !i.modifiers.any());
@@ -663,7 +1019,14 @@ impl OtdApp {
         if self.selected.is_none() {
             self.selected = self.selection.iter().next().copied();
         }
-        self.viewer = self.viewer.filter(|id| self.graph.contains(*id));
+        self.viewer = self.viewer.filter(|id| {
+            self.graph.contains(*id) && self.graph.node(*id).family == otd_core::Family::Comp
+        });
+        if !self.main_perform_ui_path.is_empty()
+            && self.graph.find(&self.main_perform_ui_path).is_none()
+        {
+            self.main_perform_ui_path.clear();
+        }
         if !self.graph.contains(self.current) {
             self.current = self.graph.root();
         }
@@ -675,6 +1038,16 @@ impl OtdApp {
 
     /// Delete everything selected, as one undo step.
     pub fn delete_selected(&mut self) {
+        if let Some((dst, input)) = self.selected_wire {
+            if self.graph.contains(dst) && !self.graph.node(dst).flags.lock {
+                self.edit("unwire");
+                self.history.end_gesture();
+                let _ = self.graph.disconnect(dst, input);
+                self.selected_wire = None;
+                self.status.clear();
+            }
+            return;
+        }
         if self.selection.is_empty() {
             return;
         }
@@ -719,7 +1092,8 @@ impl OtdApp {
             self.thumbs.remove(id);
             self.cook.forget(*id);
             let _ = self.graph.remove(*id);
-            if self.viewer == Some(*id) {
+            if self.perform_ui() == Some(*id) {
+                self.main_perform_ui_path.clear();
                 self.viewer = None;
             }
         }
@@ -742,6 +1116,7 @@ impl OtdApp {
         self.history.end_gesture();
         self.clear_selection();
         self.delete_all(&doomed);
+        self.main_perform_ui_path.clear();
         self.viewer = None;
         doomed.len()
     }
@@ -754,6 +1129,12 @@ impl OtdApp {
         let parent = self.current;
         let id = self.graph.create(parent, &def, None).ok()?;
         self.graph.node_mut_quiet(id).pos = [world_pos.x, world_pos.y];
+        otd_engine::panel_templates::install_if_panel(
+            &mut self.graph,
+            &self.registry,
+            id,
+            type_name,
+        );
         self.select_only(id);
         Some(id)
     }
@@ -784,8 +1165,17 @@ impl OtdApp {
             self.status = format!("Recorded {file}");
             return;
         }
-        let Some(viewer) = self.viewer.filter(|v| self.graph.contains(*v)) else {
-            self.status = "Nothing to record: no viewer".into();
+        let Some(comp) = self.perform_ui() else {
+            self.status = "Nothing to record: designate a Perform UI container in Window Placement".into();
+            return;
+        };
+        let Some(out_top) = self
+            .graph
+            .connector_ops(comp, otd_core::graph::Connector::Out)
+            .first()
+            .copied()
+        else {
+            self.status = "Perform COMP has no Out TOP to record".into();
             return;
         };
         let Some(path) = rfd::FileDialog::new()
@@ -800,14 +1190,14 @@ impl OtdApp {
         let id = match self.recorder.filter(|id| self.graph.contains(*id)) {
             Some(id) => id,
             None => {
-                let pos = self.graph.node(viewer).pos;
+                let pos = self.graph.node(comp).pos;
                 let Some(id) =
                     self.create_node(otd_gpu::ops::MOVIE_OUT, egui::vec2(pos[0] + 180.0, pos[1]))
                 else {
                     self.status = "Movie File Out is not registered".into();
                     return;
                 };
-                if let Err(e) = self.graph.connect(viewer, id, 0) {
+                if let Err(e) = self.graph.connect(out_top, id, 0) {
                     self.status = format!("Could not wire the recorder: {e}");
                     return;
                 }
@@ -870,7 +1260,8 @@ impl OtdApp {
                 None => return,
             },
         };
-        let project = Project::from_graph(&self.graph, &self.registry, self.time.fps);
+        let mut project = Project::from_graph(&self.graph, &self.registry, self.time.fps);
+        project.settings = self.project_settings();
         match project.save(&path) {
             Ok(()) => {
                 self.status = format!("Saved {}", path.display());
@@ -889,26 +1280,32 @@ impl OtdApp {
             Some(p) => p,
             None => return,
         };
-        match Project::open(&path, &self.registry) {
-            Ok(graph) => {
-                self.assistant.reset_context();
-                self.graph = graph;
-                self.engines.top.reset();
-                self.cook.reset();
-                self.thumbs.clear();
-                // Undoing across an Open would restore the previous project's
-                // graph into this project's file. History starts here.
-                self.history.clear();
-                self.clear_selection();
-                // Show the last Null TOP, which is the usual output anchor.
-                self.viewer = self
-                    .graph
-                    .walk()
-                    .into_iter()
-                    .rfind(|id| self.graph.node(*id).op_type == otd_gpu::ops::NULL);
-                self.status = format!("Opened {}", path.display());
-                self.project_path = Some(path);
-            }
+        match Project::load(&path) {
+            Ok(project) => match project.to_graph(&self.registry) {
+                Ok(graph) => {
+                    self.assistant.reset_context();
+                    self.graph = graph;
+                    self.engines.top.reset();
+                    self.cook.reset();
+                    self.thumbs.clear();
+                    self.history.clear();
+                    self.clear_selection();
+                    self.viewer = self
+                        .graph
+                        .walk()
+                        .into_iter()
+                        .rev()
+                        .find(|&id| self.graph.node(id).family == otd_core::Family::Comp);
+                    self.apply_project_settings(&project.settings);
+                    otd_engine::panel_templates::upgrade_panel_internals(
+                        &mut self.graph,
+                        &self.registry,
+                    );
+                    self.status = format!("Opened {}", path.display());
+                    self.project_path = Some(path);
+                }
+                Err(e) => self.status = format!("Open failed: {e}"),
+            },
             Err(e) => self.status = format!("Open failed: {e}"),
         }
     }
@@ -924,48 +1321,88 @@ impl eframe::App for OtdApp {
         // textures we just rendered into.
         self.cook_frame();
 
+        if self.blur_params_on_select {
+            self.blur_params_on_select = false;
+            crate::canvas::input::release_param_focus(ui.ctx());
+        }
+        self.clipboard_keys(ui.ctx());
+
         self.create_operator_tab_key(ui.ctx());
         self.history_keys(ui.ctx());
         self.file_keys(ui.ctx());
         self.selection_keys(ui.ctx());
+        self.flag_keys(ui.ctx());
 
         // F1 anywhere, including out of perform mode — a performer who cannot
         // find the way back out of a black screen has a real problem.
         if ui.ctx().input(|i| i.key_pressed(egui::Key::F1)) {
-            self.perform = !self.perform;
+            if self.perform_preview_only() {
+                self.leave_perform_for_edit();
+            } else if self.perform && self.perform_edit {
+                self.perform_edit = false;
+            } else {
+                self.perform = true;
+                self.perform_edit = false;
+            }
         }
-        if self.perform && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.perform = false;
+        if self.perform_preview_only()
+            && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::E))
+        {
+            self.perform_edit = true;
+            self.focus_perform_ui_for_edit();
         }
-        // Perform mode takes the whole screen, not just the whole window: a
-        // menu bar in the corner of a projection is the thing the mode exists
-        // to get rid of.
-        if self.perform != self.perform_applied {
-            self.perform_applied = self.perform;
+        if self.perform && self.perform_edit && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            self.leave_perform_for_edit();
+        }
+        let want_fullscreen = self.perform_preview_only();
+        if want_fullscreen != self.perform_applied {
+            self.perform_applied = want_fullscreen;
             ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.perform));
+                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(want_fullscreen));
         }
         // F2 records, in either mode — the top bar is not there in the one
         // where you most want to hit record.
         if ui.ctx().input(|i| i.key_pressed(egui::Key::F2)) {
             self.toggle_record();
         }
+        if ui.ctx().input(|i| i.modifiers.alt && i.key_pressed(egui::Key::T)) {
+            self.show_textport = !self.show_textport;
+        }
+        if ui.ctx().input(|i| i.modifiers.alt && i.key_pressed(egui::Key::W)) {
+            self.show_window_placement = !self.show_window_placement;
+        }
+        if self.designer_position_pending {
+            self.designer_position_pending = false;
+            self.apply_designer_window_position(ui.ctx());
+        }
 
-        if self.perform {
+        if self.perform_preview_only() {
             self.perform_view(ui);
+            self.perform_preview_hint(ui);
         } else {
+            if self.perform && self.perform_edit {
+                self.perform_edit_banner(ui);
+            }
             self.top_bar(ui);
             self.monitor(ui.ctx());
+            crate::textport::Textport::show(self, ui.ctx());
             self.timeline(ui);
             self.side_panel(ui);
             crate::canvas::show(self, ui);
+            self.clipboard_keys(ui.ctx());
         }
         crate::assistant::bar(self, ui.ctx());
         crate::assistant::window(self, ui.ctx());
-        if !self.perform {
+        if !self.perform_preview_only() {
             crate::create_dialog::show(self, ui);
         }
         self.output_viewport(ui.ctx());
+        self.window_comp_viewports(ui.ctx());
+        if !self.perform_preview_only() {
+            crate::container_view::show(self, ui.ctx());
+        }
+        crate::window_placement::show(self, ui.ctx());
 
         // Files can be dropped in either mode: a performer swapping a clip
         // mid-show should not have to leave the output to do it.
@@ -983,6 +1420,8 @@ impl OtdApp {
             ui.horizontal(|ui| {
                 ui.menu_button("Edit", |ui| {
                     let (back, ahead) = self.history.depth();
+                    let has_sel = !self.selection.is_empty() || self.selected.is_some();
+                    let can_paste = !self.node_clipboard.nodes.is_empty();
                     if ui
                         .add_enabled(back > 0, egui::Button::new("Undo").shortcut_text("Cmd+Z"))
                         .clicked()
@@ -998,6 +1437,33 @@ impl OtdApp {
                         .clicked()
                     {
                         self.redo();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Copy").shortcut_text("Cmd+C"))
+                        .clicked()
+                    {
+                        self.copy_selection(ui.ctx());
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Cut").shortcut_text("Cmd+X"))
+                        .clicked()
+                    {
+                        self.cut_selection(ui.ctx());
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(can_paste, egui::Button::new("Paste").shortcut_text("Cmd+V"))
+                        .clicked()
+                    {
+                        let ctx = ui.ctx();
+                        let pointer = ctx
+                            .pointer_latest_pos()
+                            .unwrap_or_else(|| self.canvas_rect.center());
+                        let world = self.view.to_world(self.canvas_rect.min, pointer);
+                        self.paste_clipboard([world.x, world.y]);
                         ui.close();
                     }
                 });
@@ -1080,6 +1546,15 @@ impl OtdApp {
                     });
                 });
                 self.media_menu(ui);
+                ui.menu_button("Dialogs", |ui| {
+                    if ui
+                        .add(egui::Button::new("Window Placement…").shortcut_text("Alt+W"))
+                        .clicked()
+                    {
+                        self.show_window_placement = true;
+                        ui.close();
+                    }
+                });
 
                 // Undo is on the bar, not only in the menu and the shortcut.
                 // It is the one thing reached for in a hurry and while looking
@@ -1089,18 +1564,16 @@ impl OtdApp {
                 // "is there anything to go back to".
                 ui.separator();
                 let (back, ahead) = self.history.depth();
-                if ui
-                    .add_enabled(back > 0, egui::Button::new("↶"))
-                    .on_hover_text("Undo (Cmd+Z)")
-                    .clicked()
-                {
+                let undo = ui.push_id(egui::Id::new("otd_topbar_undo"), |ui| {
+                    ui.add_enabled(back > 0, egui::Button::new("↶"))
+                });
+                if undo.inner.on_hover_text("Undo (Cmd+Z)").clicked() {
                     self.undo();
                 }
-                if ui
-                    .add_enabled(ahead > 0, egui::Button::new("↷"))
-                    .on_hover_text("Redo (Cmd+Shift+Z)")
-                    .clicked()
-                {
+                let redo = ui.push_id(egui::Id::new("otd_topbar_redo"), |ui| {
+                    ui.add_enabled(ahead > 0, egui::Button::new("↷"))
+                });
+                if redo.inner.on_hover_text("Redo (Cmd+Shift+Z)").clicked() {
                     self.redo();
                 }
 
@@ -1156,6 +1629,7 @@ impl OtdApp {
                     .clicked()
                 {
                     self.perform = true;
+                    self.perform_edit = false;
                 }
                 let recording = self.recording();
                 let label = if recording { "⏹ Stop" } else { "⏺ Record" };
@@ -1170,6 +1644,8 @@ impl OtdApp {
                     .on_hover_text("Describe a patch and have it built here — Cmd/Ctrl+K");
                 ui.toggle_value(&mut self.show_monitor, "Perf")
                     .on_hover_text("Per-node cook cost and GPU memory");
+                ui.toggle_value(&mut self.show_textport, "Textport")
+                    .on_hover_text("Log and Python console (Alt+T)");
                 ui.toggle_value(&mut self.output_window, "Output")
                     .on_hover_text("Open a second window showing only the viewer");
                 if self.output_window {
@@ -1190,11 +1666,16 @@ impl OtdApp {
                 ));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(err) = &self.cook_error {
-                        ui.colored_label(egui::Color32::from_rgb(230, 110, 110), err);
-                    } else {
-                        ui.label(&self.status);
-                    }
+                    let (text, color) = match &self.cook_error {
+                        Some(err) => (
+                            err.as_str(),
+                            egui::Color32::from_rgb(230, 110, 110),
+                        ),
+                        None => (&self.status as &str, ui.style().visuals.text_color()),
+                    };
+                    ui.push_id(egui::Id::new("otd_status"), |ui| {
+                        ui.label(egui::RichText::new(text).color(color));
+                    });
                 });
             });
         });
@@ -1228,17 +1709,20 @@ impl OtdApp {
             let selected = self
                 .selected
                 .filter(|s| self.graph.contains(*s))
-                .map(|s| self.graph.node(s).name.clone());
+                .map(|s| (self.graph.node(s).name.clone(), self.graph.node(s).family));
             let label = match &selected {
-                Some(name) => format!("Add Effect after {name}"),
-                None => "Add Effect".to_string(),
+                Some((name, family)) => format!("Add {} after {name}", family.suffix()),
+                None => "Add operator".to_string(),
             };
+            let only_family = selected.as_ref().map(|(_, f)| *f);
             ui.add_enabled_ui(selected.is_some(), |ui| {
-                ui.menu_button(label, |ui| crate::media::effects_menu(self, ui));
+                ui.menu_button(label, |ui| {
+                    crate::media::add_operator_menu(self, ui, only_family);
+                });
             });
             if selected.is_none() {
                 ui.label(
-                    egui::RichText::new("select an operator to put an effect after it")
+                    egui::RichText::new("select an operator to add downstream")
                         .weak()
                         .small(),
                 );
@@ -1486,46 +1970,88 @@ impl OtdApp {
         );
     }
 
-    /// Perform mode: the main window becomes the output.
+    fn perform_preview_hint(&self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let pad = egui::vec2(12.0, 10.0);
+        let pos = rect.left_bottom() + pad;
+        let text = "Esc or E — edit Perform UI    F1 — preview";
+        ui.painter().text(
+            pos,
+            egui::Align2::LEFT_BOTTOM,
+            text,
+            egui::FontId::proportional(13.0),
+            egui::Color32::from_rgba_unmultiplied(200, 204, 212, 180),
+        );
+    }
+
+    fn perform_edit_banner(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("perform_edit_banner").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Perform UI edit")
+                        .strong()
+                        .color(egui::Color32::from_rgb(220, 200, 140)),
+                );
+                if ui.button("Preview (F1)").clicked() {
+                    self.perform_edit = false;
+                }
+                if ui.button("Exit perform").clicked() {
+                    self.leave_perform_for_edit();
+                }
+            });
+        });
+    }
+
+    /// Perform preview: fullscreen **View** of the perform-ui containerCOMP.
     ///
-    /// This is not a different renderer or a different cook — it is the same
-    /// frame with the editor's panels not drawn. What it buys is what the
-    /// editor costs: no thumbnails to sample, no canvas to lay out, and every
-    /// node that was only cooking because it was visible on the canvas stops
-    /// cooking, because `cook_roots` asks what is on screen and the answer is
-    /// now nothing but the viewer.
+    /// Same path as `view_panel_comp`: recursive container layout, leaf panel
+    /// TOPs, arbitrary TOPs only via opviewerCOMP.
     fn perform_view(&mut self, ui: &mut egui::Ui) {
-        let widgets = otd_engine::panel::widgets(&self.graph);
+        let perform_comp = self.perform_ui();
+        let widgets = perform_comp
+            .map(|c| otd_engine::panel::panel_display_widgets(&self.graph, c))
+            .unwrap_or_default();
         let mut panels: Vec<(NodeId, f64)> = Vec::new();
-        // Nothing is on the canvas in perform mode, so nothing is a visible
-        // cook root. Clearing this is what makes the mode cheaper rather than
-        // merely darker.
         self.visible.clear();
 
-        let tex = self
-            .viewer
-            .filter(|v| self.graph.contains(*v))
-            .and_then(|v| self.thumbnail(v));
         egui::CentralPanel::no_frame()
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
             .show(ui, |ui| {
-                let area = match tex {
-                    Some((tid, size)) => letterbox(ui, tid, size),
+                let area = ui.max_rect();
+                match perform_comp {
+                    Some(comp) if !widgets.is_empty() => {
+                        panels.extend(draw_panel_comp(
+                            ui, self, comp, area, &widgets, true,
+                        ));
+                    }
+                    Some(comp) => {
+                        if let Some(top) =
+                            crate::canvas::comp_display::comp_view_top(&self.graph, comp)
+                        {
+                            if let Some((tid, size)) = self.thumbnail(top) {
+                                let lb = letterbox(ui, tid, size);
+                                draw_panel_comp_look(&self.graph, comp, ui.painter(), lb);
+                                let w = otd_engine::panel::panel_display_widgets(&self.graph, comp);
+                                panels.extend(draw_panel(ui, &w, lb, Some(self), true));
+                            }
+                        } else {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Panel has no cooked view — open the COMP and wire a view TOP")
+                                        .color(egui::Color32::from_gray(90)),
+                                );
+                            });
+                        }
+                    }
                     None => {
                         ui.centered_and_justified(|ui| {
                             ui.label(
-                                egui::RichText::new("no viewer — F1 to go back")
+                                egui::RichText::new("no Perform UI container — set one in Window Placement")
                                     .color(egui::Color32::from_gray(90)),
                             );
                         });
-                        // With no output to lay them against, the widgets get
-                        // the whole pane rather than disappearing: a panel you
-                        // cannot see is indistinguishable from one that is
-                        // broken.
-                        ui.max_rect()
                     }
-                };
-                panels.extend(draw_panel(ui, &widgets, area));
+                }
             });
 
         // Applied after the panel is drawn, because the write needs the graph
@@ -1547,12 +2073,8 @@ impl OtdApp {
         if !self.output_window {
             return;
         }
-        let tex = self
-            .viewer
-            .filter(|v| self.graph.contains(*v))
-            .and_then(|v| self.thumbnail(v));
+        let tex = self.perform_output_thumbnail();
         let closed = self.output_closed.clone();
-        let widgets = otd_engine::panel::widgets(&self.graph);
         let builder = egui::ViewportBuilder::default()
             .with_title("OpenTouchDesigner — Output")
             .with_inner_size([1280.0, 720.0])
@@ -1566,12 +2088,8 @@ impl OtdApp {
                     .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
                     .show(ui, |ui| {
                         if let Some((tid, size)) = tex {
-                            let area = letterbox(ui, tid, size);
-                            // Drawn, not driven: the output window is often on
-                            // a projector where nobody is holding a mouse, and
-                            // two surfaces both writing the same parameter in
-                            // one frame is a fight rather than a feature.
-                            let _ = draw_panel(ui, &widgets, area);
+                            let lb = letterbox(ui, tid, size);
+                            draw_panel_texture(ui.painter(), lb, tid, size);
                         }
                     });
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
@@ -1583,34 +2101,9 @@ impl OtdApp {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::right("params")
-            .default_size(360.0)
+            .default_size(400.0)
             .resizable(true)
             .show(ui, |ui| {
-                // The output viewer, above the parameters.
-                if let Some(v) = self.viewer.filter(|v| self.graph.contains(*v)) {
-                    let title = self.graph.path(v);
-                    ui.horizontal(|ui| {
-                        ui.strong("Viewer");
-                        ui.label(egui::RichText::new(title).weak());
-                    });
-                    if let Some((tid, size)) = self.thumbnail(v) {
-                        let avail = ui.available_width();
-                        let aspect = size[1] as f32 / size[0].max(1) as f32;
-                        let rect_size = egui::vec2(avail, avail * aspect);
-                        ui.add(
-                            egui::Image::new((tid, rect_size))
-                                .fit_to_exact_size(rect_size)
-                                .corner_radius(4.0),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!("{} × {}", size[0], size[1]))
-                                .weak()
-                                .small(),
-                        );
-                    }
-                    ui.separator();
-                }
-
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     crate::params::show(self, ui);
                 });
@@ -1618,27 +2111,33 @@ impl OtdApp {
     }
 }
 
-/// What has to cook this frame: the big viewer, every node flagged for render,
-/// and every node whose own viewer is on *and* which is currently on screen.
+/// What has to cook this frame: perform output, render/cook roots, execute
+/// DATs, and every node whose viewer flag is on and on screen.
 ///
 /// That last condition is what makes the demand-driven engine visible: pan a
 /// heavy branch off the canvas and it stops costing anything. It is also what
 /// makes perform mode cheap rather than merely dark — nothing is on the canvas
 /// there, so `visible` is empty and the only thing left is the output chain.
-fn cook_roots(graph: &Graph, viewer: Option<NodeId>, visible: &[NodeId]) -> Vec<NodeId> {
+fn cook_roots(
+    graph: &Graph,
+    viewer: Option<NodeId>,
+    visible: &[NodeId],
+    current: NodeId,
+) -> Vec<NodeId> {
     let mut roots = Vec::new();
     if let Some(v) = viewer.filter(|v| graph.contains(*v)) {
         roots.push(v);
     }
+    crate::canvas::comp_display::append_network_display_roots(graph, current, visible, &mut roots);
     for id in graph.walk() {
         if id == graph.root() {
             continue;
         }
         let node = graph.node(id);
-        // An Execute DAT is a root by its nature — see `otd_engine::execute`.
         let wanted = node.flags.render
+            || node.flags.cook
             || otd_engine::execute::is_execute(&node.op_type)
-            || (node.flags.display && visible.contains(&id));
+            || (node.flags.viewer && visible.contains(&id) && node.family != otd_core::Family::Comp);
         if wanted && !roots.contains(&id) {
             roots.push(id);
         }
@@ -1664,7 +2163,7 @@ fn bytes(n: u64) -> String {
 /// Returns the rect it painted into, which is the box a panel lays out
 /// against — the picture, not the window, so a widget stays where it was put
 /// relative to the image whatever shape the window is.
-fn letterbox(ui: &egui::Ui, tid: TextureId, size: [u32; 2]) -> egui::Rect {
+pub(crate) fn letterbox(ui: &egui::Ui, tid: TextureId, size: [u32; 2]) -> egui::Rect {
     let avail = ui.available_size();
     let aspect = size[0] as f32 / size[1].max(1) as f32;
     let (mut w, mut h) = (avail.x, avail.x / aspect);
@@ -1687,71 +2186,177 @@ fn letterbox(ui: &egui::Ui, tid: TextureId, size: [u32; 2]) -> egui::Rect {
 /// The edits come back rather than being applied here: writing needs the graph
 /// mutably, and the caller is already holding it to have drawn at all. Keeping
 /// that split also means this function is only about pixels.
-fn draw_panel(
+fn panel_widget_rect(area: egui::Rect, w: &otd_engine::panel::Widget) -> egui::Rect {
+    egui::Rect::from_min_size(
+        area.min + egui::vec2(w.rect[0] * area.width(), w.rect[1] * area.height()),
+        egui::vec2(w.rect[2] * area.width(), w.rect[3] * area.height()),
+    )
+}
+
+pub(crate) fn draw_panel_comp(
+    ui: &mut egui::Ui,
+    app: &mut OtdApp,
+    comp: NodeId,
+    area: egui::Rect,
+    widgets: &[otd_engine::panel::Widget],
+    interact: bool,
+) -> Vec<(NodeId, f64)> {
+    draw_panel_comp_look(&app.graph, comp, ui.painter(), area);
+    draw_panel(ui, widgets, area, Some(app), interact)
+}
+
+fn draw_panel_comp_look(
+    graph: &Graph,
+    comp: NodeId,
+    painter: &egui::Painter,
+    area: egui::Rect,
+) {
+    let node = graph.node(comp);
+    let ctx = otd_core::EvalContext::default();
+    let f = |key: &str, default: f64| {
+        node.param(key)
+            .map(|p| p.eval(&ctx).as_f64())
+            .unwrap_or(default)
+    };
+    let opacity = f("opacity", 1.0) as f32;
+    let alpha = (opacity * f("bgalpha", 1.0) as f32).clamp(0.0, 1.0);
+    if alpha <= 0.001 {
+        return;
+    }
+    let color = egui::Color32::from_rgba_unmultiplied(
+        (f("bgcolorr", 0.08) * 255.0) as u8,
+        (f("bgcolorg", 0.09) * 255.0) as u8,
+        (f("bgcolorb", 0.11) * 255.0) as u8,
+        (alpha * 255.0) as u8,
+    );
+    painter.rect_filled(area, 0.0, color);
+}
+
+fn draw_panel_widget_look(painter: &egui::Painter, rect: egui::Rect, w: &otd_engine::panel::Widget) {
+    let alpha = (w.opacity * w.bg[3]).clamp(0.0, 1.0);
+    if alpha <= 0.001 {
+        return;
+    }
+    let fill = egui::Color32::from_rgba_unmultiplied(
+        (w.bg[0] * 255.0) as u8,
+        (w.bg[1] * 255.0) as u8,
+        (w.bg[2] * 255.0) as u8,
+        (alpha * 255.0) as u8,
+    );
+    painter.rect_filled(rect, 4.0, fill);
+}
+
+pub(crate) fn draw_panel_texture(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    tid: TextureId,
+    size: [u32; 2],
+) {
+    let aspect = size[0] as f32 / size[1].max(1) as f32;
+    let draw = if aspect > rect.width() / rect.height() {
+        let h = rect.width() / aspect;
+        egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), h))
+    } else {
+        let w = rect.height() * aspect;
+        egui::Rect::from_center_size(rect.center(), egui::vec2(w, rect.height()))
+    };
+    painter.image(
+        tid,
+        draw,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
+pub(crate) fn draw_panel(
     ui: &mut egui::Ui,
     widgets: &[otd_engine::panel::Widget],
     area: egui::Rect,
+    mut app: Option<&mut OtdApp>,
+    interact: bool,
 ) -> Vec<(NodeId, f64)> {
     use otd_engine::panel::Kind;
+    let mut sorted: Vec<&otd_engine::panel::Widget> = widgets.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.layer
+            .partial_cmp(&b.layer)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut hits: Vec<(otd_engine::panel::Widget, egui::Rect)> = Vec::new();
     let mut changed = Vec::new();
-    for w in widgets {
-        let rect = egui::Rect::from_min_size(
-            area.min + egui::vec2(w.rect[0] * area.width(), w.rect[1] * area.height()),
-            egui::vec2(w.rect[2] * area.width(), w.rect[3] * area.height()),
-        );
+    for w in sorted {
+        if !w.display {
+            continue;
+        }
+        let rect = panel_widget_rect(area, w);
         if !ui.max_rect().intersects(rect) {
             continue;
         }
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        if matches!(w.kind, Kind::Container) {
+            if let Some(app) = app.as_mut() {
+                let nested =
+                    otd_engine::panel::panel_display_widgets(&app.graph, w.id);
+                changed.extend(draw_panel_comp(
+                    ui, app, w.id, rect, &nested, interact,
+                ));
+            } else {
+                draw_panel_widget_look(ui.painter(), rect, w);
+            }
+            continue;
+        }
+        if let Some(app) = app.as_mut() {
+            if let Some(top) = crate::canvas::comp_display::comp_view_top(&app.graph, w.id) {
+                if let Some((tid, size)) = app.thumbnail(top) {
+                    draw_panel_texture(ui.painter(), rect, tid, size);
+                }
+            }
+        }
+        if interact && w.enabled {
+            hits.push(((*w).clone(), rect));
+        }
+    }
+    if !interact {
+        return changed;
+    }
+    for (w, rect) in hits.into_iter().rev() {
+        let child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
         match w.kind {
             Kind::Button => {
                 let on = w.value >= 0.5;
-                let text =
-                    egui::RichText::new(&w.label).size((rect.height() * 0.4).clamp(9.0, 28.0));
-                let response = child.put(rect, egui::Button::new(text).selected(on));
+                let r = child.interact(
+                    rect,
+                    child.id().with(("panel-btn", w.id)),
+                    egui::Sense::click(),
+                );
                 if w.momentary {
-                    // Held, not latched: down while the pointer is down, and
-                    // released when it lets go, wherever it lets go.
-                    let down = response.is_pointer_button_down_on();
+                    let down = r.is_pointer_button_down_on();
                     if down != on {
                         changed.push((w.id, if down { 1.0 } else { 0.0 }));
                     }
-                } else if response.clicked() {
+                } else if r.clicked() {
                     changed.push((w.id, if on { 0.0 } else { 1.0 }));
                 }
             }
             Kind::Slider => {
                 let (lo, hi) = w.range;
-                let mut value = w.value;
-                let response = if w.vertical {
-                    child.put(
-                        rect,
-                        egui::Slider::new(&mut value, lo..=hi)
-                            .vertical()
-                            .show_value(false),
-                    )
-                } else {
-                    child.put(
-                        rect,
-                        egui::Slider::new(&mut value, lo..=hi).show_value(false),
-                    )
-                };
-                if response.changed() {
+                let r = child.interact(
+                    rect,
+                    child.id().with(("panel-slider", w.id)),
+                    egui::Sense::click_and_drag(),
+                );
+                if r.clicked() || r.dragged() {
+                    let t = if w.vertical {
+                        1.0 - ((r.interact_pointer_pos().unwrap_or(rect.center()).y - rect.min.y)
+                            / rect.height())
+                    } else {
+                        (r.interact_pointer_pos().unwrap_or(rect.center()).x - rect.min.x)
+                            / rect.width()
+                    };
+                    let value = lo + (hi - lo) * t.clamp(0.0, 1.0) as f64;
                     changed.push((w.id, value));
                 }
             }
-            Kind::Field => {
-                // Read-only here: a text field's value is its Text parameter,
-                // and editing text on the *output* is a different feature from
-                // showing it. Typing into it belongs to the parameter panel
-                // until there is a reason it does not.
-                child.put(
-                    rect,
-                    egui::Label::new(
-                        egui::RichText::new(&w.text).size((rect.height() * 0.4).clamp(9.0, 28.0)),
-                    ),
-                );
-            }
+            _ => {}
         }
     }
     changed
@@ -1784,13 +2389,14 @@ mod tests {
         let (graph, _reg, out, spare) = patch();
 
         // On the canvas: its own viewer makes it a root.
-        let roots = cook_roots(&graph, Some(out), &[spare]);
+        let root = graph.root();
+        let roots = cook_roots(&graph, Some(out), &[spare], root);
         assert!(roots.contains(&spare));
 
         // Panned away: nothing wants it, so nothing cooks it.
-        let roots = cook_roots(&graph, Some(out), &[]);
+        let roots = cook_roots(&graph, Some(out), &[], root);
         assert!(!roots.contains(&spare));
-        assert_eq!(roots, vec![out], "only the viewer chain is left");
+        assert!(roots.contains(&out), "perform output chain stays a root");
     }
 
     #[test]
@@ -1801,7 +2407,7 @@ mod tests {
         graph.node_mut(spare).flags.render = true;
 
         // Perform mode is exactly "nothing is on the canvas".
-        let performing = cook_roots(&graph, Some(out), &[]);
+        let performing = cook_roots(&graph, Some(out), &[], graph.root());
         assert!(performing.contains(&out));
         assert!(
             performing.contains(&spare),
@@ -1820,6 +2426,6 @@ mod tests {
         let (mut graph, _reg, out, _) = patch();
         graph.remove(out).unwrap();
         // A stale NodeId from a deleted node must not reach the cook.
-        assert!(cook_roots(&graph, Some(out), &[]).is_empty());
+        assert!(cook_roots(&graph, Some(out), &[], graph.root()).is_empty());
     }
 }
