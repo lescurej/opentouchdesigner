@@ -873,15 +873,14 @@ impl TopEngine {
 
     fn input_view(&self, graph: &Graph, node_id: NodeId, index: usize) -> wgpu::TextureView {
         graph
-            .get(node_id)
-            .and_then(|n| n.inputs.get(index).copied().flatten())
+            .resolve_input_source(node_id, index)
             .and_then(|src| self.output(graph, src))
             .map(|t| t.view.clone())
             .unwrap_or_else(|| self.dummy.clone())
     }
 
     fn input_size(&self, graph: &Graph, node_id: NodeId, index: usize) -> Option<(u32, u32)> {
-        let src = graph.get(node_id)?.inputs.get(index).copied().flatten()?;
+        let src = graph.resolve_input_source(node_id, index)?;
         let t = self.output(graph, src)?;
         Some((t.key.width, t.key.height))
     }
@@ -982,7 +981,11 @@ impl TopEngine {
                 ))
             } else {
                 match crate::video::probe(&file) {
-                    Some(info) => crate::video::Source::file(key.clone(), &file, info, 0),
+                    Some(info) => {
+                        let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
+                        let start = (ctx.time * speed * info.fps).floor() as i64;
+                        crate::video::Source::file(key.clone(), &file, info, start.max(0))
+                    }
                     None if !std::path::Path::new(&file).exists() => {
                         Err(format!("no file at {file}"))
                     }
@@ -1009,20 +1012,17 @@ impl TopEngine {
             }
         }
 
-        // ---- Which frame the timeline is asking for. Playback is a
-        // function of the timeline, not a private play head, so scrubbing
-        // scrubs the picture and a headless render reads the same frames the
-        // editor showed.
+        let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
+        let play_mode = get("play").map(|v| v.as_str()).unwrap_or_default().to_string();
+
         let (wanted, ended_message) = {
-            let source = &self.videos[id];
+            let source = &mut self.videos[id];
             if camera || source.info.fps <= 0.0 {
                 (0, false)
             } else {
-                let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
-                let raw = (ctx.time * speed * source.info.fps).floor() as i64;
+                let raw = source.wanted_index(ctx.time, ctx.dt, speed);
                 let length = (source.info.duration * source.info.fps).round() as i64;
-                let mode = get("play").map(|v| v.as_str()).unwrap_or_default();
-                match mode.as_str() {
+                match play_mode.as_str() {
                     "loop" if length > 1 => (raw.rem_euclid(length), false),
                     "hold" if length > 1 => (raw.clamp(0, length - 1), false),
                     "once" if length > 1 => (raw.clamp(0, length - 1), raw >= length),

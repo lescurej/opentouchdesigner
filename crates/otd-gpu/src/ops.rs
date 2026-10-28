@@ -606,6 +606,18 @@ fn params_none() -> IndexMap<String, Param> {
     params! {}
 }
 
+fn params_window_comp() -> IndexMap<String, Param> {
+    params! {
+        "winop" => Param::str("").with_label("Operator").as_path_ref().with_page("Window"),
+        "title" => Param::str("Window").with_label("Title").with_page("Window"),
+        "winw" => Param::int(1280).with_label("Width").with_range(64.0, 16384.0).with_page("Window"),
+        "winh" => Param::int(720).with_label("Height").with_range(64.0, 16384.0).with_page("Window"),
+        "borders" => Param::bool(true).with_label("Borders").with_page("Window"),
+        "open" => Param::bool(false).with_label("Open").with_page("Window"),
+        "performance" => Param::bool(false).with_label("Performance").with_page("Window"),
+    }
+}
+
 fn pack_none(_n: &Node, _c: &EvalContext) -> PackedParams {
     [[0.0; 4]; 4]
 }
@@ -2557,17 +2569,17 @@ pub fn all() -> impl Iterator<Item = &'static TopSpec> {
     specs().iter()
 }
 
-/// A container COMP, so the hierarchy is exercised from Phase 0 rather than
-/// bolted on in Phase 3.
-pub const CONTAINER: OpDef = OpDef {
-    type_name: "containerCOMP",
+pub const WINDOW: &str = "windowCOMP";
+
+pub const WINDOW_COMP: OpDef = OpDef {
+    type_name: WINDOW,
     input_families: &[],
-    label: "Container",
+    label: "Window",
     family: Family::Comp,
     inputs: &[],
-    summary: "A component that holds a sub-network.",
+    summary: "Floating or external display for a cooked TOP (TouchDesigner Window COMP).",
     time_dependent: false,
-    params: params_none,
+    params: params_window_comp,
     connector: Connector::None,
 };
 
@@ -2577,7 +2589,7 @@ pub fn registry() -> OpRegistry {
     for s in specs() {
         r.register(s.def.clone());
     }
-    r.register(CONTAINER);
+    r.register(WINDOW_COMP);
     r
 }
 

@@ -17,6 +17,11 @@
 //!    If ffmpeg is not installed the node says so, by name, and produces
 //!    black rather than failing the cook.
 //!
+//! There is no one cross-platform “native” movie API: macOS has AVFoundation,
+//! Windows has Media Foundation, Linux usually GStreamer. A future in-process
+//! backend per OS is possible; today ffmpeg (on PATH or bundled next to the app)
+//! is the portable choice that matches what we ship in `package-macos.sh`.
+//!
 //! What this trades away against GStreamer is in-process zero-copy hardware
 //! decode: a pipe costs a memcpy per frame and an upload. What it buys is
 //! that it works on all three platforms today, with no build-time dependency
@@ -50,7 +55,7 @@ const SEEK_AHEAD_LIMIT: i64 = 90;
 /// Frames the decoder may run ahead of the cook. Small on purpose: this is
 /// the back-pressure that stops a 60 fps source filling memory when the
 /// patch is running at 30, and for a camera it is the latency budget.
-const QUEUE_DEPTH: usize = 2;
+const QUEUE_DEPTH: usize = 4;
 
 /// Extensions decoded in-process, without ffmpeg.
 const STILL_EXTENSIONS: &[&str] = &[
@@ -315,6 +320,10 @@ pub struct Source {
     awaiting_seek: bool,
     /// Set by a worker that could not do its job, and read by the cook.
     problem: Arc<std::sync::Mutex<Option<String>>>,
+    /// Fractional media frame index for smooth playback (not `floor(time*fps)`).
+    playhead: f64,
+    /// Last `CookContext::time` seen; detects pause vs advance.
+    last_timeline_time: f64,
     /// When a live source was opened, and whether it has ever delivered.
     ///
     /// A camera that is refused does not fail: on macOS a denied
@@ -372,6 +381,8 @@ impl Source {
             revision: 0,
             awaiting_seek: false,
             problem,
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
             opened: None,
         }
     }
@@ -388,6 +399,8 @@ impl Source {
             revision: 0,
             awaiting_seek: false,
             problem: Default::default(),
+            playhead: start_index as f64,
+            last_timeline_time: f64::NAN,
             opened: None,
         };
         source.reader = Some(source.spawn_file(path, start_index)?);
@@ -451,13 +464,41 @@ impl Source {
             revision: 0,
             awaiting_seek: false,
             problem,
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
             opened: Some(Instant::now()),
         })
     }
 
+    /// Media frame index to decode, from timeline time and playback speed.
+    ///
+    /// Advances by `dt * speed * fps` while the timeline runs so a dropped
+    /// UI frame does not jump two indices at once; snaps on scrub or pause.
+    pub fn wanted_index(&mut self, timeline_time: f64, dt: f64, speed: f64) -> i64 {
+        let fps = self.info.fps;
+        if fps <= 0.0 || self.live {
+            return 0;
+        }
+        let timeline = (timeline_time * speed * fps).floor();
+        let time_advances = dt > 0.0
+            && speed != 0.0
+            && (timeline_time - self.last_timeline_time).abs() > 1e-12;
+        if time_advances {
+            self.playhead += dt * speed * fps;
+            let drift = (timeline - self.playhead.floor()).abs();
+            if drift > 2.0 {
+                self.playhead = timeline;
+            }
+        } else {
+            self.playhead = timeline;
+        }
+        self.last_timeline_time = timeline_time;
+        self.playhead.floor() as i64
+    }
+
     fn spawn_file(&self, path: &str, start_index: i64) -> Result<Reader, String> {
         let mut command = ffmpeg_command().ok_or_else(missing_ffmpeg)?;
-        command.args(["-v", "error"]);
+        command.args(["-v", "error", "-threads", "0"]);
         if start_index > 0 {
             // Before -i, so ffmpeg seeks the container rather than decoding
             // and discarding everything up to the seek point.
@@ -778,6 +819,33 @@ mod tests {
         // A device that reports nothing — v4l2, dshow — leaves the request
         // alone for ffmpeg to answer for.
         assert!(choose_mode(&[], 1280, 720, 30.0).is_none());
+    }
+
+    #[test]
+    fn playback_index_advances_with_dt_not_floor_time_jumps() {
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 30.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            opened: None,
+        };
+        assert_eq!(source.wanted_index(0.0, 1.0 / 60.0, 1.0), 0);
+        assert_eq!(source.wanted_index(1.0 / 60.0, 1.0 / 60.0, 1.0), 0);
+        assert_eq!(source.wanted_index(2.0 / 60.0, 1.0 / 60.0, 1.0), 1);
+        assert_eq!(source.wanted_index(5.0, 0.0, 1.0), 150);
     }
 
     #[test]
