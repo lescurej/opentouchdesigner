@@ -106,13 +106,12 @@ pub fn sacn_multicast(universe: u16) -> std::net::Ipv4Addr {
     std::net::Ipv4Addr::new(239, 255, hi, lo)
 }
 
-/// Map a channel value to a DMX slot.
-///
-/// Values are expected in 0..1 — the range every other operator works in —
-/// and clamped rather than wrapped, because a light jumping from full to
-/// black on an overshoot is far worse than one that simply saturates.
+/// Map a channel value to a DMX slot (0–255, TouchDesigner-style).
 pub fn to_slot(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+    if value.is_nan() {
+        return 0;
+    }
+    (value.clamp(0.0, 255.0) + 0.5) as u8
 }
 
 #[cfg(test)]
@@ -177,11 +176,9 @@ mod tests {
     #[test]
     fn levels_saturate_rather_than_wrapping() {
         assert_eq!(to_slot(0.0), 0);
-        assert_eq!(to_slot(1.0), 255);
-        assert_eq!(to_slot(0.5), 128);
-        // A light going full-to-black on an overshoot is much worse than one
-        // that simply stays at full.
-        assert_eq!(to_slot(1.7), 255);
+        assert_eq!(to_slot(255.0), 255);
+        assert_eq!(to_slot(128.0), 128);
+        assert_eq!(to_slot(300.0), 255);
         assert_eq!(to_slot(-0.3), 0);
         assert_eq!(to_slot(f32::NAN), 0);
     }

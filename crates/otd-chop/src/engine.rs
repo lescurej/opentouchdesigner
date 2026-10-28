@@ -90,18 +90,28 @@ impl ChannelSource for Network<'_> {
 
     fn parent_param(&self, node_path: &str, param: &str) -> Option<Value> {
         let id = self.graph.find(node_path)?;
-        let parent = self.graph.get(id)?.parent?;
-        let p = self.graph.get(parent)?.param(param)?;
-        if !p.custom {
-            return None;
-        }
-        // The component's own parameter may itself be an expression or an
-        // Export, so it is evaluated against the same network.
+        let parent_id = self.graph.get(id)?.parent?;
+        let p = self.graph.get(parent_id)?.param(param)?;
+        let parent_path = self.graph.path(parent_id);
         Some(p.eval(&EvalContext {
             channels: Some(self),
-            path: Some(node_path),
+            path: Some(&parent_path),
             ..Default::default()
         }))
+    }
+
+    fn resolve_operator_path(&self, from_operator_path: &str, reference: &str) -> Option<String> {
+        let reference = reference.trim();
+        if reference.is_empty() {
+            return None;
+        }
+        let from_id = self.graph.find(from_operator_path)?;
+        let id = if reference.starts_with('/') {
+            self.graph.find(reference)?
+        } else {
+            self.graph.find_from(from_id, reference)?
+        };
+        Some(self.graph.path(id))
     }
 }
 
@@ -154,8 +164,10 @@ impl ChopEngine {
         let inputs: Vec<ChopData> = node
             .inputs
             .iter()
-            .map(|slot| {
-                slot.and_then(|src| chops.get(src))
+            .enumerate()
+            .map(|(i, slot)| {
+                slot.and_then(|_| graph.resolve_input_source(id, i))
+                    .and_then(|src| chops.get(src))
                     .cloned()
                     .unwrap_or_else(ChopData::empty)
             })
@@ -168,6 +180,8 @@ impl ChopEngine {
             ..*eval
         };
         let mut cctx = ChopCtx {
+            graph,
+            id,
             node,
             eval,
             time: ctx,
@@ -235,7 +249,8 @@ impl Cooker for ChopHost {
                 graph,
                 chops: channels,
             };
-            let eval = ctx.eval_ctx_with(&net);
+            let path = graph.path(id);
+            let eval = ctx.eval_for_node(graph, id, &net, &path);
             engine.cook_node(graph, id, ctx, &eval, channels, Crossings::new())?
         };
         channels.insert(id, data);

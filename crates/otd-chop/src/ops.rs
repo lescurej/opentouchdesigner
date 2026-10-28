@@ -39,6 +39,8 @@ impl OpState {
 }
 
 pub struct ChopCtx<'a> {
+    pub graph: &'a otd_core::Graph,
+    pub id: otd_core::NodeId,
     pub node: &'a Node,
     pub eval: &'a EvalContext<'a>,
     pub time: &'a CookContext,
@@ -148,26 +150,136 @@ fn map_samples(input: &ChopData, mut f: impl FnMut(usize, usize, f32) -> f32) ->
 
 // ------------------------------------------------------------- constant
 
+pub const CONSTANT: &str = "constantCHOP";
+pub const CONSTANT_MAX_ROWS: i64 = 64;
+
 fn params_constant() -> IndexMap<String, Param> {
-    with_rate(params! {
-        "channels" => Param::int(1).with_label("Channels").with_range(1.0, 4.0),
-        "name" => Param::str("chan").with_label("Name"),
-        "value0" => Param::float(0.0).with_label("Value 1"),
-        "value1" => Param::float(0.0).with_label("Value 2"),
-        "value2" => Param::float(0.0).with_label("Value 3"),
-        "value3" => Param::float(0.0).with_label("Value 4"),
-    })
+    let mut m = IndexMap::new();
+    m.insert(
+        "rows".into(),
+        Param::int(1)
+            .with_label("Rows")
+            .with_page("Constant")
+            .with_range(1.0, CONSTANT_MAX_ROWS as f64),
+    );
+    for i in 0..CONSTANT_MAX_ROWS as usize {
+        let default_name = if i == 0 { "chan1" } else { "chan" };
+        m.insert(
+            format!("name{i}"),
+            Param::str(default_name)
+                .with_label("Channel Name")
+                .with_page("Constant"),
+        );
+        m.insert(
+            format!("value{i}"),
+            Param::float(0.0)
+                .with_label("Value")
+                .with_page("Constant"),
+        );
+    }
+    with_rate(m)
 }
 
 fn cook_constant(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
-    let count = c.i("channels").clamp(1, 4) as usize;
-    let base = c.s("name");
-    let channels = (0..count)
-        .map(|i| Channel::constant(format!("{base}{}", i + 1), c.f(&format!("value{i}")), n))
-        .collect();
+    let channels = if c.node.param("rows").is_some() {
+        cook_constant_rows(c, n)
+    } else {
+        cook_constant_legacy(c, n)
+    };
     ChopData::new(channels, rate, true)
+}
+
+fn cook_constant_rows(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
+    let rows = c.i("rows").clamp(1, CONSTANT_MAX_ROWS) as usize;
+    let mut channels = Vec::new();
+    for i in 0..rows {
+        let name_tpl = c.s(&format!("name{i}"));
+        let val = c.f(&format!("value{i}"));
+        let count = otd_core::channel_count_from_name(&name_tpl);
+        let names = otd_core::expand_channel_names(&name_tpl, count);
+        for name in names {
+            channels.push(Channel::constant(name, val, n));
+        }
+    }
+    channels
+}
+
+fn cook_constant_legacy(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
+    let name = c.s("name");
+    let count = otd_core::channel_count_from_name(&name);
+    let names = otd_core::expand_channel_names(&name, count);
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| Channel::constant(name, c.f(&format!("value{i}")), n))
+        .collect()
+}
+
+// ----------------------------------------------------------- parameter
+
+pub const PARAMETER: &str = "parameterCHOP";
+
+fn params_parameter() -> IndexMap<String, Param> {
+    params! {
+        "op" => Param::str("..").with_label("Operator").as_path_ref(),
+        "parameters" => Param::str("value").with_label("Parameters"),
+        "name" => Param::str("v").with_label("Channel Name"),
+    }
+}
+
+fn resolve_op_path(c: &ChopCtx<'_>, path: &str) -> Option<otd_core::NodeId> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    if path.starts_with('/') {
+        c.graph.find(path)
+    } else {
+        c.graph.find_from(c.id, path)
+    }
+}
+
+fn cook_parameter(c: &mut ChopCtx) -> ChopData {
+    let watch = match resolve_op_path(c, &c.s("op")) {
+        Some(id) => id,
+        None => return ChopData::empty(),
+    };
+    let watch_path = c.graph.path(watch);
+    let prefix = c.s("name");
+    let names: Vec<String> = c
+        .s("parameters")
+        .split_whitespace()
+        .filter(|n| !n.is_empty() && *n != "*")
+        .map(|s| s.to_string())
+        .collect();
+    let chan_names = otd_core::expand_channel_names(&prefix, names.len());
+    let channels: Vec<Channel> = names
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            let value = c
+                .graph
+                .get(watch)
+                .and_then(|n| n.param(key))
+                .map(|p| {
+                    p.eval(&EvalContext {
+                        channels: c.eval.channels,
+                        path: Some(&watch_path),
+                        ..*c.eval
+                    })
+                    .as_f32()
+                })
+                .unwrap_or(0.0);
+            let chan = chan_names
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("{prefix}{}", i + 1));
+            Channel::constant(chan, value, 1)
+        })
+        .collect();
+    ChopData::new(channels, CONTROL_RATE, false)
 }
 
 // ------------------------------------------------------------------ LFO
@@ -223,10 +335,17 @@ fn cook_lfo(c: &mut ChopCtx) -> ChopData {
         c.f("phase"),
         c.f("pulsewidth"),
     );
-    let samples = slice_times(c.time, n)
+    let samples: Vec<f32> = slice_times(c.time, n)
         .map(|t| wave(kind, t as f32 * freq + phase, pw) * amp + offset)
         .collect();
-    ChopData::new(vec![Channel::new(c.s("name"), samples)], rate, true)
+    let name_tpl = c.s("name");
+    let count = otd_core::channel_count_from_name(&name_tpl);
+    let names = otd_core::expand_channel_names(&name_tpl, count);
+    let channels: Vec<Channel> = names
+        .into_iter()
+        .map(|name| Channel::new(name, samples.clone()))
+        .collect();
+    ChopData::new(channels, rate, true)
 }
 
 // ------------------------------------------------------------ animation
@@ -299,8 +418,9 @@ fn cook_animation(c: &mut ChopCtx) -> ChopData {
 fn params_noise() -> IndexMap<String, Param> {
     with_rate(params! {
         "type" => Param::menu("smooth", &["smooth", "random"]).with_label("Type"),
-        "channels" => Param::int(1).with_label("Channels").with_range(1.0, 8.0),
         "name" => Param::str("noise").with_label("Name"),
+        "length" => Param::int(600).with_label("Length").with_range(1.0, 8192.0),
+        "timeslice" => Param::bool(false).with_label("Time Slice"),
         "period" => Param::float(1.0).with_label("Period").with_range(0.01, 10.0),
         "amplitude" => Param::float(1.0).with_label("Amplitude").with_range(0.0, 4.0),
         "offset" => Param::float(0.0).with_label("Offset").with_range(-2.0, 2.0),
@@ -327,25 +447,36 @@ fn value_noise(t: f32, seed: i64) -> f32 {
 
 fn cook_noise(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
-    let n = slice_len(rate, c.time);
-    let (kind, count, period, amp, offset, seed) = (
+    let time_slice = c.b("timeslice");
+    let n = if time_slice {
+        slice_len(rate, c.time)
+    } else {
+        c.i("length").clamp(1, 8192) as usize
+    };
+    let name = c.s("name");
+    let count = otd_core::channel_count_from_name(&name);
+    let (kind, period, amp, offset, seed) = (
         c.menu("type"),
-        c.i("channels").clamp(1, 8) as usize,
         c.f("period").max(1e-4),
         c.f("amplitude"),
         c.f("offset"),
         c.f("seed") as i64,
     );
-    let base = c.s("name");
-    let times: Vec<f64> = slice_times(c.time, n).collect();
-    let channels = (0..count)
-        .map(|ch| {
+    let names = otd_core::expand_channel_names(&name, count);
+    let times: Vec<f64> = if time_slice {
+        slice_times(c.time, n).collect()
+    } else {
+        (0..n).map(|i| i as f64 / rate.max(1e-6)).collect()
+    };
+    let channels = names
+        .into_iter()
+        .enumerate()
+        .map(|(ch, name)| {
             let samples = times
                 .iter()
                 .map(|t| {
                     let x = (*t as f32) / period;
                     let v = if kind == 1 {
-                        // Uncorrelated per sample.
                         hash1((x * 1_000_000.0) as i64 + seed + ch as i64 * 104_729)
                     } else {
                         value_noise(x, seed + ch as i64 * 31)
@@ -353,10 +484,10 @@ fn cook_noise(c: &mut ChopCtx) -> ChopData {
                     v * amp + offset
                 })
                 .collect();
-            Channel::new(format!("{base}{}", ch + 1), samples)
+            Channel::new(name, samples)
         })
         .collect();
-    ChopData::new(channels, rate, true)
+    ChopData::new(channels, rate, time_slice)
 }
 
 // -------------------------------------------------------------- pattern
@@ -383,7 +514,7 @@ fn cook_pattern(c: &mut ChopCtx) -> ChopData {
         c.f("offset"),
         c.f("phase"),
     );
-    let samples = (0..len)
+    let samples: Vec<f32> = (0..len)
         .map(|i| {
             let x = i as f32 / len as f32;
             let p = x * periods + phase;
@@ -398,116 +529,388 @@ fn cook_pattern(c: &mut ChopCtx) -> ChopData {
             v * amp + offset
         })
         .collect();
-    // Not time sliced: a Pattern CHOP is a fixed buffer, a lookup table.
-    ChopData::new(
-        vec![Channel::new(c.s("name"), samples)],
-        CONTROL_RATE,
-        false,
-    )
+    let name_tpl = c.s("name");
+    let count = otd_core::channel_count_from_name(&name_tpl);
+    let names = otd_core::expand_channel_names(&name_tpl, count);
+    let channels: Vec<Channel> = names
+        .into_iter()
+        .map(|name| Channel::new(name, samples.clone()))
+        .collect();
+    ChopData::new(channels, CONTROL_RATE, false)
 }
 
 // ----------------------------------------------------------------- math
 
+const MATH_UNARY: &[&str] = &["off", "negate", "pos", "root", "square", "inverse"];
+const MATH_COMBINE: &[&str] = &[
+    "off",
+    "add",
+    "subtract",
+    "multiply",
+    "divide",
+    "average",
+    "minimum",
+    "maximum",
+    "length",
+];
+const MATH_ALIGN: &[&str] = &[
+    "auto",
+    "none",
+    "stretch",
+    "start",
+    "end",
+    "shift1",
+    "trim1",
+    "stretch1",
+    "trim",
+    "squash",
+];
+
 fn params_math() -> IndexMap<String, Param> {
     params! {
-        "combine" => Param::menu(
-            "add",
-            &["add", "subtract", "multiply", "divide", "maximum", "minimum", "average"],
-        ).with_label("Combine Inputs"),
-        "gain" => Param::float(1.0).with_label("Gain").with_range(-4.0, 4.0),
-        "offset" => Param::float(0.0).with_label("Offset").with_range(-4.0, 4.0),
-        "clamp" => Param::bool(false).with_label("Clamp"),
-        "clampmin" => Param::float(0.0).with_label("Clamp Min"),
-        "clampmax" => Param::float(1.0).with_label("Clamp Max"),
+        "preop" => Param::menu("off", MATH_UNARY)
+            .with_label("Channel Pre OP")
+            .with_page("Math"),
+        "chanop" => Param::menu("off", MATH_COMBINE)
+            .with_label("Combine Channels")
+            .with_page("Math"),
+        "combine" => Param::menu("add", MATH_COMBINE)
+            .with_label("Combine CHOPs")
+            .with_page("Math"),
+        "postop" => Param::menu("off", MATH_UNARY)
+            .with_label("Channel Post OP")
+            .with_page("Math"),
+        "match" => Param::menu("index", &["index", "name"])
+            .with_label("Match By")
+            .with_page("Math"),
+        "align" => Param::menu("auto", MATH_ALIGN)
+            .with_label("Align")
+            .with_page("Math"),
+        "integer" => Param::menu("off", &["off", "ceiling", "floor", "round"])
+            .with_label("Integer")
+            .with_page("Math"),
+        "preoff" => Param::float(0.0)
+            .with_label("Pre-Add")
+            .with_range(-4.0, 4.0)
+            .with_page("Mult-Add"),
+        "gain" => Param::float(1.0)
+            .with_label("Multiply")
+            .with_range(-4.0, 4.0)
+            .with_page("Mult-Add"),
+        "offset" => Param::float(0.0)
+            .with_label("Post-Add")
+            .with_range(-4.0, 4.0)
+            .with_page("Mult-Add"),
+        "fromrange1" => Param::float(0.0)
+            .with_label("From Range Min")
+            .with_range(-1e4, 1e4)
+            .with_page("Range"),
+        "fromrange2" => Param::float(1.0)
+            .with_label("From Range Max")
+            .with_range(-1e4, 1e4)
+            .with_page("Range"),
+        "torange1" => Param::float(0.0)
+            .with_label("To Range Min")
+            .with_range(-1e4, 1e4)
+            .with_page("Range"),
+        "torange2" => Param::float(1.0)
+            .with_label("To Range Max")
+            .with_range(-1e4, 1e4)
+            .with_page("Range"),
+        "clamp" => Param::bool(false).with_label("Clamp").with_page("Range"),
+        "clampmin" => Param::float(0.0).with_label("Clamp Min").with_page("Range"),
+        "clampmax" => Param::float(1.0).with_label("Clamp Max").with_page("Range"),
+        "scope" => Param::str("*").with_label("Scope").with_page("Common"),
     }
 }
 
-fn combine(op: usize, a: f32, b: f32) -> f32 {
+fn math_unary(op: usize, v: f32) -> f32 {
     match op {
-        1 => a - b,
-        2 => a * b,
-        3 => {
-            if b == 0.0 {
+        1 => -v,
+        2 => v.abs(),
+        3 => v.max(0.0).sqrt(),
+        4 => v * v,
+        5 => {
+            if v == 0.0 {
+                0.0
+            } else {
+                1.0 / v
+            }
+        }
+        _ => v,
+    }
+}
+
+fn math_sample_at(ch: &Channel, i: usize) -> f32 {
+    if ch.samples.is_empty() {
+        0.0
+    } else {
+        ch.samples[i.min(ch.samples.len() - 1)]
+    }
+}
+
+fn math_reduce_combine(op: usize, vals: &[f32]) -> f32 {
+    if vals.is_empty() {
+        return 0.0;
+    }
+    match op {
+        1 => vals.iter().sum(),
+        2 => vals.iter().skip(1).fold(vals[0], |a, b| a - b),
+        3 => vals.iter().product(),
+        4 => vals.iter().skip(1).fold(vals[0], |a, b| {
+            if *b == 0.0 {
                 0.0
             } else {
                 a / b
             }
-        }
-        4 => a.max(b),
-        5 => a.min(b),
-        6 => (a + b) * 0.5,
-        _ => a + b,
+        }),
+        5 => vals.iter().sum::<f32>() / vals.len() as f32,
+        6 => vals.iter().copied().fold(f32::INFINITY, f32::min),
+        7 => vals.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+        8 => vals.iter().map(|v| v * v).sum::<f32>().sqrt(),
+        _ => vals[0],
     }
 }
 
-fn cook_math(c: &mut ChopCtx) -> ChopData {
-    let op = c.menu("combine");
-    let (gain, offset) = (c.f("gain"), c.f("offset"));
-    let (do_clamp, lo, hi) = (c.b("clamp"), c.f("clampmin"), c.f("clampmax"));
+fn math_combine_pair(op: usize, a: f32, b: f32) -> f32 {
+    math_reduce_combine(op, &[a, b])
+}
 
-    let a = c.input(0).clone();
-    let b = c.input(1).clone();
-    let len = a.num_samples().max(b.num_samples()).max(1);
+fn math_combine_identity(op: usize) -> f32 {
+    match op {
+        3 => 1.0,
+        4 => 1.0,
+        6 => f32::INFINITY,
+        7 => f32::NEG_INFINITY,
+        8 => 0.0,
+        _ => 0.0,
+    }
+}
 
-    let channel_count = a.num_channels().max(b.num_channels());
-    let mut channels = Vec::with_capacity(channel_count);
-    for ci in 0..channel_count {
-        // A single-channel input broadcasts across a multi-channel one, which
-        // is what makes `noise * one lfo` do the obvious thing.
-        let pick = |d: &ChopData, ci: usize| -> Option<Channel> {
-            if d.num_channels() == 1 {
-                d.nth(0).cloned()
-            } else {
-                d.nth(ci).cloned()
+fn math_prepare_input(data: ChopData, preop: usize, chanop: usize) -> ChopData {
+    if data.channels.is_empty() {
+        return data;
+    }
+    let len = data.num_samples().max(1);
+    let mut channels: Vec<Channel> = data
+        .channels
+        .into_iter()
+        .map(|mut ch| {
+            for s in &mut ch.samples {
+                *s = math_unary(preop, *s);
             }
-        };
-        let ca = pick(&a, ci);
-        let cb = pick(&b, ci);
-        let name = ca
-            .as_ref()
-            .or(cb.as_ref())
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| format!("chan{}", ci + 1));
-
-        let sample_at = |c: &Option<Channel>, i: usize, default: f32| -> f32 {
-            match c {
-                Some(c) if !c.samples.is_empty() => c.samples[i.min(c.samples.len() - 1)],
-                _ => default,
-            }
-        };
-        // Identity element, so a single wired input passes through unchanged.
-        let identity = match op {
-            2 | 3 => 1.0,
-            4 => f32::NEG_INFINITY,
-            5 => f32::INFINITY,
-            _ => 0.0,
-        };
-        let samples = (0..len)
-            .map(|i| {
-                let va = sample_at(&ca, i, identity);
-                let vb = sample_at(&cb, i, identity);
-                let combined = if cb.is_none() {
-                    va
-                } else if ca.is_none() {
-                    vb
-                } else {
-                    combine(op, va, vb)
-                };
-                let mut v = combined * gain + offset;
-                if do_clamp {
-                    v = v.clamp(lo.min(hi), hi.max(lo));
-                }
-                v
+            ch
+        })
+        .collect();
+    if chanop != 0 && channels.len() > 1 {
+        let name = channels[0].name.clone();
+        let samples: Vec<f32> = (0..len)
+            .map(|si| {
+                let vals: Vec<f32> = channels.iter().map(|ch| math_sample_at(ch, si)).collect();
+                math_reduce_combine(chanop, &vals)
             })
             .collect();
-        channels.push(Channel::new(name, samples));
+        channels = vec![Channel::new(name, samples)];
     }
-    let rate = if a.sample_rate > 0.0 {
-        a.sample_rate
+    ChopData::new(channels, data.sample_rate, data.time_sliced)
+}
+
+fn math_align_inputs(mut a: ChopData, mut b: ChopData, align: usize) -> (ChopData, ChopData) {
+    let la = a.num_samples();
+    let lb = b.num_samples();
+    let trim = matches!(align, 6 | 8);
+    let len = if trim {
+        la.min(lb).max(1)
     } else {
-        b.sample_rate.max(CONTROL_RATE)
+        la.max(lb).max(1)
     };
-    ChopData::new(channels, rate, a.time_sliced || b.time_sliced)
+    if trim {
+        for ch in &mut a.channels {
+            ch.samples.truncate(len);
+        }
+        for ch in &mut b.channels {
+            ch.samples.truncate(len);
+        }
+    } else {
+        a.pad_to(len);
+        b.pad_to(len);
+    }
+    (a, b)
+}
+
+fn math_pick_channel(data: &ChopData, ci: usize) -> Option<Channel> {
+    if data.num_channels() == 1 {
+        data.nth(0).cloned()
+    } else {
+        data.nth(ci).cloned()
+    }
+}
+
+fn math_combine_chops_by_index(a: &ChopData, b: &ChopData, chopop: usize, len: usize) -> Vec<Channel> {
+    let channel_count = a.num_channels().max(b.num_channels()).max(1);
+    let identity = math_combine_identity(chopop);
+    (0..channel_count)
+        .map(|ci| {
+            let ca = math_pick_channel(a, ci);
+            let cb = math_pick_channel(b, ci);
+            let name = ca
+                .as_ref()
+                .or(cb.as_ref())
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| format!("chan{}", ci + 1));
+            let samples: Vec<f32> = (0..len)
+                .map(|si| {
+                    let va = ca
+                        .as_ref()
+                        .map(|c| math_sample_at(c, si))
+                        .unwrap_or(identity);
+                    let vb = cb
+                        .as_ref()
+                        .map(|c| math_sample_at(c, si))
+                        .unwrap_or(identity);
+                    if ca.is_none() {
+                        vb
+                    } else if cb.is_none() {
+                        va
+                    } else {
+                        math_combine_pair(chopop, va, vb)
+                    }
+                })
+                .collect();
+            Channel::new(name, samples)
+        })
+        .collect()
+}
+
+fn math_combine_chops_by_name(a: &ChopData, b: &ChopData, chopop: usize, len: usize) -> Vec<Channel> {
+    let mut out = Vec::new();
+    let mut used_b = vec![false; b.num_channels()];
+    for ca in &a.channels {
+        if let Some((bi, cb)) = b
+            .channels
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.name == ca.name)
+        {
+            used_b[bi] = true;
+            let samples: Vec<f32> = (0..len)
+                .map(|si| math_combine_pair(chopop, math_sample_at(ca, si), math_sample_at(cb, si)))
+                .collect();
+            out.push(Channel::new(ca.name.clone(), samples));
+        } else {
+            out.push(ca.clone());
+        }
+    }
+    for (bi, cb) in b.channels.iter().enumerate() {
+        if !used_b[bi] {
+            out.push(cb.clone());
+        }
+    }
+    out
+}
+
+fn math_finish_sample(
+    v: f32,
+    postop: usize,
+    preoff: f32,
+    gain: f32,
+    postoff: f32,
+    from1: f32,
+    from2: f32,
+    to1: f32,
+    to2: f32,
+    integer: usize,
+    do_clamp: bool,
+    lo: f32,
+    hi: f32,
+) -> f32 {
+    let mut v = math_unary(postop, v);
+    v = (v + preoff) * gain + postoff;
+    let span = (from2 - from1).max(1e-10);
+    v = to1 + (v - from1) / span * (to2 - to1);
+    v = match integer {
+        1 => v.ceil(),
+        2 => v.floor(),
+        3 => v.round(),
+        _ => v,
+    };
+    if do_clamp {
+        v = v.clamp(lo.min(hi), hi.max(lo));
+    }
+    v
+}
+
+fn cook_math(c: &mut ChopCtx) -> ChopData {
+    let preop = c.menu("preop");
+    let chanop = c.menu("chanop");
+    let chopop = c.menu("combine");
+    let postop = c.menu("postop");
+    let match_by = c.menu("match");
+    let align = c.menu("align");
+    let integer = c.menu("integer");
+    let preoff = c.f("preoff");
+    let gain = c.f("gain");
+    let postoff = c.f("offset");
+    let (from1, from2, to1, to2) = (
+        c.f("fromrange1"),
+        c.f("fromrange2"),
+        c.f("torange1"),
+        c.f("torange2"),
+    );
+    let (do_clamp, clo, chi) = (c.b("clamp"), c.f("clampmin"), c.f("clampmax"));
+    let scope = c.s("scope");
+
+    let a_raw = c.input(0).clone();
+    let b_raw = c.input(1).clone();
+    let has_a = !a_raw.channels.is_empty();
+    let has_b = !b_raw.channels.is_empty();
+    if !has_a && !has_b {
+        return ChopData::empty();
+    }
+
+    let (a_in, b_in) = if has_a && has_b {
+        math_align_inputs(a_raw.clone(), b_raw.clone(), align)
+    } else if has_a {
+        (a_raw.clone(), ChopData::empty())
+    } else {
+        (ChopData::empty(), b_raw.clone())
+    };
+
+    let a = math_prepare_input(a_in, preop, chanop);
+    let b = math_prepare_input(b_in, preop, chanop);
+    let len = a.num_samples().max(b.num_samples()).max(1);
+
+    let mut channels = if chopop == 0 || !has_a || !has_b {
+        let mut merged = a.channels;
+        merged.extend(b.channels);
+        merged
+    } else if match_by == 1 {
+        math_combine_chops_by_name(&a, &b, chopop, len)
+    } else {
+        math_combine_chops_by_index(&a, &b, chopop, len)
+    };
+
+    for ch in &mut channels {
+        let pass = a_raw.channel(&ch.name).or_else(|| b_raw.channel(&ch.name));
+        let scoped = otd_core::pattern_matches_channel(&scope, &ch.name);
+        for (si, s) in ch.samples.iter_mut().enumerate() {
+            if scoped {
+                *s = math_finish_sample(
+                    *s, postop, preoff, gain, postoff, from1, from2, to1, to2, integer, do_clamp,
+                    clo, chi,
+                );
+            } else if let Some(src) = pass {
+                *s = math_sample_at(src, si);
+            }
+        }
+    }
+
+    let rate = if a_raw.sample_rate > 0.0 {
+        a_raw.sample_rate
+    } else {
+        b_raw.sample_rate.max(CONTROL_RATE)
+    };
+    ChopData::new(channels, rate, a_raw.time_sliced || b_raw.time_sliced)
 }
 
 // ------------------------------------------------------------------ lag
@@ -932,23 +1335,13 @@ fn params_select() -> IndexMap<String, Param> {
 
 /// Space-separated names with `*` wildcards, TD style: `chan1 lfo*`.
 pub fn name_matches(pattern: &str, name: &str) -> bool {
-    pattern.split_whitespace().any(|pat| glob_match(pat, name))
-}
-
-fn glob_match(pattern: &str, name: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == name,
-        Some((head, tail)) => {
-            name.len() >= head.len() + tail.len() && name.starts_with(head) && name.ends_with(tail)
-        }
-    }
+    otd_core::pattern_matches_channel(pattern, name)
 }
 
 fn cook_select(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let pattern = c.s("channels");
     let rename = c.s("rename");
-    let renames: Vec<&str> = rename.split_whitespace().collect();
 
     let channels: Vec<Channel> = input
         .channels
@@ -956,10 +1349,7 @@ fn cook_select(c: &mut ChopCtx) -> ChopData {
         .filter(|ch| pattern.trim().is_empty() || name_matches(&pattern, &ch.name))
         .enumerate()
         .map(|(i, ch)| Channel {
-            name: renames
-                .get(i)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| ch.name.clone()),
+            name: otd_core::rename_to_at(&rename, i, &ch.name),
             samples: ch.samples.clone(),
         })
         .collect();
@@ -1469,30 +1859,21 @@ fn cook_rename(c: &mut ChopCtx) -> ChopData {
     let to = c.s("to");
     let patterns: Vec<&str> = from.split_whitespace().collect();
 
-    let (prefix, start, suffix) = match to.find("[").zip(to.find("]")) {
-        Some((open, close)) if close > open => {
-            let inner = &to[open + 1..close];
-            let n: i64 = inner.trim_end_matches('-').parse().unwrap_or(1);
-            (&to[..open], Some(n), &to[close + 1..])
-        }
-        _ => (to.as_str(), None, ""),
-    };
-
-    let mut counter = start.unwrap_or(0);
+    let numbered = otd_core::parse_numbered_pattern(&to);
+    let mut rename_index = 0usize;
     let channels = input
         .channels
         .iter()
         .map(|ch| {
-            if !patterns.iter().any(|p| glob_match(p, &ch.name)) {
+            if !patterns.iter().any(|p| otd_core::pattern_matches_channel(p, &ch.name)) {
                 return ch.clone();
             }
-            let name = match start {
-                Some(_) => {
-                    let n = counter;
-                    counter += 1;
-                    format!("{prefix}{n}{suffix}")
-                }
-                None => prefix.to_string(),
+            let name = if let Some(pat) = numbered {
+                let n = otd_core::channel_name_at(&pat, rename_index);
+                rename_index += 1;
+                n
+            } else {
+                to.clone()
             };
             Channel::new(name, ch.samples.clone())
         })
@@ -2127,6 +2508,14 @@ fn specs() -> &'static Vec<ChopSpec> {
                 "Fixed values as channels.",
                 params_constant,
                 cook_constant,
+            ),
+            spec(
+                PARAMETER,
+                "Parameter",
+                &[],
+                "Another operator's parameter values as channels (does not cook that operator).",
+                params_parameter,
+                cook_parameter,
             ),
             spec_animated(
                 "lfoCHOP",
