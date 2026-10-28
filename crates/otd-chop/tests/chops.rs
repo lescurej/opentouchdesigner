@@ -61,7 +61,10 @@ impl Patch {
 fn a_constant_chop_produces_named_channels() {
     let mut p = Patch::new();
     let c = p.add("constantCHOP", "const1");
-    p.set(c, "channels", Value::Int(3));
+    p.set(c, "rows", Value::Int(3));
+    p.set(c, "name0", Value::Str("chan1".into()));
+    p.set(c, "name1", Value::Str("chan2".into()));
+    p.set(c, "name2", Value::Str("chan3".into()));
     p.set(c, "value0", Value::Float(0.25));
     p.set(c, "value2", Value::Float(-1.0));
     p.run(c, 1);
@@ -69,6 +72,25 @@ fn a_constant_chop_produces_named_channels() {
     assert_eq!(p.data(c).names(), vec!["chan1", "chan2", "chan3"]);
     assert_eq!(p.value(c, "chan1"), 0.25);
     assert_eq!(p.value(c, "chan3"), -1.0);
+}
+
+#[test]
+fn noise_defaults_to_six_hundred_samples_off_timeslice() {
+    let mut p = Patch::new();
+    let n = p.add("noiseCHOP", "noise1");
+    p.run(n, 1);
+    let d = p.data(n);
+    assert!(!d.time_sliced);
+    assert_eq!(d.channels[0].samples.len(), 600);
+}
+
+#[test]
+fn noise_length_is_adjustable() {
+    let mut p = Patch::new();
+    let n = p.add("noiseCHOP", "noise1");
+    p.set(n, "length", Value::Int(128));
+    p.run(n, 1);
+    assert_eq!(p.data(n).channels[0].samples.len(), 128);
 }
 
 #[test]
@@ -88,6 +110,18 @@ fn an_lfo_traces_the_waveform_it_is_asked_for() {
         p.value(l, "lfo") < -0.9,
         "three quarters is near the trough"
     );
+}
+
+#[test]
+fn lfo_channel_name_pattern_expands_range() {
+    let mut p = Patch::new();
+    let l = p.add("lfoCHOP", "lfo1");
+    p.set(l, "name", Value::Str("lfo[1-9]".into()));
+    p.run(l, 1);
+    let d = p.data(l);
+    assert_eq!(d.num_channels(), 9);
+    assert_eq!(d.channels[0].name, "lfo1");
+    assert_eq!(d.channels[8].name, "lfo9");
 }
 
 #[test]
@@ -181,17 +215,57 @@ fn a_trigger_chop_rises_then_releases() {
 }
 
 #[test]
+fn math_combine_channels_multiplies_into_one() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "c1");
+    let m = p.add("mathCHOP", "math1");
+    p.set(c, "rows", Value::Int(2));
+    p.set(c, "name0", Value::Str("a".into()));
+    p.set(c, "name1", Value::Str("b".into()));
+    p.set(c, "value0", Value::Float(2.0));
+    p.set(c, "value1", Value::Float(3.0));
+    p.graph.connect(c, m, 0).unwrap();
+    p.set(m, "combine", Value::Str("off".into()));
+    p.set(m, "chanop", Value::Str("multiply".into()));
+    p.run(m, 1);
+    assert_eq!(p.data(m).num_channels(), 1);
+    assert_eq!(p.value(m, "a"), 6.0);
+}
+
+#[test]
+fn math_range_and_mult_add() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "c1");
+    let m = p.add("mathCHOP", "math1");
+    p.set(c, "value0", Value::Float(0.5));
+    p.graph.connect(c, m, 0).unwrap();
+    p.set(m, "combine", Value::Str("off".into()));
+    p.set(m, "fromrange1", Value::Float(0.0));
+    p.set(m, "fromrange2", Value::Float(1.0));
+    p.set(m, "torange1", Value::Float(0.0));
+    p.set(m, "torange2", Value::Float(100.0));
+    p.set(m, "preoff", Value::Float(0.0));
+    p.set(m, "gain", Value::Float(1.0));
+    p.set(m, "offset", Value::Float(0.0));
+    p.run(m, 1);
+    assert!((p.value(m, "chan1") - 50.0).abs() < 0.01);
+}
+
+#[test]
 fn a_math_chop_broadcasts_a_single_channel_across_many() {
     let mut p = Patch::new();
     let many = p.add("constantCHOP", "many");
     let one = p.add("constantCHOP", "one");
     let math = p.add("mathCHOP", "math1");
-    p.set(many, "channels", Value::Int(3));
+    p.set(many, "rows", Value::Int(3));
+    p.set(many, "name0", Value::Str("chan1".into()));
+    p.set(many, "name1", Value::Str("chan2".into()));
+    p.set(many, "name2", Value::Str("chan3".into()));
     for (i, v) in [1.0, 2.0, 3.0].iter().enumerate() {
         p.set(many, &format!("value{i}"), Value::Float(*v));
     }
     p.set(one, "value0", Value::Float(10.0));
-    p.set(one, "name", Value::Str("gain".into()));
+    p.set(one, "name0", Value::Str("gain".into()));
     p.graph.connect(many, math, 0).unwrap();
     p.graph.connect(one, math, 1).unwrap();
     p.set(math, "combine", Value::Str("multiply".into()));
@@ -207,8 +281,7 @@ fn a_select_chop_matches_names_with_wildcards() {
     let mut p = Patch::new();
     let c = p.add("constantCHOP", "const1");
     let sel = p.add("selectCHOP", "select1");
-    p.set(c, "channels", Value::Int(4));
-    p.set(c, "name", Value::Str("knob".into()));
+    p.set(c, "name0", Value::Str("knob[1-4]".into()));
     p.graph.connect(c, sel, 0).unwrap();
     p.set(sel, "channels", Value::Str("knob1 knob4".into()));
     p.run(sel, 1);
@@ -228,6 +301,8 @@ fn a_merge_chop_disambiguates_duplicate_names() {
     let merge = p.add("mergeCHOP", "merge1");
     p.graph.connect(a, merge, 0).unwrap();
     p.graph.connect(b, merge, 1).unwrap();
+    p.set(a, "name0", Value::Str("chan1".into()));
+    p.set(b, "name0", Value::Str("chan1".into()));
     p.set(a, "value0", Value::Float(1.0));
     p.set(b, "value0", Value::Float(2.0));
     p.run(merge, 1);
@@ -431,9 +506,12 @@ fn dmx_goes_out_over_the_wire() {
     let levels = p.add("constantCHOP", "levels");
     let dmx = p.add("dmxoutCHOP", "dmxout1");
     p.graph.connect(levels, dmx, 0).unwrap();
-    p.set(levels, "channels", Value::Int(3));
-    p.set(levels, "value0", Value::Float(1.0));
-    p.set(levels, "value1", Value::Float(0.5));
+    p.set(levels, "rows", Value::Int(3));
+    p.set(levels, "name0", Value::Str("chan1".into()));
+    p.set(levels, "name1", Value::Str("chan2".into()));
+    p.set(levels, "name2", Value::Str("chan3".into()));
+    p.set(levels, "value0", Value::Float(255.0));
+    p.set(levels, "value1", Value::Float(128.0));
     p.set(levels, "value2", Value::Float(0.0));
     p.set(dmx, "address", Value::Str("127.0.0.1".into()));
     p.set(dmx, "universe", Value::Int(2));
@@ -452,7 +530,7 @@ fn dmx_goes_out_over_the_wire() {
     assert!(len > 20);
     assert_eq!(&buf[0..8], b"Art-Net\0");
     assert_eq!(&buf[14..16], &[2, 0], "universe 2");
-    // Levels are 0..1 in the network and 0..255 on the wire.
+    // Channel values are 0..255 in the CHOP and on the wire.
     assert_eq!(buf[18], 255);
     assert_eq!(buf[19], 128);
     assert_eq!(buf[20], 0);
@@ -775,7 +853,10 @@ fn shuffle_transposes_channels_into_samples() {
     let c = p.add("constantCHOP", "src");
     let s = p.add("shuffleCHOP", "shuffle1");
     p.graph.connect(c, s, 0).unwrap();
-    p.set(c, "channels", Value::Int(3));
+    p.set(c, "rows", Value::Int(3));
+    p.set(c, "name0", Value::Str("chan1".into()));
+    p.set(c, "name1", Value::Str("chan2".into()));
+    p.set(c, "name2", Value::Str("chan3".into()));
     p.set(c, "value0", Value::Float(0.1));
     p.set(c, "value1", Value::Float(0.2));
     p.set(c, "value2", Value::Float(0.3));
@@ -794,11 +875,85 @@ fn rename_numbers_the_channels_it_matches() {
     let c = p.add("constantCHOP", "src");
     let r = p.add("renameCHOP", "rename1");
     p.graph.connect(c, r, 0).unwrap();
-    p.set(c, "channels", Value::Int(3));
+    p.set(c, "name0", Value::Str("chan[1-3]".into()));
     p.set(r, "to", Value::Str("led[1-]".into()));
     p.run(r, 1);
 
     assert_eq!(p.data(r).names(), vec!["led1", "led2", "led3"]);
+}
+
+#[test]
+fn constant_row_pattern_shares_one_value() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "const1");
+    p.set(c, "name0", Value::Str("chan[1-4]".into()));
+    p.set(c, "value0", Value::Float(0.5));
+    p.run(c, 1);
+    assert_eq!(p.data(c).num_channels(), 4);
+    for name in ["chan1", "chan2", "chan3", "chan4"] {
+        assert!((p.value(c, name) - 0.5).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn constant_spreads_chan_1_16_style_names() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "const1");
+    p.set(c, "name0", Value::Str("chan[1-16]".into()));
+    p.run(c, 1);
+    assert_eq!(p.data(c).num_channels(), 16);
+    assert_eq!(p.data(c).names()[0], "chan1");
+    assert_eq!(p.data(c).names()[15], "chan16");
+}
+
+#[test]
+fn select_matches_chan_1_3_pattern() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "src");
+    let sel = p.add("selectCHOP", "sel");
+    p.graph.connect(c, sel, 0).unwrap();
+    p.set(c, "name0", Value::Str("chan[1-5]".into()));
+    p.set(sel, "channels", Value::Str("chan[2-4]".into()));
+    p.run(sel, 1);
+    assert_eq!(p.data(sel).names(), vec!["chan2", "chan3", "chan4"]);
+}
+
+#[test]
+fn select_rename_to_spreads_numbered_pattern() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "src");
+    let sel = p.add("selectCHOP", "sel");
+    p.graph.connect(c, sel, 0).unwrap();
+    p.set(c, "name0", Value::Str("chan[1-3]".into()));
+    p.set(sel, "channels", Value::Str("*".into()));
+    p.set(sel, "rename", Value::Str("led[1-]".into()));
+    p.run(sel, 1);
+    assert_eq!(p.data(sel).names(), vec!["led1", "led2", "led3"]);
+}
+
+#[test]
+fn rename_from_matches_numbered_pattern() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "src");
+    let r = p.add("renameCHOP", "rename1");
+    p.graph.connect(c, r, 0).unwrap();
+    p.set(c, "name0", Value::Str("chan[1-4]".into()));
+    p.set(r, "from", Value::Str("chan[2-3]".into()));
+    p.set(r, "to", Value::Str("x[1-]".into()));
+    p.run(r, 1);
+    assert_eq!(
+        p.data(r).names(),
+        vec!["chan1", "x1", "x2", "chan4"]
+    );
+}
+
+#[test]
+fn pattern_channel_name_expands_bracket_syntax() {
+    let mut p = Patch::new();
+    let pat = p.add("patternCHOP", "pat1");
+    p.set(pat, "name", Value::Str("wave[10-12]".into()));
+    p.run(pat, 1);
+    assert_eq!(p.data(pat).names(), vec!["wave10", "wave11", "wave12"]);
 }
 
 #[test]
