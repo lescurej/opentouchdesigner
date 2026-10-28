@@ -6,16 +6,35 @@ use crate::app::OtdApp;
 
 const TAB_ORDER: &[&str] = &["Play", "Image", "Trim", "Tune", "Common", "Parameters"];
 
-pub fn sort_pages(pages: &mut Vec<String>) {
+const PANEL_TAB_ORDER: &[&str] = &[
+    "Button",
+    "Slider",
+    "Field",
+    "Text",
+    "Layout",
+    "Panel",
+    "Look",
+    "Children",
+    "Drag/Drop",
+    "Extensions",
+    "Common",
+];
+
+pub fn sort_pages(pages: &mut Vec<String>, panel: bool) {
+    let order = if panel {
+        PANEL_TAB_ORDER
+    } else {
+        TAB_ORDER
+    };
     pages.sort_by(|a, b| {
-        let ia = TAB_ORDER.iter().position(|&p| p == a.as_str()).unwrap_or(999);
-        let ib = TAB_ORDER.iter().position(|&p| p == b.as_str()).unwrap_or(999);
+        let ia = order.iter().position(|&p| p == a.as_str()).unwrap_or(999);
+        let ib = order.iter().position(|&p| p == b.as_str()).unwrap_or(999);
         ia.cmp(&ib).then_with(|| a.cmp(b))
     });
     pages.dedup();
 }
 
-pub fn collect_pages(params: &IndexMap<String, Param>) -> Vec<String> {
+pub fn collect_pages(params: &IndexMap<String, Param>, panel: bool) -> Vec<String> {
     let mut pages: Vec<String> = params
         .values()
         .filter_map(|p| {
@@ -23,16 +42,79 @@ pub fn collect_pages(params: &IndexMap<String, Param>) -> Vec<String> {
             (!page.is_empty()).then(|| page.to_string())
         })
         .collect();
+    if panel {
+        for extra in ["Extensions", "Common"] {
+            if !pages.iter().any(|p| p == extra) {
+                pages.push(extra.into());
+            }
+        }
+    }
     if pages.is_empty() {
         return vec!["Parameters".into()];
     }
-    sort_pages(&mut pages);
+    sort_pages(&mut pages, panel);
     pages
 }
 
-pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId, op_label: &str) {
-    let header_bg = Color32::from_rgb(58, 48, 72);
-    let name_bg = Color32::from_rgb(72, 58, 88);
+pub fn ordered_param_keys(op_type: &str, params: &IndexMap<String, Param>, page: &str) -> Vec<String> {
+    let table: &[&str] = match op_type {
+        otd_engine::panel::BUTTON if page == "Button" => {
+            &["label", "value", "mode"]
+        }
+        otd_engine::panel::SLIDER if page == "Slider" => {
+            &["value", "min", "max", "orientation"]
+        }
+        otd_engine::panel::FIELD if page == "Field" => &["text"],
+        otd_engine::panel::TEXT if page == "Text" => &["text", "fontsize"],
+        _ if page == "Layout" => &[
+            "x", "y", "w", "h", "hmode", "leftanchor", "leftoffset", "rightanchor", "rightoffset",
+            "horigin", "hfillweight", "vmode", "bottomanchor", "bottomoffset", "topanchor",
+            "topoffset", "vorigin", "vfillweight", "fixedaspect", "aspect", "layer",
+            "postoffsetx", "postoffsety", "alignallow", "alignorder",
+        ],
+        _ if page == "Panel" => &["display", "enable", "clickthrough"],
+        _ if page == "Look" => {
+            &[
+                "opacity", "bgcolorr", "bgcolorg", "bgcolorb", "bgalpha", "topfill", "composite",
+                "borderover",
+            ]
+        }
+        _ if page == "Children" => {
+            &[
+                "align", "spacing", "alignmax", "marginl", "marginr", "margint", "marginb",
+                "justifymethod", "justifyh", "justifyv", "fit", "scalex", "scaley", "offsetx",
+                "offsety", "crop",
+            ]
+        }
+        _ => &[],
+    };
+    let mut keys: Vec<String> = table
+        .iter()
+        .filter(|k| params.contains_key(**k))
+        .map(|s| (*s).to_string())
+        .collect();
+    if keys.is_empty() {
+        keys = params
+            .iter()
+            .filter(|(_, p)| p.page() == page || (page == "Parameters" && p.page().is_empty()))
+            .map(|(k, _)| k.clone())
+            .collect();
+        keys.sort();
+    }
+    keys
+}
+
+pub fn inspector_header_title(app: &OtdApp, id: NodeId) -> String {
+    op_display_label(app, id)
+}
+
+pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
+    let family = app.graph.node(id).family;
+    let c = family.color();
+    let base = Color32::from_rgb(c[0], c[1], c[2]);
+    let header_bg = base.gamma_multiply(0.38);
+    let name_bg = base.gamma_multiply(0.52);
+    let title = inspector_header_title(app, id);
     let mut name = app.graph.node(id).name.clone();
     let parent = app
         .graph
@@ -46,9 +128,9 @@ pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId, op_label: &str) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(op_label)
+                    RichText::new(title)
                         .strong()
-                        .color(Color32::from_rgb(220, 215, 235)),
+                        .color(Color32::from_rgb(240, 240, 245)),
                 );
                 ui.add_space(6.0);
                 egui::Frame::new()
@@ -73,61 +155,95 @@ pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId, op_label: &str) {
             });
         });
 
-    ui.add_space(4.0);
-    flag_toolbar(app, ui, id);
-    ui.add_space(6.0);
+    ui.add_space(2.0);
 }
 
-fn flag_toolbar(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
-    ui.horizontal(|ui| {
-        let bypass = app.graph.node(id).flags.bypass;
-        if ui
-            .selectable_label(bypass, "Bypass")
-            .on_hover_text("Pass input through (B)")
-            .clicked()
-        {
-            app.edit("bypass");
-            app.history.end_gesture();
-            app.graph.node_mut(id).flags.bypass = !bypass;
-        }
-
-        let display = app.graph.node(id).flags.display;
-        if ui
-            .selectable_label(display, "Display")
-            .on_hover_text("Show live preview on the node body")
-            .clicked()
-        {
-            app.edit("display flag");
-            app.history.end_gesture();
-            app.graph.node_mut(id).flags.display = !display;
-        }
-
-        let lock = app.graph.node(id).flags.lock;
-        if ui
-            .selectable_label(lock, "Lock")
-            .on_hover_text("Block edits and wiring")
-            .clicked()
-        {
-            app.edit("lock");
-            app.history.end_gesture();
-            app.graph.node_mut(id).flags.lock = !lock;
-        }
-
-        let viewer_active = app.viewer == Some(id);
-        if ui
-            .selectable_label(viewer_active, "Viewer Active")
-            .on_hover_text("Drive the main output viewer")
-            .clicked()
-        {
-            app.viewer = if viewer_active { None } else { Some(id) };
-        }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Set output").clicked() {
-                app.viewer = Some(id);
+pub fn panel_common_tab(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
+    ui.spacing_mut().item_spacing.y = 4.0;
+    let flags = [
+        (
+            "Bypass",
+            app.graph.node(id).flags.bypass,
+            crate::canvas::input::SelectionFlag::Bypass,
+        ),
+        (
+            "Viewer",
+            app.graph.node(id).flags.viewer,
+            crate::canvas::input::SelectionFlag::Viewer,
+        ),
+        (
+            "Display",
+            app.graph.node(id).flags.bg_display,
+            crate::canvas::input::SelectionFlag::Display,
+        ),
+        (
+            "Lock",
+            app.graph.node(id).flags.lock,
+            crate::canvas::input::SelectionFlag::Lock,
+        ),
+    ];
+    for (label, on, flag) in flags {
+        let mut v = on;
+        ui.horizontal(|ui| {
+            td_param_label(ui, label);
+            if td_toggle(ui, &mut v) {
+                if v != on {
+                    crate::canvas::input::toggle_flag_at(app, flag, id);
+                }
             }
         });
+    }
+    if app.graph.node(id).family == Family::Comp {
+        let mut perform = app.perform_ui() == Some(id);
+        ui.horizontal(|ui| {
+            td_param_label(ui, "Perform UI");
+            if td_toggle(ui, &mut perform) && perform != (app.perform_ui() == Some(id)) {
+                app.toggle_perform_ui(id);
+            }
+        });
+    }
+}
+
+pub fn panel_extensions_tab(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
+    crate::params::component_links(app, ui, id);
+    crate::params::custom_param_editor(app, ui, id);
+}
+
+pub fn td_param_label(ui: &mut Ui, label: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(155.0, 22.0),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.label(RichText::new(label).color(Color32::from_rgb(175, 178, 188)));
+        },
+    );
+}
+
+pub fn panel_param_row(
+    ui: &mut Ui,
+    label: &str,
+    key: &str,
+    value: &mut Value,
+    range: Option<(f64, f64)>,
+    menu: Option<&[String]>,
+    button_value: bool,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        td_param_label(ui, label);
+        if button_value {
+            let mut on = value.as_f64() >= 0.5;
+            if td_toggle(ui, &mut on) {
+                *value = Value::Float(if on { 1.0 } else { 0.0 });
+                changed = true;
+            }
+        } else if matches!(value, Value::Float(_) | Value::Int(_)) && range.is_some() {
+            changed |= td_slider_field(ui, key, value, range);
+        } else {
+            changed |= value_widget_basic(ui, key, value, range, menu);
+        }
     });
+    changed
 }
 
 pub fn page_tabs(app: &mut OtdApp, ui: &mut Ui, id: NodeId, pages: &[String]) -> String {
@@ -139,28 +255,31 @@ pub fn page_tabs(app: &mut OtdApp, ui: &mut Ui, id: NodeId, pages: &[String]) ->
         .unwrap_or_else(|| pages.first().cloned().unwrap_or_else(|| "Parameters".into()));
 
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
+        ui.spacing_mut().item_spacing.x = 14.0;
         for page in pages {
             let selected = *page == active;
-            let label = RichText::new(page).color(if selected {
+            let label = RichText::new(page).size(13.0).color(if selected {
                 Color32::from_rgb(235, 236, 240)
             } else {
-                Color32::from_rgb(130, 132, 140)
+                Color32::from_rgb(120, 122, 132)
             });
-            if ui.selectable_label(selected, label).clicked() {
+            let resp = ui.selectable_label(selected, label);
+            if resp.clicked() {
                 app.param_inspector_page.insert(id, page.clone());
             }
             if selected {
-                let r = ui.min_rect();
+                let r = resp.rect;
                 ui.painter().hline(
                     r.x_range(),
-                    r.bottom(),
-                    egui::Stroke::new(1.5, Color32::from_rgb(200, 200, 210)),
+                    r.bottom() + 2.0,
+                    egui::Stroke::new(2.0, Color32::from_rgb(220, 222, 230)),
                 );
             }
         }
     });
-    ui.add_space(6.0);
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
     app.param_inspector_page
         .get(&id)
         .cloned()
@@ -178,8 +297,12 @@ pub fn td_toggle(ui: &mut Ui, value: &mut bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let off = ui.selectable_label(!*value, "Off");
-        let on = ui.selectable_label(*value, "On");
+        let off = ui
+            .push_id("td_toggle_off", |ui| ui.selectable_label(!*value, "Off"))
+            .inner;
+        let on = ui
+            .push_id("td_toggle_on", |ui| ui.selectable_label(*value, "On"))
+            .inner;
         if off.clicked() && *value {
             *value = false;
             changed = true;
