@@ -75,6 +75,25 @@ impl CookContext {
         }
     }
 
+    pub fn eval_for_node<'a>(
+        &self,
+        graph: &crate::graph::Graph,
+        id: crate::graph::NodeId,
+        channels: &'a dyn ChannelSource,
+        path: &'a str,
+    ) -> EvalContext<'a> {
+        let (time, abs_time, frame) = graph.local_clock_at(id, self);
+        EvalContext {
+            frame,
+            time,
+            abs_time,
+            fps: self.fps,
+            channels: Some(channels),
+            path: Some(path),
+            locals: &[],
+        }
+    }
+
     /// Advance by one frame of wall time.
     pub fn advance(&mut self, dt: f64) {
         self.frame += 1;
@@ -247,7 +266,7 @@ impl CookEngine {
         // node, so it is a dependency in every sense except the wire.
         let mut param_sources: Vec<NodeId> = node
             .param_sources()
-            .filter_map(|path| graph.find(path))
+            .filter_map(|path| graph.find_from(id, path))
             .collect();
 
         // Component boundaries are dependencies too, in both directions: an
@@ -270,7 +289,11 @@ impl CookEngine {
         if node.references_parent() {
             if let Some(parent) = node.parent.and_then(|p| graph.get(p)) {
                 parent_animated = parent.has_time_dependent_param();
-                param_sources.extend(parent.param_sources().filter_map(|p| graph.find(p)));
+                param_sources.extend(
+                    parent
+                        .param_sources()
+                        .filter_map(|p| graph.find_from(id, p)),
+                );
             }
         }
 
