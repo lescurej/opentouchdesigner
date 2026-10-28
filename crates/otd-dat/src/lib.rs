@@ -210,6 +210,8 @@ impl DatEngine {
         };
         let mut watched = self.watched.remove(&path).unwrap_or_default();
         let mut cx = ops::DatCtx {
+            graph,
+            id,
             node,
             eval,
             inputs,

@@ -10,6 +10,8 @@ use otd_core::{
 use crate::{DatData, ScriptHost};
 
 pub struct DatCtx<'a> {
+    pub graph: &'a otd_core::Graph,
+    pub id: otd_core::NodeId,
     pub node: &'a Node,
     pub eval: &'a EvalContext<'a>,
     pub inputs: Vec<DatData>,
@@ -489,6 +491,18 @@ def onValueChange(par, value, prev):
     pass
 ";
 
+const PANEL_EXECUTE_SOURCE: &str = "\
+# Panel value changed (drag, click, keyboard).
+def onValueChange(panelValue):
+    pass
+
+def onOffToOn(panelValue):
+    pass
+
+def onOnToOff(panelValue):
+    pass
+";
+
 fn params_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
@@ -509,10 +523,105 @@ fn params_chop_execute() -> IndexMap<String, Param> {
 fn params_par_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
-        "op" => Param::str("").with_label("Watch Operator").as_path_ref(),
+        "op" => Param::str("").with_label("OPs").as_path_ref(),
         "parameters" => Param::str("*").with_label("Parameters"),
+        "valuechange" => Param::bool(true).with_label("Value Change"),
         "source" => Param::str(PAR_EXECUTE_SOURCE).with_label("Callbacks").into_script(),
     }
+}
+
+pub const PANEL_EXECUTE: &str = "panelexecuteDAT";
+
+fn params_panel_execute() -> IndexMap<String, Param> {
+    params! {
+        "active" => Param::bool(true).with_label("Active"),
+        "panels" => Param::str("..").with_label("Panels").as_path_ref(),
+        "panelvalue" => Param::str("value").with_label("Panel Value"),
+        "offtoon" => Param::bool(true).with_label("Off to On"),
+        "ontooff" => Param::bool(true).with_label("On to Off"),
+        "valuechange" => Param::bool(true).with_label("Value Change"),
+        "whileon" => Param::bool(false).with_label("While On"),
+        "whileoff" => Param::bool(false).with_label("While Off"),
+        "source" => Param::str(PANEL_EXECUTE_SOURCE).with_label("Callbacks").into_script(),
+    }
+}
+
+fn resolve_dat_op(c: &DatCtx<'_>, path: &str) -> Option<otd_core::NodeId> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    if path.starts_with('/') {
+        c.graph.find(path)
+    } else {
+        c.graph.find_from(c.id, path)
+    }
+}
+
+fn dat_script_path(c: &DatCtx<'_>) -> String {
+    c.graph
+        .get(c.id)
+        .and_then(|n| n.parent)
+        .map(|parent| c.graph.path(parent))
+        .unwrap_or_else(|| c.path.to_string())
+}
+
+fn cook_panel_execute(c: &mut DatCtx) -> DatData {
+    let source = c.s("source");
+    if !c.b("active") {
+        return DatData::text(source);
+    }
+    let Some(panel_id) = resolve_dat_op(c, &c.s("panels")) else {
+        return DatData::text(source);
+    };
+    let panel_path = c.graph.path(panel_id);
+    let key = c.s("panelvalue");
+    let value = c
+        .graph
+        .get(panel_id)
+        .and_then(|n| n.param(&key))
+        .map(|p| {
+            p.eval(&EvalContext {
+                channels: c.eval.channels,
+                path: Some(&panel_path),
+                ..*c.eval
+            })
+            .as_f64()
+        })
+        .unwrap_or(0.0);
+    let prev = c.watched.values.get("panel").copied();
+    let on = value > 0.0;
+    let script = dat_script_path(c);
+    let pv = Value::Str(key.clone());
+
+    if let Some(prev_val) = prev {
+        let was_on = prev_val > 0.0;
+        if c.b("offtoon") && !was_on && on {
+            fire_at(c, &source, "onOffToOn", &[pv.clone()], &script);
+        } else if c.b("ontooff") && was_on && !on {
+            fire_at(c, &source, "onOnToOff", &[pv.clone()], &script);
+        } else if c.b("valuechange") && (prev_val - value).abs() > f64::EPSILON {
+            fire_at(
+                c,
+                &source,
+                "onValueChange",
+                &[pv.clone(), Value::Float(value), Value::Float(prev_val)],
+                &script,
+            );
+        }
+    }
+
+    if prev != Some(value) {
+        c.watched.values.insert("panel".into(), value);
+    }
+
+    if c.b("whileon") && on {
+        fire_at(c, &source, "whileOn", &[Value::Str(key.clone())], &script);
+    }
+    if c.b("whileoff") && !on {
+        fire_at(c, &source, "whileOff", &[Value::Str(key)], &script);
+    }
+    DatData::text(source)
 }
 
 /// Fire one callback, reporting a script error on the node.
@@ -522,10 +631,13 @@ fn params_par_execute() -> IndexMap<String, Param> {
 /// for the same reason — a typo during a show must not take the render with
 /// it.
 fn fire(c: &mut DatCtx, source: &str, func: &str, args: &[Value]) {
+    let script = dat_script_path(c);
+    fire_at(c, source, func, args, &script);
+}
+
+fn fire_at(c: &mut DatCtx, source: &str, func: &str, args: &[Value], script_path: &str) {
     let Some(scripts) = c.scripts else { return };
-    if let Err(e) = scripts.call(source, func, args, c.eval, c.path) {
-        // Keep the first error of the frame: the later ones are usually the
-        // same mistake seen again.
+    if let Err(e) = scripts.call(source, func, args, c.eval, script_path) {
         if c.error.is_none() {
             c.error = Some(e);
         }
@@ -642,15 +754,14 @@ fn cook_par_execute(c: &mut DatCtx) -> DatData {
     if !c.b("active") {
         return DatData::text(source);
     }
-    let path = c.s("op");
-    let Some(net) = c.eval.channels else {
+    if !c.b("valuechange") {
+        return DatData::text(source);
+    }
+    let Some(watch_id) = resolve_dat_op(c, &c.s("op")) else {
         return DatData::text(source);
     };
+    let watch_path = c.graph.path(watch_id);
     let pattern = c.s("parameters");
-    // Only the parameters named explicitly can be watched: there is no way to
-    // enumerate another operator's parameters through the narrow view a script
-    // gets, and widening that view to serve one operator would hand every
-    // expression the whole graph.
     let names: Vec<String> = pattern
         .split_whitespace()
         .filter(|n| *n != "*")
@@ -663,7 +774,18 @@ fn cook_par_execute(c: &mut DatCtx) -> DatData {
 
     let mut events = Vec::new();
     for name in &names {
-        let Some(value) = net.param_value(path.trim(), name) else {
+        let Some(value) = c
+            .graph
+            .get(watch_id)
+            .and_then(|n| n.param(name))
+            .map(|p| {
+                p.eval(&EvalContext {
+                    channels: c.eval.channels,
+                    path: Some(&watch_path),
+                    ..*c.eval
+                })
+            })
+        else {
             continue;
         };
         let value = value.as_f64();
@@ -1038,6 +1160,17 @@ fn specs() -> &'static Vec<DatSpec> {
             ex.def.time_dependent = true;
             v.push(ex);
         }
+
+        let mut panel_ex = spec(
+            PANEL_EXECUTE,
+            "Panel Execute",
+            &[],
+            "Python callbacks when a panel value changes.",
+            params_panel_execute,
+            cook_panel_execute,
+        );
+        panel_ex.def.time_dependent = true;
+        v.push(panel_ex);
 
         v.push(spec(
             "sortDAT",
