@@ -210,7 +210,7 @@ pub fn sync(graph: &mut Graph, dats: &DatStore) -> usize {
             let id = match graph.find(&path) {
                 Some(id) => id,
                 None => {
-                    let Ok(id) = graph.create(rep, &otd_gpu::ops::CONTAINER, Some(&w.name)) else {
+                    let Ok(id) = graph.create(rep, &crate::panel::CONTAINER_DEF, Some(&w.name)) else {
                         continue;
                     };
                     graph.set_clone(id, Some(master_path.trim()));
