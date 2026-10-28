@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use slotmap::{Key, SecondaryMap, SlotMap};
 use std::collections::HashSet;
 
-use crate::param::Param;
+use crate::param::{Param, ParamMode};
 use crate::value::Value;
 
 slotmap::new_key_type! {
@@ -52,12 +52,12 @@ impl Family {
     /// memory for. sRGB, 0-255.
     pub fn color(self) -> [u8; 3] {
         match self {
-            Family::Top => [102, 140, 196],
-            Family::Chop => [126, 190, 126],
-            Family::Sop => [175, 130, 190],
-            Family::Dat => [190, 170, 110],
-            Family::Mat => [190, 120, 120],
-            Family::Comp => [140, 140, 150],
+            Family::Top => [92, 68, 128],
+            Family::Chop => [58, 128, 78],
+            Family::Sop => [52, 108, 118],
+            Family::Dat => [128, 58, 98],
+            Family::Mat => [128, 102, 52],
+            Family::Comp => [78, 82, 92],
         }
     }
 
@@ -89,12 +89,22 @@ pub enum Connector {
 /// Per-node toggles that live on the node body in the editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NodeFlags {
-    /// Show the live viewer on the node body.
-    pub display: bool,
+    /// Viewer flag: show the operator viewer on the node body (vs the family icon).
+    /// Serialized as `display` in `.otd` for older projects.
+    #[serde(rename = "display")]
+    pub viewer: bool,
+    /// Show this operator on the network background (auto-arranged viewer grid).
+    #[serde(default)]
+    pub bg_display: bool,
+    /// Viewer Active: the node body is for inspecting/interacting, not moving.
+    #[serde(default)]
+    pub viewer_active: bool,
     /// Pass input 0 straight through without cooking this operator.
     pub bypass: bool,
     /// This node is a cook root even if nothing downstream wants it.
     pub render: bool,
+    /// Always cook (TouchDesigner cook flag), even off-screen.
+    pub cook: bool,
     /// Edits, wiring and moves are blocked (TouchDesigner lock).
     pub lock: bool,
 }
@@ -102,9 +112,12 @@ pub struct NodeFlags {
 impl Default for NodeFlags {
     fn default() -> Self {
         NodeFlags {
-            display: true,
+            viewer: true,
+            bg_display: false,
+            viewer_active: false,
             bypass: false,
             render: false,
+            cook: false,
             lock: false,
         }
     }
@@ -118,6 +131,8 @@ pub struct Node {
     pub params: IndexMap<String, Param>,
     /// One slot per declared input; `None` means unconnected.
     pub inputs: Vec<Option<NodeId>>,
+    /// Which output connector on the source operator feeds each input.
+    pub input_source_out: Vec<usize>,
     pub input_labels: Vec<String>,
     /// The family each input accepts. Usually the node's own family, but a
     /// component's connectors take theirs from its In operators, which is how
@@ -291,10 +306,11 @@ impl Graph {
         let mut nodes = SlotMap::with_key();
         let root = nodes.insert(Node {
             name: "root".into(),
-            op_type: "container".into(),
+            op_type: "baseCOMP".into(),
             family: Family::Comp,
             params: IndexMap::new(),
             inputs: Vec::new(),
+            input_source_out: Vec::new(),
             input_labels: Vec::new(),
             input_families: Vec::new(),
             connector: Connector::None,
@@ -421,6 +437,7 @@ impl Graph {
             family: def.family,
             params: (def.params)(),
             inputs: vec![None; def.inputs.len()],
+            input_source_out: vec![0; def.inputs.len()],
             input_labels: def.inputs.iter().map(|s| s.to_string()).collect(),
             input_families: def.accepted_families(),
             connector: def.connector,
@@ -475,40 +492,75 @@ impl Graph {
             return;
         }
         node.inputs.resize(ins.len(), None);
+        node.input_source_out.resize(ins.len(), 0);
         node.input_labels = labels;
         node.input_families = families;
         node.revision += 1;
     }
 
+    /// Out operators inside a component, in connector order (name-sorted).
+    pub fn comp_out_connectors(&self, comp: NodeId) -> Vec<(NodeId, Family, String)> {
+        self.connector_ops(comp, Connector::Out)
+            .into_iter()
+            .map(|id| {
+                let n = &self.nodes[id];
+                (id, n.family, n.name.clone())
+            })
+            .collect()
+    }
+
     /// The family a node presents on its output: its own, or — for a
     /// component — that of the Out operator inside it.
     pub fn output_family(&self, id: NodeId) -> Option<Family> {
+        self.output_family_at(id, 0)
+    }
+
+    pub fn output_family_at(&self, id: NodeId, out_index: usize) -> Option<Family> {
         let node = self.nodes.get(id)?;
         if node.family != Family::Comp {
             return Some(node.family);
         }
         self.connector_ops(id, Connector::Out)
-            .first()
+            .get(out_index)
             .map(|o| self.nodes[*o].family)
     }
 
     /// The node that actually produces what `id` presents, following bypass
     /// flags and stepping out of components into their Out operator.
     pub fn resolve_output(&self, id: NodeId) -> Option<NodeId> {
+        self.resolve_output_at(id, 0)
+    }
+
+    pub fn resolve_output_at(&self, id: NodeId, out_index: usize) -> Option<NodeId> {
         let mut cur = id;
+        let mut out = out_index;
         for _ in 0..64 {
             let node = self.nodes.get(cur)?;
             if node.flags.bypass {
                 cur = (*node.inputs.first()?)?;
+                out = *node.input_source_out.first()?;
                 continue;
             }
             if node.family == Family::Comp {
-                cur = *self.connector_ops(cur, Connector::Out).first()?;
+                cur = *self.connector_ops(cur, Connector::Out).get(out)?;
+                out = 0;
                 continue;
             }
             return Some(cur);
         }
         None
+    }
+
+    pub fn resolve_input_source(&self, dst: NodeId, input_index: usize) -> Option<NodeId> {
+        let src = (*self.nodes.get(dst)?.inputs.get(input_index)?)?;
+        let out = self
+            .nodes
+            .get(dst)?
+            .input_source_out
+            .get(input_index)
+            .copied()
+            .unwrap_or(0);
+        self.resolve_output_at(src, out)
     }
 
     /// For an In operator, the node outside the component that feeds it.
@@ -602,17 +654,24 @@ impl Graph {
         dst: NodeId,
         input_index: usize,
     ) -> Result<(), GraphError> {
+        self.connect_from_output(src, 0, dst, input_index)
+    }
+
+    pub fn connect_from_output(
+        &mut self,
+        src: NodeId,
+        src_out: usize,
+        dst: NodeId,
+        input_index: usize,
+    ) -> Result<(), GraphError> {
         if !self.nodes.contains_key(src) || !self.nodes.contains_key(dst) {
             return Err(GraphError::NoSuchNode);
         }
         if input_index >= self.nodes[dst].inputs.len() {
             return Err(GraphError::BadInputIndex(input_index));
         }
-        // Compare against what the source *presents* and what this particular
-        // input *accepts*, which for a component are decided by the operators
-        // inside it rather than by the node's own family.
         let sf = self
-            .output_family(src)
+            .output_family_at(src, src_out)
             .ok_or(GraphError::FamilyMismatch("nothing", "an input"))?;
         let df = self.nodes[dst].input_families[input_index];
         if sf != df {
@@ -623,6 +682,10 @@ impl Graph {
         }
         let n = &mut self.nodes[dst];
         n.inputs[input_index] = Some(src);
+        if n.input_source_out.len() <= input_index {
+            n.input_source_out.resize(input_index + 1, 0);
+        }
+        n.input_source_out[input_index] = src_out;
         n.revision += 1;
         Ok(())
     }
@@ -682,6 +745,31 @@ impl Graph {
         format!("/{}", parts.join("/"))
     }
 
+    pub fn local_clock_at(&self, node: NodeId, global: &crate::cook::CookContext) -> (f64, f64, i64) {
+        let mut time = global.time;
+        let mut abs_time = global.abs_time;
+        let mut frame = global.frame;
+        let mut cur = node;
+        while let Some(n) = self.get(cur) {
+            let Some(parent) = n.parent else {
+                break;
+            };
+            let comp = &self.nodes[parent];
+            if comp.family == Family::Comp {
+                let start = comp
+                    .param("timestart")
+                    .map(|p| p.value.as_f64())
+                    .unwrap_or(0.0);
+                let rate = comp.param("rate").map(|p| p.value.as_f64()).unwrap_or(1.0);
+                time = (time - start).max(0.0) * rate;
+                abs_time = (abs_time - start).max(0.0) * rate;
+                frame = ((frame as f64 - start * global.fps) * rate).round() as i64;
+            }
+            cur = parent;
+        }
+        (time, abs_time, frame)
+    }
+
     pub fn find(&self, path: &str) -> Option<NodeId> {
         let mut cur = self.root;
         for seg in path.split('/').filter(|s| !s.is_empty()) {
@@ -692,6 +780,60 @@ impl Graph {
             cur = *next;
         }
         Some(cur)
+    }
+
+    /// CHOP channel links via Export mode or expressions (`ch()`, `op()` on a CHOP).
+    pub fn channel_expression_links(&self) -> Vec<(NodeId, NodeId)> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for dst in self.walk() {
+            if dst == self.root() {
+                continue;
+            }
+            for p in self.node(dst).params.values() {
+                let sources: Vec<NodeId> = match p.mode {
+                    ParamMode::Export => self
+                        .resolve_param_op_path(dst, p)
+                        .into_iter()
+                        .collect(),
+                    ParamMode::Expression => self.expression_chop_sources(dst, p),
+                    _ => Vec::new(),
+                };
+                for src in sources {
+                    if src == dst || !self.contains(src) {
+                        continue;
+                    }
+                    if seen.insert((src, dst)) {
+                        out.push((src, dst));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn resolve_param_op_path(&self, from: NodeId, p: &Param) -> Option<NodeId> {
+        let path = p.source_parts().map(|(path, _)| path)?;
+        self.resolve_ref_path(from, path)
+    }
+
+    fn expression_chop_sources(&self, from: NodeId, p: &Param) -> Vec<NodeId> {
+        p.referenced_ops()
+            .filter_map(|path| self.resolve_ref_path(from, path))
+            .filter(|&id| self.nodes.get(id).is_some_and(|n| n.family == Family::Chop))
+            .collect()
+    }
+
+    fn resolve_ref_path(&self, from: NodeId, path: &str) -> Option<NodeId> {
+        let path = path.trim();
+        if path.is_empty() {
+            return None;
+        }
+        if path.starts_with('/') {
+            self.find(path)
+        } else {
+            self.find_from(from, path)
+        }
     }
 
     /// Resolve a path the way an operator's reference parameter reads it:
@@ -915,6 +1057,35 @@ mod tests {
         let (mut g, a, b) = two_chain();
         assert_eq!(g.connect(b, a, 0), Err(GraphError::WouldCycle));
         assert_eq!(g.connect(a, a, 0), Err(GraphError::WouldCycle));
+    }
+
+    #[test]
+    fn channel_expression_links_export_and_ch() {
+        let mut g = Graph::new();
+        let reg = registry();
+        let root = g.root();
+        let lfo = g.create(root, reg.get("chop_pass").unwrap(), None).unwrap();
+        let lfo_path = g.path(lfo);
+        let lfo_name = g.node(lfo).name.clone();
+        let top = g.create(root, reg.get("pass").unwrap(), None).unwrap();
+        g.node_mut(top)
+            .params
+            .get_mut(TEST_PASS)
+            .unwrap()
+            .set_export(&lfo_path, "chan1");
+        assert_eq!(g.channel_expression_links(), vec![(lfo, top)]);
+
+        let top2 = g.create(root, reg.get("pass").unwrap(), None).unwrap();
+        g.node_mut(top2)
+            .params
+            .get_mut(TEST_PASS)
+            .unwrap()
+            .set_expression(&format!("ch('{lfo_name}', 'chan1')"));
+        let mut links = g.channel_expression_links();
+        links.sort_unstable();
+        let mut want = vec![(lfo, top), (lfo, top2)];
+        want.sort_unstable();
+        assert_eq!(links, want);
     }
 
     #[test]
