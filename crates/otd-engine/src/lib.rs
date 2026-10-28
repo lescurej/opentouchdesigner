@@ -10,11 +10,15 @@
 //! while a node is cooking, the freshly cooked channels can be read
 //! immutably by the parameters of whatever cooks next.
 
+pub mod comp;
 pub mod demo;
 pub mod docs;
 pub mod execute;
 pub mod palette;
 pub mod panel;
+pub mod panel_templates;
+mod panel_layout;
+mod panel_params;
 pub mod replicator;
 
 use std::cell::RefCell;
@@ -45,6 +49,7 @@ pub fn registry() -> OpRegistry {
     }
     // The scene components and materials live with the renderer.
     otd_gpu::scene::register(&mut r);
+    comp::register(&mut r);
     panel::register(&mut r);
     r.register(replicator::DEF);
     r
@@ -73,6 +78,14 @@ impl otd_core::ChannelSource for FullNetwork<'_> {
     }
     fn parent_param(&self, node_path: &str, param: &str) -> Option<otd_core::Value> {
         self.chops.parent_param(node_path, param)
+    }
+    fn resolve_operator_path(
+        &self,
+        from_operator_path: &str,
+        reference: &str,
+    ) -> Option<String> {
+        self.chops
+            .resolve_operator_path(from_operator_path, reference)
     }
     fn eval_python(
         &self,
@@ -218,11 +231,35 @@ impl Engines {
             },
             python: &self.python,
         };
-        let eval = otd_core::EvalContext {
-            path: Some(&path),
-            ..ctx.eval_ctx_with(&net)
-        };
+        let eval = ctx.eval_for_node(graph, id, &net, &path);
         Some(graph.get(id)?.param(key)?.eval(&eval))
+    }
+
+    /// Like [`eval_param`], but surfaces evaluation errors for the inspector.
+    pub fn eval_param_checked(
+        &self,
+        graph: &Graph,
+        id: NodeId,
+        key: &str,
+        ctx: &CookContext,
+    ) -> Result<otd_core::Value, String> {
+        let p = graph
+            .get(id)
+            .and_then(|n| n.param(key))
+            .ok_or_else(|| "missing parameter".to_string())?;
+        if let Some(err) = p.error() {
+            return Err(err.to_string());
+        }
+        let path = graph.path(id);
+        let net = FullNetwork {
+            chops: Network {
+                graph,
+                chops: &self.channels,
+            },
+            python: &self.python,
+        };
+        let eval = ctx.eval_for_node(graph, id, &net, &path);
+        p.eval_checked(&eval)
     }
 
     /// The parameter changes callbacks asked for this frame.
@@ -236,6 +273,35 @@ impl Engines {
     /// Why Python is unavailable, if it is.
     pub fn python_error(&self) -> Option<String> {
         self.python.borrow().startup_error.clone()
+    }
+
+    pub fn take_script_log(&mut self) -> Vec<String> {
+        self.python.borrow_mut().take_script_log()
+    }
+
+    pub fn exec_console(
+        &mut self,
+        graph: &Graph,
+        ctx: &CookContext,
+        source: &str,
+    ) -> Result<String, String> {
+        let trimmed = source.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        let root = graph.root();
+        let path = graph.path(root);
+        let net = FullNetwork {
+            chops: Network {
+                graph,
+                chops: &self.channels,
+            },
+            python: &self.python,
+        };
+        let eval = ctx.eval_for_node(graph, root, &net, &path);
+        self.python
+            .borrow_mut()
+            .exec_console(trimmed, &eval, &path)
     }
 
     /// The value a parameter would read if it were bound to this one.
@@ -315,12 +381,12 @@ fn crossings(
     node.inputs
         .iter()
         .enumerate()
-        .map(|(i, slot)| {
+        .map(|(i, _slot)| {
             let wanted = *node.input_families.get(i)?;
             if wanted == node.family {
                 return None;
             }
-            let src = graph.resolve_output((*slot)?)?;
+            let src = graph.resolve_input_source(id, i)?;
             match wanted {
                 Family::Dat => Some(otd_core::Crossing::Table(dats.get(src)?.rows.clone())),
                 Family::Chop => {
@@ -401,7 +467,8 @@ impl Cooker for Engines {
                         },
                         python,
                     };
-                    let eval = ctx.eval_ctx_with(&net);
+                    let path = graph.path(id);
+                    let eval = ctx.eval_for_node(graph, id, &net, &path);
                     chop.cook_node(graph, id, ctx, &eval, channels, foreign)?
                 };
                 channels.insert(id, data);
@@ -416,7 +483,8 @@ impl Cooker for Engines {
                         },
                         python,
                     };
-                    let eval = ctx.eval_ctx_with(&net);
+                    let path = graph.path(id);
+                    let eval = ctx.eval_for_node(graph, id, &net, &path);
                     sop.cook_node(graph, id, ctx, &eval, geometry)?
                 };
                 geometry.insert(id, data);
@@ -431,7 +499,8 @@ impl Cooker for Engines {
                     },
                     python,
                 };
-                let eval = ctx.eval_ctx_with(&net);
+                let path = graph.path(id);
+                let eval = ctx.eval_for_node(graph, id, &net, &path);
                 let view = SceneView {
                     graph,
                     geometry,
@@ -449,7 +518,8 @@ impl Cooker for Engines {
                         },
                         python,
                     };
-                    let eval = ctx.eval_ctx_with(&net);
+                    let path = graph.path(id);
+                    let eval = ctx.eval_for_node(graph, id, &net, &path);
                     let scripts = PythonScripts { python };
                     dat.cook_node(graph, id, ctx, &eval, dats, Some(&scripts), foreign)?
                 };
@@ -461,3 +531,4 @@ impl Cooker for Engines {
         }
     }
 }
+
