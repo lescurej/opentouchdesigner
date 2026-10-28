@@ -12,3 +12,4 @@
 .env.*
 !.env.example
 dist/
+.DS_Store
