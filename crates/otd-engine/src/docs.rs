@@ -246,9 +246,8 @@ const NOTES: &[(&str, &str)] = &[
     ),
     (
         "dmxoutCHOP",
-        "Sends each channel as a DMX slot over Art-Net or sACN (E1.31). Values are \
-         expected in 0..1 and are clamped rather than wrapped — a light jumping \
-         from full to black on an overshoot is much worse than one that saturates.\n\n\
+        "Sends each channel as a DMX slot over Art-Net or sACN (E1.31). Channel \
+         values are 0..255 (TouchDesigner-style) and clamp rather than wrap.\n\n\
          DMX is a state protocol, so each frame sends the current value of each \
          channel, which is the last sample of the slice.",
     ),
@@ -262,6 +261,34 @@ const NOTES: &[(&str, &str)] = &[
          Replicants are ordinary clones: they follow the master's network as \
          it is edited, and anything you place inside the replicator by hand \
          is yours and is left alone.",
+    ),
+    (
+        "baseCOMP",
+        "A plain component: a network inside, with **In** and **Out** operators \
+         (TOP/CHOP/SOP/DAT) defining the node's connectors. No panel UI — use \
+         `containerCOMP` only when you need a control surface.\n\n\
+         Add `inTOP` / `outTOP` (or other family In/Out), wire internally, and \
+         the parent network sees one operator.",
+    ),
+    (
+        "containerCOMP",
+        "Groups **panel** COMPs — Button, Slider, Field, and nested Containers — \
+         into a control surface on the perform output. **Layout** (x, y, width, height) \
+         is in fractions of the parent panel; **Children → Align** lays out child panels \
+         in a row, column, or grid with spacing and margins, like TouchDesigner's \
+         Container COMP.\n\n\
+         Still holds a normal operator network (Out TOP, effects, etc.); panel layout \
+         is independent of network wiring.",
+    ),
+    (
+        "windowCOMP",
+        "Shows a **cooked TOP** on a floating OS window or projector output — \
+         nothing else. Set **Operator** (`winop`) to a TOP, or a COMP (resolved \
+         to its view / Out TOP). Leave **Operator** blank to use this node's \
+         wired Out TOP.\n\n\
+         Panel UI lives in **containerCOMP** + Perform (F1), not here. \
+         **Performance** marks this window as the project's default **output** \
+         windowCOMP (TOP path for the Output window), not the Perform UI.",
     ),
     (
         "renderTOP",
