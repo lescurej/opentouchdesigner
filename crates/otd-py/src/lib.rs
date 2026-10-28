@@ -95,8 +95,63 @@ fn ch(op_path: &str, channel: &str) -> f64 {
 #[pyfunction]
 fn setpar(op_path: &str, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
     let value = py_to_value(value).map_err(pyo3::exceptions::PyTypeError::new_err)?;
-    EDITS.with(|e| e.borrow_mut().push(ParamEdit::new(op_path, name, value)));
+    let path = with_network(|net, node_path| {
+        net.resolve_operator_path(node_path, op_path)
+            .unwrap_or_else(|| resolve_py_op_path(op_path, node_path))
+    })
+    .unwrap_or_else(|| resolve_py_op_path(op_path, ""));
+    EDITS.with(|e| e.borrow_mut().push(ParamEdit::new(path, name, value)));
     Ok(())
+}
+
+fn resolve_py_op_path(op_path: &str, node_path: &str) -> String {
+    let op_path = op_path.trim();
+    if op_path.starts_with('/') {
+        return op_path.to_string();
+    }
+    let base = node_path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+    if base.is_empty() {
+        format!("/{op_path}")
+    } else {
+        format!("{base}/{op_path}")
+    }
+}
+
+#[pyclass]
+struct OpRef {
+    path: String,
+}
+
+#[pymethods]
+impl OpRef {
+    fn __getitem__(&self, channel: &str) -> f64 {
+        with_network(|net, node_path| {
+            let path = net
+                .resolve_operator_path(node_path, &self.path)
+                .unwrap_or_else(|| resolve_py_op_path(&self.path, node_path));
+            net.channel(&path, channel).unwrap_or(0.0) as f64
+        })
+        .unwrap_or(0.0)
+    }
+
+    fn par(&self, py: Python<'_>, name: &str) -> Py<PyAny> {
+        with_network(|net, node_path| {
+            let path = net
+                .resolve_operator_path(node_path, &self.path)
+                .unwrap_or_else(|| resolve_py_op_path(&self.path, node_path));
+            net.param_value(&path, name)
+        })
+        .flatten()
+        .map(|v| value_to_py(py, &v))
+        .unwrap_or_else(|| py.None())
+    }
+}
+
+#[pyfunction]
+fn op(op_path: &str) -> OpRef {
+    OpRef {
+        path: op_path.to_string(),
+    }
 }
 
 /// `par('/blur1', 'size')` — another operator's parameter value.
@@ -163,6 +218,64 @@ fn py_to_value(obj: &Bound<'_, PyAny>) -> Result<Value, String> {
     ))
 }
 
+fn format_console_value(v: &Value) -> String {
+    match v {
+        Value::Float(f) => format!("{f}"),
+        Value::Int(i) => format!("{i}"),
+        Value::Bool(b) => format!("{b}"),
+        Value::Str(s) => s.clone(),
+        Value::Vec2(a) => format!("({:.4}, {:.4})", a[0], a[1]),
+        Value::Vec3(a) => format!("({:.4}, {:.4}, {:.4})", a[0], a[1], a[2]),
+        Value::Vec4(a) => format!(
+            "({:.4}, {:.4}, {:.4}, {:.4})",
+            a[0], a[1], a[2], a[3]
+        ),
+    }
+}
+
+fn merge_console_out(captured: &str, v: &Value) -> String {
+    let formatted = format_console_value(v);
+    if captured.is_empty() {
+        formatted
+    } else if formatted.is_empty() {
+        captured.to_string()
+    } else {
+        format!("{captured}\n{formatted}")
+    }
+}
+
+fn drain_captured_stdout(_py: Python<'_>, cap: &Bound<'_, PyAny>) -> String {
+    cap.call_method0("getvalue")
+        .and_then(|v| v.extract())
+        .unwrap_or_default()
+}
+
+fn restore_stdio(py: Python<'_>, sys: &Bound<'_, PyModule>, out: Py<PyAny>, err: Py<PyAny>) {
+    let _ = sys.setattr("stdout", out.bind(py));
+    let _ = sys.setattr("stderr", err.bind(py));
+}
+
+fn capture_stdio(
+    py: Python<'_>,
+) -> Result<(Bound<'_, pyo3::types::PyModule>, Py<PyAny>, Py<PyAny>, Bound<'_, PyAny>), String> {
+    let sys = py
+        .import("sys")
+        .map_err(|e| format_error(py, &e))?;
+    let io = py.import("io").map_err(|e| format_error(py, &e))?;
+    let cap = io
+        .getattr("StringIO")
+        .map_err(|e| format_error(py, &e))?
+        .call0()
+        .map_err(|e| format_error(py, &e))?;
+    let old_out = sys.getattr("stdout").map_err(|e| format_error(py, &e))?.unbind();
+    let old_err = sys.getattr("stderr").map_err(|e| format_error(py, &e))?.unbind();
+    sys.setattr("stdout", &cap)
+        .map_err(|e| format_error(py, &e))?;
+    sys.setattr("stderr", &cap)
+        .map_err(|e| format_error(py, &e))?;
+    Ok((sys, old_out, old_err, cap))
+}
+
 /// Turn a Python exception into the one line the parameter panel has room for.
 fn format_error(py: Python<'_>, err: &PyErr) -> String {
     let kind = err
@@ -191,6 +304,7 @@ pub struct PyEngine {
     namespaces: HashMap<String, Py<PyDict>>,
     /// Modules the user has asked for, kept so `import` costs happen once.
     pub startup_error: Option<String>,
+    script_log: Vec<String>,
 }
 
 impl PyEngine {
@@ -205,6 +319,7 @@ impl PyEngine {
             cache: HashMap::new(),
             namespaces: HashMap::new(),
             startup_error: None,
+            script_log: Vec::new(),
         };
         if let Err(e) = engine.build_scope() {
             engine.startup_error = Some(e);
@@ -234,6 +349,9 @@ impl PyEngine {
             }
             globals
                 .set_item("ch", wrap_pyfunction!(ch, py).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            globals
+                .set_item("op", wrap_pyfunction!(op, py).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
             globals
                 .set_item("par", wrap_pyfunction!(par, py).map_err(|e| e.to_string())?)
@@ -278,6 +396,27 @@ def smoothstep(lo, hi, v):
     /// Whether the interpreter is usable.
     pub fn is_available(&self) -> bool {
         self.startup_error.is_none()
+    }
+
+    pub fn take_script_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.script_log)
+    }
+
+    fn push_script_output(&mut self, path: &str, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let tag = path.trim();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            if tag.is_empty() {
+                self.script_log.push(line.to_string());
+            } else {
+                self.script_log.push(format!("{tag}: {line}"));
+            }
+        }
     }
 
     /// Evaluate one expression.
@@ -332,6 +471,57 @@ def smoothstep(lo, hi, v):
         Ok(Python::attach(|py| self.cache[source].clone_ref(py)))
     }
 
+    pub fn exec_console(
+        &mut self,
+        source: &str,
+        ctx: &EvalContext,
+        path: &str,
+    ) -> Result<String, String> {
+        if let Some(e) = &self.startup_error {
+            return Err(e.clone());
+        }
+        let _guard = NetworkGuard::set(ctx.channels, path);
+        Python::attach(|py| {
+            let (sys, old_out, old_err, cap) = capture_stdio(py)?;
+            let value = (|| -> Result<Option<Value>, String> {
+                let globals = self.globals.bind(py);
+                let locals = PyDict::new(py);
+                locals.set_item("absTime", ctx.abs_time).ok();
+                locals.set_item("time", ctx.time).ok();
+                locals.set_item("frame", ctx.frame).ok();
+                locals.set_item("me", path).ok();
+                let src = CString::new(source).map_err(|_| "script contains a NUL byte")?;
+                let builtins = py.import("builtins").map_err(|e| format_error(py, &e))?;
+                let compiled = builtins.call_method1(
+                    "compile",
+                    (src.to_str().unwrap(), "<textport>", "eval"),
+                );
+                if let Ok(code) = compiled {
+                    let result = builtins
+                        .call_method1("eval", (code, globals.clone(), locals))
+                        .map_err(|e| format_error(py, &e))?;
+                    if result.is_none() {
+                        return Ok(None);
+                    }
+                    return py_to_value(&result).map(Some);
+                }
+                py.run(&src, Some(globals), Some(&locals))
+                    .map_err(|e| format_error(py, &e))?;
+                match locals.get_item("result") {
+                    Ok(Some(v)) => py_to_value(&v).map(Some),
+                    _ => Ok(None),
+                }
+            })();
+            let captured = drain_captured_stdout(py, &cap).trim_end().to_string();
+            restore_stdio(py, &sys, old_out, old_err);
+            match value {
+                Err(e) => Err(e),
+                Ok(None) => Ok(captured),
+                Ok(Some(v)) => Ok(merge_console_out(&captured, &v)),
+            }
+        })
+    }
+
     /// Run a statement block — a Script DAT, or a callback body. Returns
     /// whatever the block left in a variable called `result`, if anything.
     pub fn run(
@@ -345,19 +535,26 @@ def smoothstep(lo, hi, v):
         }
         let _guard = NetworkGuard::set(ctx.channels, path);
         Python::attach(|py| {
-            let globals = self.globals.bind(py);
-            let locals = PyDict::new(py);
-            locals.set_item("absTime", ctx.abs_time).ok();
-            locals.set_item("time", ctx.time).ok();
-            locals.set_item("frame", ctx.frame).ok();
-            locals.set_item("me", path).ok();
-            let src = CString::new(source).map_err(|_| "script contains a NUL byte")?;
-            py.run(&src, Some(globals), Some(&locals))
-                .map_err(|e| format_error(py, &e))?;
-            match locals.get_item("result") {
-                Ok(Some(v)) => py_to_value(&v).map(Some),
-                _ => Ok(None),
-            }
+            let (sys, old_out, old_err, cap) = capture_stdio(py)?;
+            let run = (|| {
+                let globals = self.globals.bind(py);
+                let locals = PyDict::new(py);
+                locals.set_item("absTime", ctx.abs_time).ok();
+                locals.set_item("time", ctx.time).ok();
+                locals.set_item("frame", ctx.frame).ok();
+                locals.set_item("me", path).ok();
+                let src = CString::new(source).map_err(|_| "script contains a NUL byte")?;
+                py.run(&src, Some(globals), Some(&locals))
+                    .map_err(|e| format_error(py, &e))?;
+                match locals.get_item("result") {
+                    Ok(Some(v)) => py_to_value(&v).map(Some),
+                    _ => Ok(None),
+                }
+            })();
+            let captured = drain_captured_stdout(py, &cap);
+            restore_stdio(py, &sys, old_out, old_err);
+            self.push_script_output(path, captured);
+            run
         })
     }
 
@@ -397,24 +594,29 @@ def smoothstep(lo, hi, v):
         }
 
         Python::attach(|py| {
-            let ns = self.namespaces[source].bind(py);
-            let Ok(Some(f)) = ns.get_item(func) else {
-                return Ok(false);
-            };
-            if !f.is_callable() {
-                return Ok(false);
-            }
-            // `me`, `absTime` and `frame` are globals for a callback rather
-            // than arguments, so a signature stays about the event.
-            ns.set_item("me", path).ok();
-            ns.set_item("absTime", ctx.abs_time).ok();
-            ns.set_item("time", ctx.time).ok();
-            ns.set_item("frame", ctx.frame).ok();
+            let (sys, old_out, old_err, cap) = capture_stdio(py)?;
+            let run = (|| {
+                let ns = self.namespaces[source].bind(py);
+                let Ok(Some(f)) = ns.get_item(func) else {
+                    return Ok(false);
+                };
+                if !f.is_callable() {
+                    return Ok(false);
+                }
+                ns.set_item("me", path).ok();
+                ns.set_item("absTime", ctx.abs_time).ok();
+                ns.set_item("time", ctx.time).ok();
+                ns.set_item("frame", ctx.frame).ok();
 
-            let args: Vec<Py<PyAny>> = args.iter().map(|v| value_to_py(py, v)).collect();
-            let tuple = PyTuple::new(py, &args).map_err(|e| format_error(py, &e))?;
-            f.call1(tuple).map_err(|e| format_error(py, &e))?;
-            Ok(true)
+                let args: Vec<Py<PyAny>> = args.iter().map(|v| value_to_py(py, v)).collect();
+                let tuple = PyTuple::new(py, &args).map_err(|e| format_error(py, &e))?;
+                f.call1(tuple).map_err(|e| format_error(py, &e))?;
+                Ok(true)
+            })();
+            let captured = drain_captured_stdout(py, &cap);
+            restore_stdio(py, &sys, old_out, old_err);
+            self.push_script_output(path, captured);
+            run
         })
     }
 
@@ -436,37 +638,41 @@ def smoothstep(lo, hi, v):
         }
         let _guard = NetworkGuard::set(ctx.channels, path);
         Python::attach(|py| {
-            let globals = self.globals.bind(py);
-            let locals = PyDict::new(py);
-            locals.set_item("absTime", ctx.abs_time).ok();
-            locals.set_item("frame", ctx.frame).ok();
-            locals.set_item("me", path).ok();
-            let src = CString::new(source).map_err(|_| "script contains a NUL byte")?;
-            py.run(&src, Some(globals), Some(&locals))
-                .map_err(|e| format_error(py, &e))?;
+            let (sys, old_out, old_err, cap) = capture_stdio(py)?;
+            let run = (|| {
+                let globals = self.globals.bind(py);
+                let locals = PyDict::new(py);
+                locals.set_item("absTime", ctx.abs_time).ok();
+                locals.set_item("frame", ctx.frame).ok();
+                locals.set_item("me", path).ok();
+                let src = CString::new(source).map_err(|_| "script contains a NUL byte")?;
+                py.run(&src, Some(globals), Some(&locals))
+                    .map_err(|e| format_error(py, &e))?;
 
-            let Ok(Some(rows)) = locals.get_item("rows") else {
-                return Ok(Vec::new());
-            };
-            let rows = rows
-                .cast::<PyList>()
-                .map_err(|_| "`rows` must be a list of lists".to_string())?
-                .clone();
-            let mut out = Vec::with_capacity(rows.len());
-            for row in rows.iter() {
-                // A DAT holds text. Rows of mixed types are the normal case —
-                // `['name', 1]` — so every cell is stringified individually
-                // rather than requiring a uniform row.
-                let cells = match row.try_iter() {
-                    Ok(items) => items
-                        .filter_map(|i| i.ok())
-                        .map(|i| i.str().map(|s| s.to_string()).unwrap_or_default())
-                        .collect(),
-                    Err(_) => vec![row.str().map(|s| s.to_string()).unwrap_or_default()],
+                let Ok(Some(rows)) = locals.get_item("rows") else {
+                    return Ok(Vec::new());
                 };
-                out.push(cells);
-            }
-            Ok(out)
+                let rows = rows
+                    .cast::<PyList>()
+                    .map_err(|_| "`rows` must be a list of lists".to_string())?
+                    .clone();
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows.iter() {
+                    let cells = match row.try_iter() {
+                        Ok(items) => items
+                            .filter_map(|i| i.ok())
+                            .map(|i| i.str().map(|s| s.to_string()).unwrap_or_default())
+                            .collect(),
+                        Err(_) => vec![row.str().map(|s| s.to_string()).unwrap_or_default()],
+                    };
+                    out.push(cells);
+                }
+                Ok(out)
+            })();
+            let captured = drain_captured_stdout(py, &cap);
+            restore_stdio(py, &sys, old_out, old_err);
+            self.push_script_output(path, captured);
+            run
         })
     }
 }
