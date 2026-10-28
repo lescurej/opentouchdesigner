@@ -198,3 +198,18 @@ fn a_python_expression_survives_the_project_format() {
     // Python expressions are assumed animated, so the node stays hot.
     assert!(p.is_time_dependent());
 }
+
+#[test]
+fn textport_print_goes_to_console_output() {
+    let gpu = gpu_or_skip!();
+    let graph = Graph::new();
+    let mut engines = Engines::new(gpu);
+    if let Some(e) = engines.python_error() {
+        eprintln!("skipping: no interpreter ({e})");
+        return;
+    }
+    let out = engines
+        .exec_console(&graph, &CookContext::default(), r#"print("hello")"#)
+        .unwrap();
+    assert_eq!(out, "hello");
+}
