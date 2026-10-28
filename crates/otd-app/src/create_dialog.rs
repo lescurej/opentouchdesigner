@@ -34,14 +34,8 @@ fn op_matches(type_name: &str, label: &str, filter: &str) -> bool {
 }
 
 fn tab_color(family: Family) -> Color32 {
-    match family {
-        Family::Comp => Color32::from_rgb(78, 82, 92),
-        Family::Top => Color32::from_rgb(92, 68, 128),
-        Family::Chop => Color32::from_rgb(58, 128, 78),
-        Family::Sop => Color32::from_rgb(52, 108, 118),
-        Family::Mat => Color32::from_rgb(128, 102, 52),
-        Family::Dat => Color32::from_rgb(128, 58, 98),
-    }
+    let c = family.color();
+    Color32::from_rgb(c[0], c[1], c[2])
 }
 
 pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
@@ -55,6 +49,7 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
     let active = dialog.family;
     let world_pos = dialog.world_pos;
     let connect_from = dialog.connect_from;
+    let wire_drop = dialog.wire_drop;
 
     let window = egui::Window::new("OP Create Dialog")
         .id(egui::Id::new("op_create_dialog"))
@@ -79,6 +74,12 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
                 if edit.has_focus() {
                     app.create_dialog.as_mut().unwrap().focus = false;
                 }
+            }
+            if filter.contains("pop") {
+                ui.colored_label(
+                    Color32::from_rgb(200, 190, 120),
+                    "POP is not available yet — use particleCHOP + geometryCOMP instancing.",
+                );
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -109,7 +110,9 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
                         )
                         .clicked()
                     {
-                        app.create_dialog.as_mut().unwrap().family = family;
+                        let dialog = app.create_dialog.as_mut().unwrap();
+                        dialog.family = family;
+                        dialog.focus = true;
                     }
                 }
             });
@@ -215,15 +218,24 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
             if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
                 close_requested = true;
             }
+            if app.create_dialog.as_ref().is_some_and(|d| d.focus) {
+                ui.memory_mut(|mem| mem.request_focus(search_id()));
+            }
         });
     app.create_dialog_rect = window.as_ref().map(|r| r.response.rect);
     let open = open && !close_requested;
 
     if let Some(type_name) = chosen {
+        let pending = crate::app::CreateDialog {
+            filter: String::new(),
+            family: active,
+            world_pos,
+            focus: false,
+            connect_from,
+            wire_drop,
+        };
         if let Some(new_id) = app.create_node(&type_name, world_pos) {
-            if let Some(src) = connect_from.filter(|s| app.graph.contains(*s)) {
-                let _ = app.graph.connect(src, new_id, 0);
-            }
+            app.connect_created_node(new_id, &pending);
         }
         app.create_dialog = None;
         app.create_dialog_rect = None;
