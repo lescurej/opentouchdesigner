@@ -286,6 +286,7 @@ impl Param {
         }
         match Expr::parse(&self.expression) {
             Ok(e) => {
+                self.refs = e.referenced_paths();
                 self.compiled = Some(e);
                 self.error = None;
             }
@@ -333,19 +334,24 @@ impl Param {
     pub fn eval(&self, ctx: &EvalContext) -> Value {
         match self.mode {
             ParamMode::Constant => self.value.clone(),
-            ParamMode::Expression => match &self.compiled {
-                Some(e) => match e.eval(ctx) {
-                    Ok(v) => self.value.coerce_from_f64(v),
-                    Err(_) => self.value.clone(),
-                },
-                None if self.needs_python => ctx
-                    .channels
-                    .and_then(|c| c.eval_python(&self.expression, ctx, ctx.path.unwrap_or("")))
-                    .and_then(|r| r.ok())
-                    .map(|v| coerce_like(&self.value, v))
-                    .unwrap_or_else(|| self.value.clone()),
-                None => self.value.clone(),
-            },
+            ParamMode::Expression => {
+                if let Some(v) = eval_parent_reference(&self.expression, &self.value, ctx) {
+                    return v;
+                }
+                match &self.compiled {
+                    Some(e) => match e.eval(ctx) {
+                        Ok(v) => self.value.coerce_from_f64(v),
+                        Err(_) => self.value.clone(),
+                    },
+                    None if self.needs_python => ctx
+                        .channels
+                        .and_then(|c| c.eval_python(&self.expression, ctx, ctx.path.unwrap_or("")))
+                        .and_then(|r| r.ok())
+                        .map(|v| coerce_like(&self.value, v))
+                        .unwrap_or_else(|| self.value.clone()),
+                    None => self.value.clone(),
+                }
+            }
             ParamMode::Export => self
                 .source_parts()
                 .and_then(|(path, channel)| ctx.channels?.channel(path, channel))
@@ -404,6 +410,9 @@ impl Param {
             return Err(err.clone());
         }
         if self.mode == ParamMode::Expression {
+            if let Some(v) = eval_parent_reference(&self.expression, &self.value, ctx) {
+                return Ok(v);
+            }
             match &self.compiled {
                 Some(e) => e
                     .eval(ctx)
@@ -422,6 +431,27 @@ impl Param {
         } else {
             Ok(self.eval(ctx))
         }
+    }
+}
+
+fn eval_parent_reference(expression: &str, declared: &Value, ctx: &EvalContext) -> Option<Value> {
+    let key = expression.trim().strip_prefix("parent.")?;
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let v = ctx
+        .channels?
+        .parent_param(ctx.path?, key)?;
+    if v.same_type_as(declared) {
+        Some(v)
+    } else if matches!(declared, Value::Str(_)) {
+        Some(Value::Str(v.as_str()))
+    } else {
+        Some(declared.coerce_from_f64(v.as_f64()))
     }
 }
 
@@ -513,6 +543,9 @@ mod tests {
         fn param_value(&self, op_path: &str, param: &str) -> Option<Value> {
             (op_path == "/other" && param == "size").then_some(Value::Float(12.0))
         }
+        fn parent_param(&self, _node_path: &str, param: &str) -> Option<Value> {
+            (param == "label").then_some(Value::Str("Go".into()))
+        }
     }
 
     fn ctx_with_network() -> EvalContext<'static> {
@@ -559,5 +592,18 @@ mod tests {
         let mut p = Param::int(0);
         p.set_expression("2.6");
         assert_eq!(p.eval(&EvalContext::default()), Value::Int(3));
+    }
+
+    #[test]
+    fn parent_label_expression_on_string_param() {
+        let mut p = Param::str("Button");
+        p.set_expression("parent.label");
+        let ctx = EvalContext {
+            channels: Some(&FakeNetwork),
+            path: Some("/button1/text"),
+            ..Default::default()
+        };
+        assert_eq!(p.eval(&ctx), Value::Str("Go".into()));
+        assert_eq!(p.eval_checked(&ctx).unwrap(), Value::Str("Go".into()));
     }
 }
