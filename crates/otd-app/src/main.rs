@@ -7,7 +7,11 @@ mod create_dialog;
 mod media;
 mod inspector;
 mod params;
+mod textport;
 mod watch;
+mod container_view;
+mod window_comp;
+mod window_placement;
 
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
