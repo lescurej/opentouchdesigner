@@ -11,21 +11,33 @@
 //! immutably by the parameters of whatever cooks next.
 
 pub mod comp;
+mod cook_roots;
 pub mod demo;
 pub mod docs;
 pub mod execute;
+mod info;
+pub mod lint;
+mod node_message;
 pub mod palette;
 pub mod panel;
-pub mod panel_templates;
 mod panel_layout;
 mod panel_params;
+pub mod panel_templates;
 pub mod replicator;
+
+pub use cook_roots::{editor_cook_roots, operators_watched_by_info_parameter};
+pub use node_message::{NodeMessage, NodeMessageLevel, classify_node_message};
+pub use otd_py::{LintSeverity, PythonLint};
 
 use std::cell::RefCell;
 
 use otd_chop::InputState;
 use otd_chop::engine::{ChannelStore, ChopEngine, Network};
-use otd_core::{ChannelSource, CookContext, CookError, Cooker, Family, Graph, NodeId, OpRegistry};
+use otd_chop::ops::{INFO, PARAMETER};
+use otd_core::{
+    ChannelSource, CookContext, CookEngine, CookError, Cooker, EvalContext, Family, Graph, NodeId,
+    OpRegistry,
+};
 use otd_dat::{DatEngine, DatStore, ScriptHost};
 use otd_gpu::{GpuContext, TopEngine};
 use otd_py::PyEngine;
@@ -63,7 +75,67 @@ pub fn registry() -> OpRegistry {
 /// parameter evaluation is a `&self` call all the way down.
 struct FullNetwork<'a> {
     chops: Network<'a>,
+    dats: &'a DatStore,
     python: &'a RefCell<PyEngine>,
+}
+
+pub(crate) fn dat_data_at(graph: &Graph, dats: &DatStore, op_path: &str) -> Option<DatData> {
+    let id = graph.find(op_path.trim())?;
+    if let Some(data) = dats.get(id) {
+        return Some(data.clone());
+    }
+    let node = graph.get(id)?;
+    if node.family != Family::Dat {
+        return None;
+    }
+    match node.op_type.as_str() {
+        otd_dat::ops::TABLE => {
+            let t = node.param("text")?.value.as_str();
+            Some(DatData::from_delimited(&t, '\t'))
+        }
+        otd_dat::ops::TEXT => {
+            let t = node.param("text")?.value.as_str();
+            Some(DatData::text(t))
+        }
+        otd_dat::ops::SCRIPT => {
+            let t = node.param("source")?.value.as_str();
+            Some(DatData::text(t))
+        }
+        _ => {
+            if let Some(p) = node.param("text") {
+                let t = p.value.as_str();
+                if t.contains('\t') || t.contains('\n') {
+                    Some(DatData::from_delimited(&t, '\t'))
+                } else {
+                    Some(DatData::text(t))
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn dat_text_at(graph: &Graph, dats: &DatStore, op_path: &str) -> Option<String> {
+    dat_data_at(graph, dats, op_path).map(|d| d.as_text())
+}
+
+fn dat_content_param_at(graph: &Graph, op_path: &str) -> &'static str {
+    graph
+        .find(op_path.trim())
+        .and_then(|id| graph.get(id))
+        .map(|n| {
+            if n.op_type.as_str() == otd_dat::ops::SCRIPT {
+                "source"
+            } else {
+                "text"
+            }
+        })
+        .unwrap_or("text")
+}
+
+fn dat_rows_at(graph: &Graph, dats: &DatStore, op_path: &str) -> Option<Vec<Vec<String>>> {
+    dat_data_at(graph, dats, op_path).map(|d| d.rows)
 }
 
 impl otd_core::ChannelSource for FullNetwork<'_> {
@@ -79,11 +151,7 @@ impl otd_core::ChannelSource for FullNetwork<'_> {
     fn parent_param(&self, node_path: &str, param: &str) -> Option<otd_core::Value> {
         self.chops.parent_param(node_path, param)
     }
-    fn resolve_operator_path(
-        &self,
-        from_operator_path: &str,
-        reference: &str,
-    ) -> Option<String> {
+    fn resolve_operator_path(&self, from_operator_path: &str, reference: &str) -> Option<String> {
         self.chops
             .resolve_operator_path(from_operator_path, reference)
     }
@@ -98,6 +166,24 @@ impl otd_core::ChannelSource for FullNetwork<'_> {
         // outcome, and the parameter falls back to its constant.
         let mut py = self.python.try_borrow_mut().ok()?;
         Some(py.eval(source, ctx, path))
+    }
+    fn dat_text(&self, op_path: &str) -> Option<String> {
+        dat_text_at(self.chops.graph, self.dats, op_path)
+    }
+    fn dat_rows(&self, op_path: &str) -> Option<Vec<Vec<String>>> {
+        dat_rows_at(self.chops.graph, self.dats, op_path)
+    }
+    fn dat_content_param(&self, op_path: &str) -> Option<&'static str> {
+        self.chops.graph.find(op_path.trim())?;
+        Some(dat_content_param_at(self.chops.graph, op_path))
+    }
+
+    fn op_type(&self, op_path: &str) -> Option<String> {
+        let id = self.chops.graph.find(op_path.trim())?;
+        self.chops
+            .graph
+            .get(id)
+            .map(|n| n.op_type.clone())
     }
 }
 
@@ -131,6 +217,80 @@ impl ScriptHost for PythonScripts<'_> {
             .try_borrow_mut()
             .map_err(|_| "a script cannot run inside another script".to_string())?
             .run_table(source, ctx, path)
+    }
+
+    fn webserver_http(
+        &self,
+        source: &str,
+        dat_name: &str,
+        job: &otd_dat::webserver::HttpJob,
+        ctx: &otd_core::EvalContext,
+        path: &str,
+    ) -> Result<otd_dat::webserver::HttpReply, String> {
+        let mut py = self
+            .python
+            .try_borrow_mut()
+            .map_err(|_| "a callback cannot run inside another script".to_string())?;
+        let (status, reason, body, content_type) = py.call_webserver_http(
+            source,
+            dat_name,
+            &job.method,
+            &job.uri,
+            &job.pars,
+            &job.client_address,
+            &job.server_address,
+            &job.data,
+            ctx,
+            path,
+        )?;
+        Ok(otd_dat::webserver::HttpReply {
+            status,
+            reason,
+            body,
+            content_type,
+        })
+    }
+
+    fn webserver_event(
+        &self,
+        source: &str,
+        func: &str,
+        dat_name: &str,
+        ctx: &otd_core::EvalContext,
+        path: &str,
+    ) -> Result<bool, String> {
+        self.python
+            .try_borrow_mut()
+            .map_err(|_| "a callback cannot run inside another script".to_string())?
+            .call_webserver_event(source, func, dat_name, ctx, path)
+    }
+
+    fn webserver_ws(
+        &self,
+        source: &str,
+        func: &str,
+        dat_name: &str,
+        client: &str,
+        uri: Option<&str>,
+        text: Option<&str>,
+        binary: Option<&[u8]>,
+        ctx: &otd_core::EvalContext,
+        path: &str,
+    ) -> Result<bool, String> {
+        self.python
+            .try_borrow_mut()
+            .map_err(|_| "a callback cannot run inside another script".to_string())?
+            .call_webserver_ws(
+                source,
+                func,
+                dat_name,
+                client,
+                uri,
+                text,
+                binary,
+                ctx,
+                path,
+            )
     }
 }
 
@@ -173,6 +333,7 @@ pub struct Engines {
     /// The embedded interpreter. Started once; a machine where it cannot
     /// start still opens projects, with Python expressions reporting why.
     pub python: RefCell<PyEngine>,
+    cook_for_info: Option<*const CookEngine>,
 }
 
 impl Engines {
@@ -186,7 +347,47 @@ impl Engines {
             geometry: GeometryStore::new(),
             channels: ChannelStore::new(),
             python: RefCell::new(PyEngine::new()),
+            cook_for_info: None,
         }
+    }
+
+    pub fn run_cook_frame(
+        &mut self,
+        cook: &mut CookEngine,
+        graph: &Graph,
+        roots: &[NodeId],
+        ctx: &CookContext,
+    ) -> Result<(), CookError> {
+        self.cook_for_info = Some(cook as *const CookEngine);
+        let mut sync_flush: Option<Box<dyn FnMut(&[String]) -> Result<(), String>>> =
+            Some(Box::new({
+                let engines_ptr = self as *mut Engines;
+                let cook_ptr = cook as *mut CookEngine;
+                let graph_ptr = graph as *const Graph;
+                let ctx_ptr = ctx as *const CookContext;
+                move |paths: &[String]| {
+                    // SAFETY: flush runs only during `run_cook_frame`, before
+                    // the outer cook returns and while these pointers stay valid.
+                    let engines = unsafe { &mut *engines_ptr };
+                    let cook = unsafe { &mut *cook_ptr };
+                    let graph = unsafe { &*graph_ptr };
+                    let ctx = unsafe { &*ctx_ptr };
+                    for path in paths {
+                        let Some(id) = graph.find(path) else {
+                            continue;
+                        };
+                        cook.cook_frame(graph, &[id], ctx, engines)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                }
+            }));
+        otd_core::set_sync_cook_flush(sync_flush.take());
+        let result = cook.cook_frame(graph, roots, ctx, self);
+        let _ = otd_core::flush_pending_sync_recooks();
+        otd_core::set_sync_cook_flush(None);
+        self.cook_for_info = None;
+        result
     }
 
     pub fn begin_frame(&mut self) {
@@ -195,6 +396,12 @@ impl Engines {
 
     pub fn end_frame(&mut self) {
         self.top.end_frame();
+    }
+
+    pub fn shutdown(&mut self) {
+        self.top.shutdown();
+        self.chop.reset();
+        self.dat.reset();
     }
 
     /// Mouse and keyboard state for the input CHOPs, pushed in by the editor.
@@ -229,6 +436,7 @@ impl Engines {
                 graph,
                 chops: &self.channels,
             },
+            dats: &self.dats,
             python: &self.python,
         };
         let eval = ctx.eval_for_node(graph, id, &net, &path);
@@ -256,6 +464,7 @@ impl Engines {
                 graph,
                 chops: &self.channels,
             },
+            dats: &self.dats,
             python: &self.python,
         };
         let eval = ctx.eval_for_node(graph, id, &net, &path);
@@ -267,7 +476,20 @@ impl Engines {
     /// Drained by the host and applied between frames — see `otd_core::edit`
     /// for why the write cannot happen where it is written.
     pub fn take_edits(&mut self) -> Vec<otd_core::ParamEdit> {
-        self.python.borrow_mut().take_edits()
+        otd_core::take_queued_edits()
+    }
+
+    pub fn take_recook_requests(&mut self) -> Vec<String> {
+        otd_core::take_queued_deferred_recooks()
+    }
+
+    pub fn take_udp_send_requests(&mut self) -> Vec<(String, Vec<u8>)> {
+        otd_core::take_queued_udp_sends()
+    }
+
+    pub fn apply_script_udp_sends(&mut self, graph: &Graph) -> usize {
+        let sends = self.take_udp_send_requests();
+        self.dat.apply_udp_sends(graph, &sends)
     }
 
     /// Why Python is unavailable, if it is.
@@ -277,6 +499,29 @@ impl Engines {
 
     pub fn take_script_log(&mut self) -> Vec<String> {
         self.python.borrow_mut().take_script_log()
+    }
+
+    pub fn lint_python(
+        &self,
+        graph: &Graph,
+        me_path: &str,
+        source: &str,
+        filename: &str,
+    ) -> Vec<otd_py::PythonLint> {
+        let net = otd_chop::Network {
+            graph,
+            chops: &self.channels,
+        };
+        let mut issues = self.python.borrow().lint_script(source, filename);
+        issues.extend(lint::lint_op_paths(graph, me_path, source));
+        issues.extend(lint::lint_ch_paths(
+            graph,
+            me_path,
+            source,
+            |resolved| net.channel_names(resolved),
+        ));
+        issues.sort_by(|a, b| (a.line, a.column).cmp(&(b.line, b.column)));
+        issues
     }
 
     pub fn exec_console(
@@ -296,12 +541,11 @@ impl Engines {
                 graph,
                 chops: &self.channels,
             },
+            dats: &self.dats,
             python: &self.python,
         };
         let eval = ctx.eval_for_node(graph, root, &net, &path);
-        self.python
-            .borrow_mut()
-            .exec_console(trimmed, &eval, &path)
+        self.python.borrow_mut().exec_console(trimmed, &eval, &path)
     }
 
     /// The value a parameter would read if it were bound to this one.
@@ -438,13 +682,35 @@ fn crossings(
 
 impl Cooker for Engines {
     fn extra_inputs(&self, graph: &Graph, id: NodeId) -> Vec<NodeId> {
-        self.top.extra_inputs(graph, id)
+        let mut deps = self.top.extra_inputs(graph, id);
+        if graph
+            .get(id)
+            .is_some_and(|n| n.op_type == INFO || n.op_type == PARAMETER)
+        {
+            let path = graph
+                .node(id)
+                .param("op")
+                .map(|p| p.eval(&EvalContext::default()).as_str())
+                .unwrap_or_default();
+            if let Some(watch) = info::resolve_op_from(graph, id, &path) {
+                if !deps.contains(&watch) {
+                    deps.push(watch);
+                }
+            }
+        }
+        deps
     }
 
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        ctx: &CookContext,
+    ) -> Result<otd_core::CookOutput, CookError> {
         let Some(family) = graph.get(id).map(|n| n.family) else {
             return Err(CookError::NoSuchNode);
         };
+        let info_cook = self.cook_for_info.map(|p| unsafe { &*p });
         let Engines {
             top,
             chop,
@@ -454,25 +720,34 @@ impl Cooker for Engines {
             geometry,
             channels,
             python,
+            ..
         } = self;
 
         match family {
             Family::Chop => {
-                let foreign = crossings(graph, id, top, channels, dats, geometry);
+                let mut foreign = crossings(graph, id, top, channels, dats, geometry);
                 let data = {
                     let net = FullNetwork {
                         chops: Network {
                             graph,
                             chops: channels,
                         },
+                        dats,
                         python,
                     };
                     let path = graph.path(id);
                     let eval = ctx.eval_for_node(graph, id, &net, &path);
+                    if graph.get(id).is_some_and(|n| n.op_type == INFO) {
+                        if let Some(cross) = info::operator_info_crossing(
+                            top, info_cook, graph, channels, dats, geometry, id, &eval,
+                        ) {
+                            foreign.push(Some(cross));
+                        }
+                    }
                     chop.cook_node(graph, id, ctx, &eval, channels, foreign)?
                 };
                 channels.insert(id, data);
-                Ok(())
+                Ok(otd_core::CookOutput::Updated)
             }
             Family::Sop => {
                 let data = {
@@ -481,6 +756,7 @@ impl Cooker for Engines {
                             graph,
                             chops: channels,
                         },
+                        dats,
                         python,
                     };
                     let path = graph.path(id);
@@ -488,7 +764,7 @@ impl Cooker for Engines {
                     sop.cook_node(graph, id, ctx, &eval, geometry)?
                 };
                 geometry.insert(id, data);
-                Ok(())
+                Ok(otd_core::CookOutput::Updated)
             }
             Family::Top => {
                 let foreign = crossings(graph, id, top, channels, dats, geometry);
@@ -497,6 +773,7 @@ impl Cooker for Engines {
                         graph,
                         chops: channels,
                     },
+                    dats,
                     python,
                 };
                 let path = graph.path(id);
@@ -506,7 +783,7 @@ impl Cooker for Engines {
                     geometry,
                     channels,
                 };
-                top.cook_node(graph, id, ctx, &eval, Some(&view), &foreign)
+                top.cook_top(graph, id, ctx, &eval, Some(&view), &foreign)
             }
             Family::Dat => {
                 let foreign = crossings(graph, id, top, channels, dats, geometry);
@@ -516,6 +793,7 @@ impl Cooker for Engines {
                             graph,
                             chops: channels,
                         },
+                        dats,
                         python,
                     };
                     let path = graph.path(id);
@@ -524,11 +802,10 @@ impl Cooker for Engines {
                     dat.cook_node(graph, id, ctx, &eval, dats, Some(&scripts), foreign)?
                 };
                 dats.insert(id, data);
-                Ok(())
+                Ok(otd_core::CookOutput::Updated)
             }
             // COMPs hold sub-networks; the other families are later phases.
-            _ => Ok(()),
+            _ => Ok(otd_core::CookOutput::Updated),
         }
     }
 }
-

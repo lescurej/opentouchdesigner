@@ -101,6 +101,39 @@ fn an_execute_dat_is_a_cook_root_without_being_flagged_one() {
 }
 
 #[test]
+fn callbacks_dat_source_runs_like_inline() {
+    let gpu = gpu_or_skip!();
+    let mut rig = Rig::new(gpu);
+    if !python_or_skip(&rig) {
+        return;
+    }
+    let blur = rig.add("blurTOP", "blur1");
+    let ex = rig.add("executeDAT", "exec1");
+    let cb = rig.add("textDAT", "exec1_callbacks");
+    rig.set(
+        cb,
+        "text",
+        Value::Str("def onFrameStart(frame):\n    setpar('/blur1', 'size', 4 + frame)\n".into()),
+    );
+    rig.set(ex, "callbacks", Value::Str("./exec1_callbacks".into()));
+    rig.set(
+        ex,
+        "source",
+        Value::Str("def onFrameStart(frame):\n    setpar('/blur1', 'size', 0)\n".into()),
+    );
+
+    let before = rig.param(blur, "size");
+    rig.frame();
+    assert!(rig.problems.is_empty(), "{:?}", rig.problems);
+    let after = rig.param(blur, "size");
+    assert_ne!(before, after);
+    assert!(
+        (after - 4.0).abs() < 1e-6,
+        "expected external callbacks, got {after}"
+    );
+}
+
+#[test]
 fn a_callback_can_set_a_parameter_and_it_lands_next_frame() {
     let gpu = gpu_or_skip!();
     let mut rig = Rig::new(gpu);

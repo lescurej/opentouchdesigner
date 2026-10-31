@@ -5,9 +5,7 @@
 //! caches and it animates by the same rules — while being a whole network
 //! inside.
 
-use otd_core::{
-    copy_selection, paste, CookContext, CookEngine, Graph, NodeId, OpRegistry, Value,
-};
+use otd_core::{CookContext, CookEngine, Graph, NodeId, OpRegistry, Value, copy_selection, paste};
 use otd_engine::{Engines, registry};
 use otd_gpu::{GpuContext, read_pixels_rgba8};
 
@@ -81,7 +79,10 @@ fn a_component_with_two_out_operators_exposes_both_connectors() {
     let _chop_out = add(&mut graph, &reg, comp, "outCHOP", "out1");
     let _top_out = add(&mut graph, &reg, comp, "outTOP", "out2");
     assert_eq!(graph.comp_out_connectors(comp).len(), 2);
-    assert_eq!(graph.output_family_at(comp, 0), Some(otd_core::Family::Chop));
+    assert_eq!(
+        graph.output_family_at(comp, 0),
+        Some(otd_core::Family::Chop)
+    );
     assert_eq!(graph.output_family_at(comp, 1), Some(otd_core::Family::Top));
 
     let null = add(&mut graph, &reg, root, "nullCHOP", "null1");

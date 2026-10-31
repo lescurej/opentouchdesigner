@@ -1,7 +1,13 @@
 use otd_core::{Graph, OpRegistry, Value};
 use otd_engine::{panel, panel_templates, registry};
 
-fn add(graph: &mut Graph, reg: &OpRegistry, parent: otd_core::NodeId, op: &str, name: &str) -> otd_core::NodeId {
+fn add(
+    graph: &mut Graph,
+    reg: &OpRegistry,
+    parent: otd_core::NodeId,
+    op: &str,
+    name: &str,
+) -> otd_core::NodeId {
     let def = reg.get(op).unwrap().clone();
     graph.create(parent, &def, Some(name)).unwrap()
 }
@@ -26,7 +32,10 @@ fn button_comp_gets_td_style_internals() {
 
     let names = child_names(&graph, btn);
     for need in ["text", "view1", "panel1", "bg1", "par1", "out1"] {
-        assert!(names.iter().any(|n| n == need), "button missing `{need}`: {names:?}");
+        assert!(
+            names.iter().any(|n| n == need),
+            "button missing `{need}`: {names:?}"
+        );
     }
     assert_eq!(
         graph.node(btn).params["label"].value,
@@ -44,6 +53,9 @@ fn slider_comp_gets_td_style_internals() {
 
     let names = child_names(&graph, s);
     for need in ["text", "view1", "panel1", "track1", "fill1", "par1", "out1"] {
-        assert!(names.iter().any(|n| n == need), "slider missing `{need}`: {names:?}");
+        assert!(
+            names.iter().any(|n| n == need),
+            "slider missing `{need}`: {names:?}"
+        );
     }
 }

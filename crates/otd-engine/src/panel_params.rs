@@ -1,5 +1,5 @@
-use otd_core::indexmap::IndexMap;
 use otd_core::Param;
+use otd_core::indexmap::IndexMap;
 
 pub fn append_layout_page(m: &mut IndexMap<String, Param>, defaults: (f64, f64, f64, f64)) {
     let (dx, dy, dw, dh) = defaults;
@@ -165,15 +165,11 @@ pub fn append_panel_page_no_label(m: &mut IndexMap<String, Param>) {
 fn append_panel_page_inner(m: &mut IndexMap<String, Param>, include_label: bool) {
     m.insert(
         "display".into(),
-        Param::bool(true)
-            .with_label("Display")
-            .with_page("Panel"),
+        Param::bool(true).with_label("Display").with_page("Panel"),
     );
     m.insert(
         "enable".into(),
-        Param::bool(true)
-            .with_label("Enable")
-            .with_page("Panel"),
+        Param::bool(true).with_label("Enable").with_page("Panel"),
     );
     if include_label {
         m.insert(
@@ -227,9 +223,12 @@ pub fn append_look_page(m: &mut IndexMap<String, Param>) {
     );
     m.insert(
         "topfill".into(),
-        Param::menu("best", &["off", "horizontal", "vertical", "best", "native", "outside"])
-            .with_label("TOP Fill")
-            .with_page("Look"),
+        Param::menu(
+            "best",
+            &["off", "horizontal", "vertical", "best", "native", "outside"],
+        )
+        .with_label("TOP Fill")
+        .with_page("Look"),
     );
     m.insert(
         "composite".into(),
@@ -273,14 +272,7 @@ pub fn append_container_children_page(m: &mut IndexMap<String, Param>) {
         Param::menu(
             "none",
             &[
-                "none",
-                "horizlr",
-                "horizrl",
-                "verttb",
-                "vertbt",
-                "gridrows",
-                "gridcols",
-                "nodes",
+                "none", "horizlr", "horizrl", "verttb", "vertbt", "gridrows", "gridcols", "nodes",
             ],
         )
         .with_label("Align")

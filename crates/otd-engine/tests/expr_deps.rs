@@ -26,7 +26,9 @@ fn relative_op_expression_cooks_source_first() {
     let reg = registry();
     let mut graph = Graph::new();
     let lfo = add(&mut graph, &reg, "lfoCHOP", "lfo1");
-    graph.set_param(lfo, "frequency", Value::Float(1.0)).unwrap();
+    graph
+        .set_param(lfo, "frequency", Value::Float(1.0))
+        .unwrap();
     let blur = add(&mut graph, &reg, "blurTOP", "blur1");
     graph
         .set_expression(blur, "size", "op('lfo1')['chan1']")

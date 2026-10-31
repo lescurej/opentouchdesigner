@@ -1,6 +1,6 @@
 use otd_core::{CookContext, CookEngine, Graph, NodeId, OpRegistry, Value};
-use otd_engine::{panel, panel_templates, registry, Engines};
-use otd_gpu::{read_pixels_rgba8, GpuContext};
+use otd_engine::{Engines, panel, panel_templates, registry};
+use otd_gpu::{GpuContext, read_pixels_rgba8};
 
 fn gpu_or_skip() -> Option<GpuContext> {
     match GpuContext::headless() {
@@ -59,5 +59,8 @@ fn button_label_reaches_interior_text_top() {
     let tex = engines.top.output(&graph, top).unwrap().clone();
     let px = read_pixels_rgba8(&gpu, &tex).unwrap().2;
     let ink = px.chunks(4).filter(|p| p[3] > 8).count();
-    assert!(ink > 40, "button label should rasterize, got {ink} ink pixels");
+    assert!(
+        ink > 40,
+        "button label should rasterize, got {ink} ink pixels"
+    );
 }

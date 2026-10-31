@@ -1,7 +1,13 @@
 use otd_core::{Graph, OpRegistry, Value};
 use otd_engine::{panel, registry};
 
-fn add(graph: &mut Graph, reg: &OpRegistry, parent: otd_core::NodeId, op: &str, name: &str) -> otd_core::NodeId {
+fn add(
+    graph: &mut Graph,
+    reg: &OpRegistry,
+    parent: otd_core::NodeId,
+    op: &str,
+    name: &str,
+) -> otd_core::NodeId {
     let def = reg.get(op).unwrap().clone();
     graph.create(parent, &def, Some(name)).unwrap()
 }
@@ -48,6 +54,9 @@ fn container_has_td_layout_and_children_params() {
         "composite",
         "crop",
     ] {
-        assert!(keys.iter().any(|k| k == key), "missing container param `{key}`");
+        assert!(
+            keys.iter().any(|k| k == key),
+            "missing container param `{key}`"
+        );
     }
 }

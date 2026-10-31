@@ -299,9 +299,9 @@ fn udp_datagrams_arrive_as_rows() {
             break;
         }
     }
-    assert_eq!(rig.data(udp).cell(0, 0), "message");
+    assert_eq!(rig.data(udp).cell(0, 2), "message");
     assert_eq!(
-        rig.data(udp).cell(1, 0),
+        rig.data(udp).cell(1, 2),
         "GO cue-12",
         "trailing newline trimmed, text intact"
     );
@@ -329,6 +329,9 @@ fn udp_out_sends_changes_and_only_changes() {
         .set_param(text, "text", Value::Str("hello".into()))
         .unwrap();
     rig.graph.set_param(out, "port", Value::Int(port)).unwrap();
+    rig.graph
+        .set_param(out, "sendonchange", Value::Bool(true))
+        .unwrap();
 
     let mut buf = [0u8; 1024];
     rig.run(out);

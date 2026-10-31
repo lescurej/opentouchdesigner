@@ -142,6 +142,38 @@ fn a_recording_lands_on_disk_and_plays_back() {
 }
 
 #[test]
+fn image_sequence_writes_numbered_stills() {
+    let gpu = gpu_or_skip!();
+    ffmpeg_or_skip!();
+    let dir = std::env::temp_dir().join("otd-record-seq");
+    let _ = std::fs::create_dir_all(&dir);
+    for f in ["shot_0001.png", "shot_0002.png", "shot_0003.png"] {
+        let _ = std::fs::remove_file(dir.join(f));
+    }
+
+    let mut rig = Rig::new(gpu);
+    let noise = rig.add("noiseTOP", "noise1");
+    let out = rig.add("moviefileoutTOP", "rec1");
+    rig.graph.connect(noise, out, 0).unwrap();
+    rig.set(noise, "resw", Value::Int(32));
+    rig.set(noise, "resh", Value::Int(32));
+    rig.set(out, "type", Value::Str("imagesequence".into()));
+    rig.set(
+        out,
+        "file",
+        Value::Str(dir.join("shot.png").to_string_lossy().into()),
+    );
+    rig.set(out, "record", Value::Bool(true));
+    rig.run(out, 3);
+    rig.set(out, "record", Value::Bool(false));
+    rig.run(out, 1);
+
+    assert!(dir.join("shot_0001.png").exists());
+    assert!(dir.join("shot_0002.png").exists());
+    assert!(dir.join("shot_0003.png").exists());
+}
+
+#[test]
 fn a_movie_out_passes_its_input_through_untouched() {
     // It sits in the middle of a chain, so anything downstream has to see the
     // picture rather than a black frame or nothing at all.

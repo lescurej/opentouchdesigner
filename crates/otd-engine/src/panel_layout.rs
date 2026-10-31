@@ -89,7 +89,11 @@ pub fn apply_container_layout(graph: &Graph, rects: &mut HashMap<NodeId, [f32; 4
     let containers: Vec<NodeId> = graph
         .walk()
         .into_iter()
-        .filter(|id| graph.get(*id).is_some_and(|n| n.op_type == crate::panel::CONTAINER))
+        .filter(|id| {
+            graph
+                .get(*id)
+                .is_some_and(|n| n.op_type == crate::panel::CONTAINER)
+        })
         .collect();
 
     for cid in containers {
@@ -135,12 +139,22 @@ pub fn apply_container_layout(graph: &Graph, rects: &mut HashMap<NodeId, [f32; 4
         }
 
         match align.as_str() {
-            "horizlr" | "horizrl" => {
-                layout_row(&mut inner, spacing, align == "horizrl", alignmax, &kids, rects)
-            }
-            "verttb" | "vertbt" => {
-                layout_col(&mut inner, spacing, align == "vertbt", alignmax, &kids, rects)
-            }
+            "horizlr" | "horizrl" => layout_row(
+                &mut inner,
+                spacing,
+                align == "horizrl",
+                alignmax,
+                &kids,
+                rects,
+            ),
+            "verttb" | "vertbt" => layout_col(
+                &mut inner,
+                spacing,
+                align == "vertbt",
+                alignmax,
+                &kids,
+                rects,
+            ),
             "gridrows" => layout_grid(&mut inner, spacing, true, &kids, rects),
             "gridcols" => layout_grid(&mut inner, spacing, false, &kids, rects),
             _ => {}
@@ -171,10 +185,7 @@ fn layout_row(
         for (i, id) in line.iter().enumerate() {
             let local = rects.get(id).copied().unwrap_or([0.0, 0.0, 0.2, 0.08]);
             let x = inner[0] + i as f32 * (cell_w + gap);
-            rects.insert(
-                *id,
-                [x, y, cell_w, line_h * local[3].max(0.05)],
-            );
+            rects.insert(*id, [x, y, cell_w, line_h * local[3].max(0.05)]);
         }
     }
 }
@@ -202,10 +213,7 @@ fn layout_col(
         for (i, id) in col.iter().enumerate() {
             let local = rects.get(id).copied().unwrap_or([0.0, 0.0, 0.2, 0.08]);
             let y = inner[1] + i as f32 * (cell_h + gap);
-            rects.insert(
-                *id,
-                [x, y, col_w * local[2].max(0.05), cell_h],
-            );
+            rects.insert(*id, [x, y, col_w * local[2].max(0.05), cell_h]);
         }
     }
 }
@@ -259,11 +267,10 @@ pub fn resolve_panel_rects(graph: &Graph) -> HashMap<NodeId, [f32; 4]> {
         let node = graph.node(id);
         let local = local_layout_rect(node, ctx);
 
-        let rect = if let Some(parent) = node.parent.filter(|p| {
-            graph
-                .get(*p)
-                .is_some_and(|n| is_panel_type(&n.op_type))
-        }) {
+        let rect = if let Some(parent) = node
+            .parent
+            .filter(|p| graph.get(*p).is_some_and(|n| is_panel_type(&n.op_type)))
+        {
             resolve(graph, parent, ctx, rects);
             let pr = rects[&parent];
             [
@@ -279,10 +286,7 @@ pub fn resolve_panel_rects(graph: &Graph) -> HashMap<NodeId, [f32; 4]> {
     }
 
     for id in graph.walk() {
-        if graph
-            .get(id)
-            .is_some_and(|n| is_panel_type(&n.op_type))
-        {
+        if graph.get(id).is_some_and(|n| is_panel_type(&n.op_type)) {
             resolve(graph, id, &ctx, &mut rects);
         }
     }

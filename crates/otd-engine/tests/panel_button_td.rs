@@ -1,7 +1,13 @@
 use otd_core::{Graph, OpRegistry, Value};
 use otd_engine::{panel, panel_templates, registry};
 
-fn add(graph: &mut Graph, reg: &OpRegistry, parent: otd_core::NodeId, op: &str, name: &str) -> otd_core::NodeId {
+fn add(
+    graph: &mut Graph,
+    reg: &OpRegistry,
+    parent: otd_core::NodeId,
+    op: &str,
+    name: &str,
+) -> otd_core::NodeId {
     let def = reg.get(op).unwrap().clone();
     graph.create(parent, &def, Some(name)).unwrap()
 }
@@ -51,7 +57,10 @@ fn button_internals_use_parameter_chop_and_executes() {
         .find(|id| graph.node(**id).name == "parexec1")
         .copied()
         .unwrap();
-    assert_eq!(graph.node(parexec).params["op"].value, Value::Str("..".into()));
+    assert_eq!(
+        graph.node(parexec).params["op"].value,
+        Value::Str("..".into())
+    );
     assert_eq!(
         graph.node(parexec).params["parameters"].value,
         Value::Str("value".into())

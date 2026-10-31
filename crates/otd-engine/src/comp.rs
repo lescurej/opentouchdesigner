@@ -28,11 +28,7 @@ pub fn register(registry: &mut OpRegistry) {
 }
 
 pub fn normalize_op_type(op: &str) -> &str {
-    if op == LEGACY_ROOT {
-        BASE
-    } else {
-        op
-    }
+    if op == LEGACY_ROOT { BASE } else { op }
 }
 
 pub fn is_base_type(op_type: &str) -> bool {

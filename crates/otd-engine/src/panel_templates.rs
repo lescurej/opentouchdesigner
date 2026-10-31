@@ -23,11 +23,7 @@ fn place(graph: &mut Graph, id: NodeId, x: f32, y: f32) {
 }
 
 fn tune_text_top(graph: &mut Graph, top: NodeId) {
-    let _ = graph.set_param(
-        top,
-        "color",
-        Value::Vec4([0.95, 0.96, 0.98, 1.0]),
-    );
+    let _ = graph.set_param(top, "color", Value::Vec4([0.95, 0.96, 0.98, 1.0]));
     let _ = graph.set_param(top, "size", Value::Float(20.0));
 }
 
@@ -60,9 +56,7 @@ pub fn install_text_comp_interior(graph: &mut Graph, reg: &OpRegistry, comp: Nod
         return;
     }
     let top = add(graph, reg, comp, "textTOP", "text1");
-    graph
-        .set_expression(top, "text", "parent.text")
-        .unwrap();
+    graph.set_expression(top, "text", "parent.text").unwrap();
     tune_text_top(graph, top);
     graph.node_mut_quiet(top).flags.viewer = true;
 
@@ -85,28 +79,27 @@ fn remove_legacy_direct_text_tops(graph: &mut Graph, parent: NodeId) {
     }
 }
 
-fn ensure_text_comp(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, text_expr: &str) -> NodeId {
+fn ensure_text_comp(
+    graph: &mut Graph,
+    reg: &OpRegistry,
+    parent: NodeId,
+    text_expr: &str,
+) -> NodeId {
     remove_legacy_direct_text_tops(graph, parent);
-    if let Some(id) = child_named(graph, parent, "text").filter(|id| {
-        graph.node(*id).op_type == panel::TEXT
-    }) {
+    if let Some(id) =
+        child_named(graph, parent, "text").filter(|id| graph.node(*id).op_type == panel::TEXT)
+    {
         let _ = graph.set_expression(id, "text", text_expr);
         install_text_comp_interior(graph, reg, id);
         return id;
     }
     let comp = add(graph, reg, parent, panel::TEXT, "text");
-    graph
-        .set_param(comp, "w", Value::Float(1.0))
-        .unwrap();
-    graph
-        .set_param(comp, "h", Value::Float(1.0))
-        .unwrap();
+    graph.set_param(comp, "w", Value::Float(1.0)).unwrap();
+    graph.set_param(comp, "h", Value::Float(1.0)).unwrap();
     graph
         .set_param(comp, "fontsize", Value::Float(0.5))
         .unwrap();
-    graph
-        .set_expression(comp, "text", text_expr)
-        .unwrap();
+    graph.set_expression(comp, "text", text_expr).unwrap();
     install_text_comp_interior(graph, reg, comp);
     if let Some(top) = graph
         .children(comp)
@@ -194,11 +187,7 @@ fn ensure_button_panel_out(graph: &mut Graph, reg: &OpRegistry, comp: NodeId) {
     };
 
     let bg = add(graph, reg, comp, "constantTOP", "bg1");
-    let _ = graph.set_param(
-        bg,
-        "color",
-        Value::Vec4([0.22, 0.24, 0.30, 1.0]),
-    );
+    let _ = graph.set_param(bg, "color", Value::Vec4([0.22, 0.24, 0.30, 1.0]));
 
     let panel = add(graph, reg, comp, "compositeTOP", "panel1");
     let _ = graph.connect(bg, panel, 0);
@@ -221,18 +210,10 @@ fn ensure_slider_panel_out(graph: &mut Graph, reg: &OpRegistry, comp: NodeId) {
     };
 
     let track = add(graph, reg, comp, "constantTOP", "track1");
-    let _ = graph.set_param(
-        track,
-        "color",
-        Value::Vec4([0.12, 0.13, 0.16, 1.0]),
-    );
+    let _ = graph.set_param(track, "color", Value::Vec4([0.12, 0.13, 0.16, 1.0]));
 
     let fill_src = add(graph, reg, comp, "constantTOP", "fill1");
-    let _ = graph.set_param(
-        fill_src,
-        "color",
-        Value::Vec4([0.35, 0.58, 0.95, 1.0]),
-    );
+    let _ = graph.set_param(fill_src, "color", Value::Vec4([0.35, 0.58, 0.95, 1.0]));
 
     let fill_crop = add(graph, reg, comp, "cropTOP", "fillcrop1");
     let _ = graph.connect(fill_src, fill_crop, 0);
@@ -311,11 +292,7 @@ pub fn ensure_slider_interior(graph: &mut Graph, reg: &OpRegistry, comp: NodeId)
         let id = add(graph, reg, comp, "parameterexecuteDAT", "parexec1");
         graph.set_param(id, "op", Value::Str("..".into())).unwrap();
         graph
-            .set_param(
-                id,
-                "parameters",
-                Value::Str("value min max".into()),
-            )
+            .set_param(id, "parameters", Value::Str("value min max".into()))
             .unwrap();
         place(graph, id, -280.0, -200.0);
         id
@@ -329,12 +306,8 @@ pub fn ensure_slider_interior(graph: &mut Graph, reg: &OpRegistry, comp: NodeId)
         graph
             .set_param(id, "panelvalue", Value::Str("value".into()))
             .unwrap();
-        graph
-            .set_param(id, "offtoon", Value::Bool(false))
-            .unwrap();
-        graph
-            .set_param(id, "ontooff", Value::Bool(false))
-            .unwrap();
+        graph.set_param(id, "offtoon", Value::Bool(false)).unwrap();
+        graph.set_param(id, "ontooff", Value::Bool(false)).unwrap();
         place(graph, id, 80.0, -200.0);
         id
     });

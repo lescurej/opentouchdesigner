@@ -52,17 +52,7 @@ pub const TABLE: &str = "tableCOMP";
 pub const WIDGET: &str = "widgetCOMP";
 
 const PANEL_TYPES: &[&str] = &[
-    BUTTON,
-    SLIDER,
-    FIELD,
-    CONTAINER,
-    TEXT,
-    GLSL_PANEL,
-    LIST,
-    OP_VIEWER,
-    PARAMETER,
-    SELECT,
-    TABLE,
+    BUTTON, SLIDER, FIELD, CONTAINER, TEXT, GLSL_PANEL, LIST, OP_VIEWER, PARAMETER, SELECT, TABLE,
     WIDGET,
 ];
 
@@ -84,7 +74,10 @@ macro_rules! params {
     }};
 }
 
-fn finish_widget_params(mut m: IndexMap<String, Param>, layout: (f64, f64, f64, f64)) -> IndexMap<String, Param> {
+fn finish_widget_params(
+    mut m: IndexMap<String, Param>,
+    layout: (f64, f64, f64, f64),
+) -> IndexMap<String, Param> {
     crate::panel_params::append_layout_page(&mut m, layout);
     crate::panel_params::append_panel_page_no_label(&mut m);
     crate::panel_params::append_look_page(&mut m);
@@ -343,10 +336,7 @@ pub fn container_view_pixel_size(graph: &Graph, id: NodeId) -> (f32, f32) {
         .param("viewh")
         .map(|p| p.eval(&ctx).as_f64())
         .unwrap_or(300.0) as f32;
-    (
-        w.clamp(64.0, 16384.0),
-        h.clamp(64.0, 16384.0),
-    )
+    (w.clamp(64.0, 16384.0), h.clamp(64.0, 16384.0))
 }
 
 pub fn layout_rect(graph: &Graph, id: NodeId) -> Option<[f32; 4]> {
@@ -366,12 +356,7 @@ pub fn panel_direct_display_widgets(graph: &Graph, comp: NodeId) -> Vec<Widget> 
         .filter(|w| graph.get(w.id).and_then(|n| n.parent) == Some(comp))
         .map(|mut w| {
             let r = w.rect;
-            w.rect = [
-                (r[0] - cx) / cw,
-                (r[1] - cy) / ch,
-                r[2] / cw,
-                r[3] / ch,
-            ];
+            w.rect = [(r[0] - cx) / cw, (r[1] - cy) / ch, r[2] / cw, r[3] / ch];
             w
         })
         .collect()
@@ -427,7 +412,8 @@ pub fn widgets(graph: &Graph) -> Vec<Widget> {
     ids.sort_by_key(|id| graph.path(*id));
 
     let ctx = otd_core::EvalContext::default();
-    let mut out: Vec<Widget> = ids.into_iter()
+    let mut out: Vec<Widget> = ids
+        .into_iter()
         .filter_map(|id| {
             let node = graph.get(id)?;
             let f = |key: &str| {
