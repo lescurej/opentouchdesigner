@@ -1,108 +1,29 @@
-//! The DAT operator table.
-
-use std::sync::OnceLock;
+use std::net::SocketAddr;
 
 use otd_core::indexmap::IndexMap;
-use otd_core::{
-    Connector, Crossing, Crossings, EvalContext, Family, Node, OpDef, OpRegistry, Param, Value,
-};
+use otd_core::{EvalContext, Param, Value};
 
-use crate::{DatData, ScriptHost};
+use crate::DatData;
 
-pub struct DatCtx<'a> {
-    pub graph: &'a otd_core::Graph,
-    pub id: otd_core::NodeId,
-    pub node: &'a Node,
-    pub eval: &'a EvalContext<'a>,
-    pub inputs: Vec<DatData>,
-    /// Inputs that came from another family, for the converter operators.
-    pub foreign: Crossings,
-    pub scripts: Option<&'a dyn ScriptHost>,
-    pub net: &'a mut crate::net::Net,
-    /// What this node saw last frame — an Execute DAT's whole memory.
-    pub watched: &'a mut Watched,
-    pub path: &'a str,
-    /// Set by an operator that could not do its job — a bad script, malformed
-    /// JSON — and shown on the node.
-    pub error: Option<String>,
-}
-
-impl DatCtx<'_> {
-    fn val(&self, key: &str) -> Value {
-        self.node
-            .param(key)
-            .map(|p| p.eval(self.eval))
-            .unwrap_or(Value::Str(String::new()))
-    }
-    fn s(&self, key: &str) -> String {
-        self.val(key).as_str()
-    }
-    fn b(&self, key: &str) -> bool {
-        self.val(key).as_bool()
-    }
-    fn menu(&self, key: &str) -> usize {
-        let Some(p) = self.node.param(key) else {
-            return 0;
-        };
-        let chosen = p.eval(self.eval).as_str();
-        p.menu
-            .as_ref()
-            .and_then(|m| m.iter().position(|i| *i == chosen))
-            .unwrap_or(0)
-    }
-    fn foreign(&self, i: usize) -> Option<&Crossing> {
-        self.foreign.get(i).and_then(|c| c.as_ref())
-    }
-    fn input(&self, i: usize) -> DatData {
-        self.inputs.get(i).cloned().unwrap_or_default()
-    }
-}
-
-/// The previous frame's values, per watched name.
-///
-/// A callback fires on a *change*, so something has to remember what the
-/// value was. Kept as plain data on the engine rather than inside the script,
-/// because a script that reloads must not silently re-fire everything.
-#[derive(Clone, Debug, Default)]
-pub struct Watched {
-    pub values: IndexMap<String, f64>,
-    /// Set once `onStart` has run, so it runs once per node and not per frame.
-    pub started: bool,
-}
-
-pub struct DatSpec {
-    pub def: OpDef,
-    pub cook: fn(&mut DatCtx) -> DatData,
-}
-
-macro_rules! params {
-    ($($key:expr => $param:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut m: IndexMap<String, Param> = IndexMap::new();
-        $( m.insert($key.into(), $param); )*
-        m
-    }};
-}
-
-fn no_params() -> IndexMap<String, Param> {
-    params! {}
-}
+use super::constants::*;
+use super::helpers::*;
+use super::DatCtx;
 
 // ----------------------------------------------------------------- text
 
-fn params_text() -> IndexMap<String, Param> {
+pub(crate) fn params_text() -> IndexMap<String, Param> {
     params! {
         "text" => Param::str("").with_label("Text"),
     }
 }
 
-fn cook_text(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_text(c: &mut DatCtx) -> DatData {
     DatData::text(c.s("text"))
 }
 
 // ---------------------------------------------------------------- table
 
-fn params_table() -> IndexMap<String, Param> {
+pub(crate) fn params_table() -> IndexMap<String, Param> {
     params! {
         // The table's contents live in the project file, so a cue list is
         // versioned with the patch that uses it.
@@ -115,13 +36,13 @@ fn delimiter_of(c: &DatCtx) -> char {
     if c.menu("delimiter") == 1 { ',' } else { '\t' }
 }
 
-fn cook_table(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_table(c: &mut DatCtx) -> DatData {
     DatData::from_delimited(&c.s("text"), delimiter_of(c))
 }
 
 // --------------------------------------------------------------- select
 
-fn params_select() -> IndexMap<String, Param> {
+pub(crate) fn params_select() -> IndexMap<String, Param> {
     params! {
         "rows" => Param::str("*").with_label("Rows (names, indices or *)"),
         "cols" => Param::str("*").with_label("Columns"),
@@ -129,39 +50,7 @@ fn params_select() -> IndexMap<String, Param> {
     }
 }
 
-/// Resolve a selection string against headings and a count.
-fn selection(spec: &str, headings: &[String], count: usize) -> Vec<usize> {
-    let spec = spec.trim();
-    if spec.is_empty() || spec == "*" {
-        return (0..count).collect();
-    }
-    let mut out = Vec::new();
-    for token in spec.split_whitespace() {
-        if let Ok(i) = token.parse::<usize>() {
-            if i < count && !out.contains(&i) {
-                out.push(i);
-            }
-            continue;
-        }
-        for (i, h) in headings.iter().enumerate() {
-            if crate::ops::glob(token, h) && !out.contains(&i) {
-                out.push(i);
-            }
-        }
-    }
-    out
-}
-
-pub fn glob(pattern: &str, name: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == name,
-        Some((head, tail)) => {
-            name.len() >= head.len() + tail.len() && name.starts_with(head) && name.ends_with(tail)
-        }
-    }
-}
-
-fn cook_select(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_select(c: &mut DatCtx) -> DatData {
     let input = c.input(0);
     let by_name = c.b("byname");
 
@@ -196,13 +85,13 @@ fn cook_select(c: &mut DatCtx) -> DatData {
 
 // ---------------------------------------------------------------- merge
 
-fn params_merge() -> IndexMap<String, Param> {
+pub(crate) fn params_merge() -> IndexMap<String, Param> {
     params! {
         "how" => Param::menu("rows", &["rows", "columns"]).with_label("Merge By"),
     }
 }
 
-fn cook_merge(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_merge(c: &mut DatCtx) -> DatData {
     let (a, b) = (c.input(0), c.input(1));
     if c.menu("how") == 1 {
         // Side by side, padding the shorter one.
@@ -225,7 +114,7 @@ fn cook_merge(c: &mut DatCtx) -> DatData {
 
 // ----------------------------------------------------------------- JSON
 
-fn params_json() -> IndexMap<String, Param> {
+pub(crate) fn params_json() -> IndexMap<String, Param> {
     params! {
         "pointer" => Param::str("").with_label("JSON Pointer (e.g. /items/0)"),
     }
@@ -254,7 +143,7 @@ fn flatten(prefix: &str, v: &serde_json::Value, out: &mut Vec<Vec<String>>) {
     }
 }
 
-fn cook_json(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_json(c: &mut DatCtx) -> DatData {
     let text = c.input(0).as_text();
     if text.trim().is_empty() {
         return DatData::table(vec![vec!["path".into(), "value".into()]]);
@@ -285,7 +174,7 @@ fn cook_json(c: &mut DatCtx) -> DatData {
 
 // --------------------------------------------------------------- script
 
-fn params_script() -> IndexMap<String, Param> {
+pub(crate) fn params_script() -> IndexMap<String, Param> {
     params! {
         "source" => Param::str(
             "# Leave a list of lists in `rows`.\nrows = [['frame'], [frame]]\n",
@@ -293,7 +182,7 @@ fn params_script() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_script(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_script(c: &mut DatCtx) -> DatData {
     let source = c.s("source");
     let Some(host) = c.scripts else {
         c.error = Some("no Python interpreter in this build".into());
@@ -310,229 +199,242 @@ fn cook_script(c: &mut DatCtx) -> DatData {
 
 // ------------------------------------------------------------------- UDP
 
-fn params_udp_in() -> IndexMap<String, Param> {
+pub(crate) fn params_udp_common() -> IndexMap<String, Param> {
     params! {
-        "port" => Param::int(7000).with_label("Port").with_range(1.0, 65535.0),
-        "keep" => Param::int(20).with_label("Rows Kept").with_range(1.0, 1000.0),
+        "active" => Param::bool(true).with_label("Active"),
+        "localaddress" => Param::str("").with_label("Local Address"),
+        "format" => Param::menu("permessage", &["permessage", "perline", "perbyte"]).with_label("Row Format"),
+        "maxlines" => Param::int(20).with_label("Maximum Lines").with_range(1.0, 1000.0),
+        "bytes" => Param::bool(false).with_label("Bytes Column"),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(UDP_RECEIVE_CALLBACKS).with_label("Source").into_script(),
     }
 }
 
-/// Received datagrams as a table, one message per row, newest last —
-/// the shape a Select DAT or a script naturally reads a log in.
-fn cook_udp_in(c: &mut DatCtx) -> DatData {
-    let port = c.val("port").as_i64().clamp(1, 65535) as u16;
-    let keep = c.val("keep").as_i64().clamp(1, crate::net::KEEP_CAP as i64) as usize;
-    let path = c.path.to_string();
+pub(crate) fn params_udp_in() -> IndexMap<String, Param> {
+    let mut p = params_udp_common();
+    p.insert("port".into(), Param::int(7000).with_label("Port").with_range(1.0, 65535.0));
+    p
+}
 
+fn udp_listener_key(port: u16, local: &str) -> String {
+    format!("{local}\0{port}")
+}
+
+fn fire_udp_new_rows(c: &mut DatCtx, table: &DatData, bytes_col: bool) {
+    let source = c.callback_script();
+    if source.trim().is_empty() {
+        return;
+    }
+    let data_rows = table.num_rows().saturating_sub(1);
+    let prev = c
+        .watched
+        .values
+        .get("_udp_rows")
+        .copied()
+        .unwrap_or(0.0) as usize;
+    if data_rows < prev {
+        c.watched.values.insert("_udp_rows".into(), data_rows as f64);
+        return;
+    }
+    for row in (prev + 1)..=data_rows {
+        let row_index = row;
+        let message = table.cell(row, 2).to_string();
+        let byte_str = if bytes_col {
+            table.cell(row, 3).to_string()
+        } else {
+            String::new()
+        };
+        let peer = format!("{}:{}", table.cell(row, 0), table.cell(row, 1));
+        fire(
+            c,
+            &source,
+            "onReceive",
+            &[
+                Value::Int(row_index as i64),
+                Value::Str(message),
+                Value::Str(byte_str),
+                Value::Str(peer),
+            ],
+        );
+    }
+    c.watched
+        .values
+        .insert("_udp_rows".into(), data_rows as f64);
+}
+
+pub(crate) fn cook_udp_in(c: &mut DatCtx) -> DatData {
+    let port = c.val("port").as_i64().clamp(1, 65535) as u16;
+    let local = c.s("localaddress");
+    let path = c.path.to_string();
+    let bytes_col = c.b("bytes");
+    let active = c.b("active");
+
+    if !active {
+        c.net.udp_in.remove(&path);
+        c.watched.values.insert("_udp_rows".into(), 0.0);
+        return crate::udp::empty_table(bytes_col);
+    }
+
+    let key = udp_listener_key(port, &local);
     let needs_open = c
         .net
         .udp_in
         .get(&path)
-        .map(|u| u.port != port)
+        .map(|u| udp_listener_key(u.port, &u.local_address) != key)
         .unwrap_or(true);
     if needs_open {
-        // Drop the old listener before binding the new port.
         c.net.udp_in.remove(&path);
-        match crate::net::UdpIn::open(port) {
+        match crate::udp::UdpListener::bind(port, &local) {
             Ok(u) => {
+                c.watched.values.insert("_udp_rows".into(), 0.0);
                 c.net.udp_in.insert(path.clone(), u);
             }
             Err(e) => {
                 c.error = Some(e);
-                return DatData::table(vec![vec!["message".into()]]);
+                return crate::udp::empty_table(bytes_col);
             }
         }
     }
 
-    let mut rows = vec![vec!["message".to_string()]];
-    if let Some(listener) = c.net.udp_in.get(&path) {
-        if let Ok(messages) = listener.messages.lock() {
-            let start = messages.len().saturating_sub(keep);
-            rows.extend(messages[start..].iter().map(|m| vec![m.clone()]));
-        }
-    }
-    DatData::table(rows)
+    let Some(listener) = c.net.udp_in.get(&path) else {
+        return crate::udp::empty_table(bytes_col);
+    };
+    let maxlines = crate::udp::maxlines_from_node(c.node);
+    let format = c.menu("format");
+    let inbox = listener
+        .inbox
+        .lock()
+        .map(|v| v.clone())
+        .unwrap_or_default();
+    let table = crate::udp::build_table(&inbox, maxlines, format, bytes_col);
+    fire_udp_new_rows(c, &table, bytes_col);
+    table
 }
 
-fn params_udp_out() -> IndexMap<String, Param> {
-    params! {
-        "address" => Param::str("127.0.0.1").with_label("Address"),
-        "port" => Param::int(7001).with_label("Port").with_range(1.0, 65535.0),
-        "active" => Param::bool(true).with_label("Active"),
-    }
+pub(crate) fn params_udp_out() -> IndexMap<String, Param> {
+    let mut p = params_udp_common();
+    p.insert(
+        "address".into(),
+        Param::str("127.0.0.1").with_label("Network Address"),
+    );
+    p.insert(
+        "port".into(),
+        Param::int(7001).with_label("Port").with_range(1.0, 65535.0),
+    );
+    p.insert(
+        "sendonchange".into(),
+        Param::bool(false).with_label("Send Input On Change"),
+    );
+    p
 }
 
-/// Sends its input's text as one datagram — when it *changes*. A DAT cooks
-/// whenever anything upstream does; resending an unchanged payload every
-/// cook would turn a cook into a broadcast.
-fn cook_udp_out(c: &mut DatCtx) -> DatData {
-    let input = c.input(0);
+pub(crate) fn cook_udp_out(c: &mut DatCtx) -> DatData {
     let host = c.s("address");
     let port = c.val("port").as_i64().clamp(1, 65535) as u16;
+    let local = c.s("localaddress");
     let active = c.b("active");
+    let bytes_col = c.b("bytes");
     let path = c.path.to_string();
 
     if !active {
-        return input;
+        c.net.udp_out.remove(&path);
+        c.watched.values.insert("_udp_rows".into(), 0.0);
+        return crate::udp::empty_table(bytes_col);
     }
-    let Ok(target) = format!("{}:{}", host.trim(), port).parse::<std::net::SocketAddr>() else {
+
+    let Ok(target) = format!("{}:{}", host.trim(), port).parse::<SocketAddr>() else {
         c.error = Some(format!("bad UDP address `{host}:{port}`"));
-        return input;
+        return crate::udp::empty_table(bytes_col);
     };
 
+    let target_key = format!("{target}\0{local}");
     let needs_open = c
         .net
         .udp_out
         .get(&path)
-        .map(|u| u.target != target)
+        .map(|u| format!("{}\0{}", u.target, u.listener.local_address) != target_key)
         .unwrap_or(true);
     if needs_open {
-        match crate::net::UdpOut::open(target) {
+        match crate::udp::UdpOutConnection::open(target, &local) {
             Ok(u) => {
+                c.watched.values.insert("_udp_rows".into(), 0.0);
                 c.net.udp_out.insert(path.clone(), u);
             }
             Err(e) => {
                 c.error = Some(e);
-                return input;
+                return crate::udp::empty_table(bytes_col);
             }
         }
     }
 
-    if let Some(out) = c.net.udp_out.get_mut(&path) {
-        let text = input.as_text();
-        if out.sent.as_deref() != Some(text.as_str()) && !text.is_empty() {
-            if let Err(e) = out.socket.send_to(text.as_bytes(), out.target) {
-                c.error = Some(format!("UDP send: {e}"));
-            } else {
-                out.sent = Some(text);
+    if c.b("sendonchange") {
+        let text = c.input(0).as_text();
+        if let Some(out) = c.net.udp_out.get_mut(&path) {
+            if out.last_sent.as_deref() != Some(text.as_str()) && !text.is_empty() {
+                if let Err(e) = out.listener.send_to(text.as_bytes(), out.target) {
+                    c.error = Some(e);
+                } else {
+                    out.last_sent = Some(text);
+                }
             }
         }
     }
-    input
+
+    let Some(out) = c.net.udp_out.get(&path) else {
+        return crate::udp::empty_table(bytes_col);
+    };
+    let maxlines = crate::udp::maxlines_from_node(c.node);
+    let format = c.menu("format");
+    let inbox = out
+        .listener
+        .inbox
+        .lock()
+        .map(|v| v.clone())
+        .unwrap_or_default();
+    let table = crate::udp::build_table(&inbox, maxlines, format, bytes_col);
+    fire_udp_new_rows(c, &table, bytes_col);
+    table
 }
 
 // ------------------------------------------------------------ pass-through
 
-fn cook_null(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_null(c: &mut DatCtx) -> DatData {
     c.input(0)
 }
-
-// ------------------------------------------------------------- the table
-
-pub const NULL: &str = "nullDAT";
-/// Fires Python callbacks every frame. Always a cook root — see
-/// `otd_engine::execute`.
-pub const EXECUTE: &str = "executeDAT";
-
-pub const TABLE: &str = "tableDAT";
-pub const TEXT: &str = "textDAT";
-pub const SCRIPT: &str = "scriptDAT";
-pub const IN: &str = "inDAT";
-pub const OUT: &str = "outDAT";
-
-fn spec(
-    type_name: &'static str,
-    label: &'static str,
-    inputs: &'static [&'static str],
-    summary: &'static str,
-    params: fn() -> IndexMap<String, Param>,
-    cook: fn(&mut DatCtx) -> DatData,
-) -> DatSpec {
-    DatSpec {
-        def: OpDef {
-            type_name,
-            label,
-            family: Family::Dat,
-            inputs,
-            input_families: &[],
-            summary,
-            time_dependent: false,
-            params,
-            connector: Connector::None,
-        },
-        cook,
-    }
-}
-
 // -------------------------------------------------------------- execute
 
-/// The default body of an Execute DAT: the events, with their signatures, so
-/// the operator documents itself the moment it is dropped.
-const EXECUTE_SOURCE: &str = "\
-# Runs once, the first time this node cooks.
-def onStart():
-    pass
-
-# Runs every frame, before the rest of the network cooks.
-def onFrameStart(frame):
-    pass
-
-# Runs every frame, after it has.
-def onFrameEnd(frame):
-    pass
-";
-
-const CHOP_EXECUTE_SOURCE: &str = "\
-# A watched channel changed value.
-def onValueChange(channel, value, prev):
-    pass
-
-# It crossed the threshold upwards, or downwards.
-def onOffToOn(channel, value):
-    pass
-
-def onOnToOff(channel, value):
-    pass
-";
-
-const PAR_EXECUTE_SOURCE: &str = "\
-# A watched parameter changed. `value` and `prev` are numbers.
-def onValueChange(par, value, prev):
-    pass
-";
-
-const PANEL_EXECUTE_SOURCE: &str = "\
-# Panel value changed (drag, click, keyboard).
-def onValueChange(panelValue):
-    pass
-
-def onOffToOn(panelValue):
-    pass
-
-def onOnToOff(panelValue):
-    pass
-";
-
-fn params_execute() -> IndexMap<String, Param> {
+pub(crate) fn params_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
-        "source" => Param::str(EXECUTE_SOURCE).with_label("Callbacks").into_script(),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(EXECUTE_SOURCE).with_label("Source").into_script(),
     }
 }
 
-fn params_chop_execute() -> IndexMap<String, Param> {
+pub(crate) fn params_chop_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
         "chop" => Param::str("").with_label("Watch CHOP").as_path_ref(),
         "channels" => Param::str("*").with_label("Channels"),
         "threshold" => Param::float(0.5).with_label("On Threshold").with_range(-10.0, 10.0),
-        "source" => Param::str(CHOP_EXECUTE_SOURCE).with_label("Callbacks").into_script(),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(CHOP_EXECUTE_SOURCE).with_label("Source").into_script(),
     }
 }
 
-fn params_par_execute() -> IndexMap<String, Param> {
+pub(crate) fn params_par_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
         "op" => Param::str("").with_label("OPs").as_path_ref(),
         "parameters" => Param::str("*").with_label("Parameters"),
         "valuechange" => Param::bool(true).with_label("Value Change"),
-        "source" => Param::str(PAR_EXECUTE_SOURCE).with_label("Callbacks").into_script(),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(PAR_EXECUTE_SOURCE).with_label("Source").into_script(),
     }
 }
 
-pub const PANEL_EXECUTE: &str = "panelexecuteDAT";
-
-fn params_panel_execute() -> IndexMap<String, Param> {
+pub(crate) fn params_panel_execute() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
         "panels" => Param::str("..").with_label("Panels").as_path_ref(),
@@ -542,7 +444,8 @@ fn params_panel_execute() -> IndexMap<String, Param> {
         "valuechange" => Param::bool(true).with_label("Value Change"),
         "whileon" => Param::bool(false).with_label("While On"),
         "whileoff" => Param::bool(false).with_label("While Off"),
-        "source" => Param::str(PANEL_EXECUTE_SOURCE).with_label("Callbacks").into_script(),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(PANEL_EXECUTE_SOURCE).with_label("Source").into_script(),
     }
 }
 
@@ -566,13 +469,52 @@ fn dat_script_path(c: &DatCtx<'_>) -> String {
         .unwrap_or_else(|| c.path.to_string())
 }
 
-fn cook_panel_execute(c: &mut DatCtx) -> DatData {
-    let source = c.s("source");
+fn callback_dat_view(c: &DatCtx<'_>, source: &str) -> DatData {
+    if !crate::callbacks::uses_external_callbacks_dat(c.graph, c.id) {
+        return DatData::text(source.to_string());
+    }
+    match c.node.op_type.as_str() {
+        EXECUTE => DatData::table(vec![
+            vec!["name".into(), "value".into()],
+            vec!["frame".into(), c.eval.frame.to_string()],
+        ]),
+        "chopexecuteDAT" | "parameterexecuteDAT" => {
+            let mut rows = vec![vec!["name".into(), "value".into()]];
+            let mut keys: Vec<_> = c.watched.values.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                let v = c.watched.values[&k];
+                rows.push(vec![k, v.to_string()]);
+            }
+            DatData::table(rows)
+        }
+        PANEL_EXECUTE => {
+            let v = c.watched.values.get("panel").copied().unwrap_or(0.0);
+            DatData::table(vec![
+                vec!["panel".into(), "value".into()],
+                vec!["panel".into(), v.to_string()],
+            ])
+        }
+        WEBSERVER => {
+            let port = c.val("port").as_i64();
+            let addr = c.s("localaddress");
+            DatData::table(vec![
+                vec!["name".into(), "value".into()],
+                vec!["port".into(), port.to_string()],
+                vec!["address".into(), addr],
+            ])
+        }
+        _ => DatData::default(),
+    }
+}
+
+pub(crate) fn cook_panel_execute(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
     if !c.b("active") {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
     let Some(panel_id) = resolve_dat_op(c, &c.s("panels")) else {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     };
     let panel_path = c.graph.path(panel_id);
     let key = c.s("panelvalue");
@@ -621,7 +563,7 @@ fn cook_panel_execute(c: &mut DatCtx) -> DatData {
     if c.b("whileoff") && !on {
         fire_at(c, &source, "whileOff", &[Value::Str(key)], &script);
     }
-    DatData::text(source)
+    callback_dat_view(c, &source)
 }
 
 /// Fire one callback, reporting a script error on the node.
@@ -644,13 +586,12 @@ fn fire_at(c: &mut DatCtx, source: &str, func: &str, args: &[Value], script_path
     }
 }
 
-/// An Execute DAT presents its own source, like a Text DAT. The output is not
-/// the point — the callbacks are — but having *something* means it can be
-/// viewed, wired into a Text DAT, and diffed like everything else.
-fn cook_execute(c: &mut DatCtx) -> DatData {
-    let source = c.s("source");
+/// Execute DAT output is status (frame, watched values), not callback source.
+/// Script lives in the linked Callbacks DAT when one is set.
+pub(crate) fn cook_execute(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
     if !c.b("active") {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
     if !c.watched.started {
         c.watched.started = true;
@@ -663,7 +604,7 @@ fn cook_execute(c: &mut DatCtx) -> DatData {
     // and the cook is demand-driven — there is no such moment to hang it on
     // that is not simply "later", so saying so beats pretending.
     fire(c, &source, "onFrameEnd", std::slice::from_ref(&frame));
-    DatData::text(source)
+    callback_dat_view(c, &source)
 }
 
 /// Which of `names` a whitespace-separated pattern selects.
@@ -685,14 +626,14 @@ fn selected<'a>(pattern: &str, names: &'a [String]) -> Vec<&'a String> {
         .collect()
 }
 
-fn cook_chop_execute(c: &mut DatCtx) -> DatData {
-    let source = c.s("source");
+pub(crate) fn cook_chop_execute(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
     if !c.b("active") {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
     let path = c.s("chop");
     let Some(net) = c.eval.channels else {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     };
     let names = net.channel_names(path.trim());
     let threshold = c
@@ -746,19 +687,19 @@ fn cook_chop_execute(c: &mut DatCtx) -> DatData {
             );
         }
     }
-    DatData::text(source)
+    callback_dat_view(c, &source)
 }
 
-fn cook_par_execute(c: &mut DatCtx) -> DatData {
-    let source = c.s("source");
+pub(crate) fn cook_par_execute(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
     if !c.b("active") {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
     if !c.b("valuechange") {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
     let Some(watch_id) = resolve_dat_op(c, &c.s("op")) else {
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     };
     let watch_path = c.graph.path(watch_id);
     let pattern = c.s("parameters");
@@ -769,7 +710,7 @@ fn cook_par_execute(c: &mut DatCtx) -> DatData {
         .collect();
     if names.is_empty() {
         c.error = Some("name the parameters to watch — `*` cannot be enumerated".into());
-        return DatData::text(source);
+        return callback_dat_view(c, &source);
     }
 
     let mut events = Vec::new();
@@ -809,12 +750,325 @@ fn cook_par_execute(c: &mut DatCtx) -> DatData {
             ],
         );
     }
-    DatData::text(source)
+    callback_dat_view(c, &source)
+}
+
+pub(crate) fn params_webclient() -> IndexMap<String, Param> {
+    params! {
+        "active" => Param::bool(true).with_label("Active"),
+        "method" => Param::menu("GET", &["GET", "POST", "PUT", "DELETE"]).with_label("Method"),
+        "url" => Param::str("https://httpbin.org/get").with_label("URL"),
+        "headers" => Param::str("").with_label("Headers"),
+        "body" => Param::str("").with_label("Request Body"),
+        "fetch" => Param::bool(false).with_label("Fetch"),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(WEBCLIENT_CALLBACKS).with_label("Source").into_script(),
+    }
+}
+
+fn webclient_request_key(c: &DatCtx) -> String {
+    format!(
+        "{}\0{}\0{}\0{}",
+        c.s("method"),
+        c.s("url"),
+        c.s("body"),
+        c.s("headers"),
+    )
+}
+
+fn webclient_is_http(url: &str) -> bool {
+    let u = url.trim().to_ascii_lowercase();
+    u.starts_with("http://") || u.starts_with("https://")
+}
+
+fn webclient_display(slot: &crate::net::WebClient) -> DatData {
+    if let Some(err) = &slot.error {
+        return DatData::text(err.clone());
+    }
+    DatData::text(slot.body.clone())
+}
+
+pub(crate) fn cook_webclient(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
+    let url = c.s("url");
+    let path = c.path.to_string();
+
+    if !c.b("active") {
+        if let Some(slot) = c.net.webclient.get(&path) {
+            return webclient_display(slot);
+        }
+        return DatData::text("");
+    }
+
+    if webclient_is_http(&url) {
+        let request_key = webclient_request_key(c);
+        let method = c.s("method");
+        let body = c.s("body");
+        let headers = c.s("headers");
+        let fetch = c.b("fetch");
+        let prev_fetch = c
+            .watched
+            .values
+            .get("_fetch")
+            .copied()
+            .unwrap_or(0.0)
+            > 0.0;
+        c.watched
+            .values
+            .insert("_fetch".into(), if fetch { 1.0 } else { 0.0 });
+        let pulse = fetch && !prev_fetch;
+
+        {
+            let slot = c.net.webclient.entry(path.clone()).or_default();
+            crate::net::webclient_poll(slot);
+            if pulse {
+                slot.fetch_gen += 1;
+                let key = format!("{request_key}\0{}", slot.fetch_gen);
+                crate::net::webclient_start_fetch(
+                    slot,
+                    key,
+                    method,
+                    url.clone(),
+                    body,
+                    headers,
+                );
+            }
+        }
+
+        if let Some(slot) = c.net.webclient.get(&path) {
+            if slot.status >= 400 && slot.error.is_none() {
+                c.error = Some(format!("HTTP {}", slot.status));
+            } else if let Some(e) = &slot.error {
+                c.error = Some(e.clone());
+            }
+        }
+
+        let notify = c.net.webclient.get(&path).and_then(|slot| {
+            if slot.error.is_none()
+                && !slot.body.is_empty()
+                && slot.notified_body.as_deref() != Some(&slot.body)
+            {
+                Some(slot.body.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(message) = notify {
+            if let Some(s) = c.net.webclient.get_mut(&path) {
+                s.notified_body = Some(message.clone());
+            }
+            fire(c, &source, "onMessage", &[Value::Str(message)]);
+        }
+        if let Some(slot) = c.net.webclient.get(&path) {
+            return webclient_display(slot);
+        }
+        return DatData::text("");
+    }
+
+    if !c.watched.started {
+        c.watched.started = true;
+        let dat_path = Value::Str(c.path.to_string());
+        fire(c, &source, "onConnect", std::slice::from_ref(&dat_path));
+    }
+    DatData::text(format!(
+        "WebSocket is not implemented yet.\n{}",
+        url.trim()
+    ))
+}
+
+pub(crate) fn params_webserver() -> IndexMap<String, Param> {
+    params! {
+        "active" => Param::bool(true).with_label("Active"),
+        "port" => Param::int(9980).with_label("Port").with_range(1.0, 65535.0),
+        "localaddress" => Param::str("").with_label("Local Address"),
+        "callbacks" => Param::str("").with_label("Callbacks DAT").as_path_ref(),
+        "source" => Param::str(WEBSERVER_CALLBACKS).with_label("Source").into_script(),
+    }
+}
+
+fn webserver_status_table(port: u16, address: &str, requests: u64) -> DatData {
+    DatData::table(vec![
+        vec!["name".into(), "value".into()],
+        vec!["port".into(), port.to_string()],
+        vec!["address".into(), address.to_string()],
+        vec!["requests".into(), requests.to_string()],
+    ])
+}
+
+pub(crate) fn cook_webserver(c: &mut DatCtx) -> DatData {
+    let source = c.callback_script();
+    let port = c.val("port").as_i64().clamp(1, 65535) as u16;
+    let bind = c.s("localaddress");
+    let path = c.path.to_string();
+    let dat_name = c.node.name.clone();
+    let active = c.b("active");
+
+    if !active {
+        c.net.webserver.remove(&path);
+        if c.watched.started {
+            c.watched.started = false;
+            if let Some(host) = c.scripts {
+                let script_path = dat_script_path(c);
+                let _ = host.webserver_event(
+                    &source,
+                    "onServerStop",
+                    &c.node.name,
+                    c.eval,
+                    &script_path,
+                );
+            }
+        }
+        c.watched.values.insert("_requests".into(), 0.0);
+        return callback_dat_view(c, &source);
+    }
+
+    let key = crate::webserver::server_key(port, &bind);
+    let needs_open = c
+        .net
+        .webserver
+        .get(&path)
+        .map(|s| crate::webserver::server_key(s.port, &s.bind) != key)
+        .unwrap_or(true);
+    if needs_open {
+        c.net.webserver.remove(&path);
+        match crate::webserver::WebServer::start(port, &bind) {
+            Ok(srv) => {
+                let bound_port = srv.port;
+                let local = srv.local_address.clone();
+                c.net.webserver.insert(path.clone(), srv);
+                c.watched.values.insert("_requests".into(), 0.0);
+                if !c.watched.started {
+                    c.watched.started = true;
+                    if let Some(host) = c.scripts {
+                        let script_path = dat_script_path(c);
+                        let _ = host.webserver_event(
+                            &source,
+                            "onServerStart",
+                            &dat_name,
+                            c.eval,
+                            &script_path,
+                        );
+                    }
+                }
+                let req_count = c.watched.values.get("_requests").copied().unwrap_or(0.0) as u64;
+                return webserver_status_table(bound_port, &local, req_count);
+            }
+            Err(e) => {
+                c.error = Some(e);
+                return callback_dat_view(c, &source);
+            }
+        }
+    }
+
+    let (bound_port, local, jobs, ws_events) = {
+        let Some(server) = c.net.webserver.get(&path) else {
+            return callback_dat_view(c, &source);
+        };
+        (
+            server.port,
+            server.local_address.clone(),
+            server.drain_pending(),
+            server.drain_ws_events(),
+        )
+    };
+
+    let Some(host) = c.scripts else {
+        for job in jobs {
+            let _ = job.respond.send(crate::webserver::HttpReply {
+                status: 503,
+                reason: "Service Unavailable".into(),
+                body: "Python is not available".into(),
+                content_type: Some("text/plain".into()),
+            });
+        }
+        c.error = Some("no Python interpreter in this build".into());
+        let req_count = c.watched.values.get("_requests").copied().unwrap_or(0.0) as u64;
+        return webserver_status_table(bound_port, &local, req_count);
+    };
+
+    for job in jobs {
+        let script_path = dat_script_path(c);
+        match host.webserver_http(&source, &dat_name, &job, c.eval, &script_path) {
+            Ok(reply) => {
+                let _ = job.respond.send(reply);
+                let n = c.watched.values.get("_requests").copied().unwrap_or(0.0) + 1.0;
+                c.watched.values.insert("_requests".into(), n);
+            }
+            Err(e) => {
+                let _ = job.respond.send(crate::webserver::HttpReply {
+                    status: 500,
+                    reason: "Internal Server Error".into(),
+                    body: e.clone(),
+                    content_type: Some("text/plain".into()),
+                });
+                if c.error.is_none() {
+                    c.error = Some(e);
+                }
+            }
+        }
+    }
+
+    let script_path = dat_script_path(c);
+    for ev in ws_events {
+        let func = match &ev {
+            crate::webserver::WebSocketEvent::Open { .. } => "onWebSocketOpen",
+            crate::webserver::WebSocketEvent::Close { .. } => "onWebSocketClose",
+            crate::webserver::WebSocketEvent::Text { .. } => "onWebSocketReceiveText",
+            crate::webserver::WebSocketEvent::Binary { .. } => "onWebSocketReceiveBinary",
+            crate::webserver::WebSocketEvent::Ping { .. } => "onWebSocketReceivePing",
+            crate::webserver::WebSocketEvent::Pong { .. } => "onWebSocketReceivePong",
+        };
+        let client = match &ev {
+            crate::webserver::WebSocketEvent::Open { client, .. }
+            | crate::webserver::WebSocketEvent::Close { client }
+            | crate::webserver::WebSocketEvent::Text { client, .. }
+            | crate::webserver::WebSocketEvent::Binary { client, .. }
+            | crate::webserver::WebSocketEvent::Ping { client, .. }
+            | crate::webserver::WebSocketEvent::Pong { client, .. } => client.as_str(),
+        };
+        let uri = match &ev {
+            crate::webserver::WebSocketEvent::Open { uri, .. } => Some(uri.as_str()),
+            _ => None,
+        };
+        let text = match &ev {
+            crate::webserver::WebSocketEvent::Text { data, .. } => Some(data.as_str()),
+            _ => None,
+        };
+        let binary = match &ev {
+            crate::webserver::WebSocketEvent::Binary { data, .. }
+            | crate::webserver::WebSocketEvent::Ping { data, .. }
+            | crate::webserver::WebSocketEvent::Pong { data, .. } => Some(data.as_slice()),
+            _ => None,
+        };
+        if let Err(e) = host.webserver_ws(
+            &source,
+            func,
+            &dat_name,
+            client,
+            uri,
+            text,
+            binary,
+            c.eval,
+            &script_path,
+        ) {
+            if c.error.is_none() {
+                c.error = Some(e);
+            }
+        }
+    }
+
+    if let Some(server) = c.net.webserver.get(&path) {
+        let sends = otd_core::take_queued_ws_sends_for(&path);
+        server.apply_ws_sends(&sends);
+    }
+
+    let req_count = c.watched.values.get("_requests").copied().unwrap_or(0.0) as u64;
+    webserver_status_table(bound_port, &local, req_count)
 }
 
 // ------------------------------------------------------------------ sort
 
-fn params_sort() -> IndexMap<String, Param> {
+pub(crate) fn params_sort() -> IndexMap<String, Param> {
     params! {
         "column" => Param::str("0").with_label("Column (name or index)"),
         "order" => Param::menu("ascending", &["ascending", "descending"]).with_label("Order"),
@@ -837,7 +1091,7 @@ fn column_index(rows: &[Vec<String>], spec: &str, header: bool) -> usize {
     0
 }
 
-fn cook_sort(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_sort(c: &mut DatCtx) -> DatData {
     let input = c.input(0);
     let header = c.b("header");
     let col = column_index(&input.rows, &c.s("column"), header);
@@ -877,7 +1131,7 @@ fn cook_sort(c: &mut DatCtx) -> DatData {
 
 // ------------------------------------------------------------- transpose
 
-fn cook_transpose(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_transpose(c: &mut DatCtx) -> DatData {
     let input = c.input(0);
     let cols = input.num_cols();
     let rows = (0..cols)
@@ -894,7 +1148,7 @@ fn cook_transpose(c: &mut DatCtx) -> DatData {
 
 // ------------------------------------------------------------ substitute
 
-fn params_substitute() -> IndexMap<String, Param> {
+pub(crate) fn params_substitute() -> IndexMap<String, Param> {
     params! {
         "template" => Param::str("").with_label("Template"),
         "table" => Param::bool(false).with_label("Substitute Every Cell Instead"),
@@ -906,7 +1160,7 @@ fn params_substitute() -> IndexMap<String, Param> {
 /// This is the operator that turns a cue table into a string somebody else
 /// can read — an OSC address, a UDP payload, a line of a show report — without
 /// a script. The input's first column names, the second supplies.
-fn cook_substitute(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_substitute(c: &mut DatCtx) -> DatData {
     let input = c.input(0);
     let substitute = |text: &str| -> String {
         let mut out = text.to_string();
@@ -936,7 +1190,7 @@ fn cook_substitute(c: &mut DatCtx) -> DatData {
 
 // --------------------------------------------------------------- convert
 
-fn params_convert() -> IndexMap<String, Param> {
+pub(crate) fn params_convert() -> IndexMap<String, Param> {
     params! {
         "to" => Param::menu("table", &["table", "text"]).with_label("Convert To"),
         "delimiter" => Param::menu("tab", &["tab", "comma"]).with_label("Delimiter"),
@@ -949,7 +1203,7 @@ fn params_convert() -> IndexMap<String, Param> {
 /// cell — but the operators reading them are not interchangeable, so the
 /// conversion has to be something you can put in a patch rather than a flag
 /// hidden on every node.
-fn cook_convert(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_convert(c: &mut DatCtx) -> DatData {
     let input = c.input(0);
     let delim = if c.menu("delimiter") == 1 { ',' } else { '\t' };
     if c.menu("to") == 1 {
@@ -966,7 +1220,7 @@ fn cook_convert(c: &mut DatCtx) -> DatData {
 
 // ------------------------------------------------------- CHOP to DAT
 
-fn params_chop_to() -> IndexMap<String, Param> {
+pub(crate) fn params_chop_to() -> IndexMap<String, Param> {
     params! {
         "layout" => Param::menu("columns", &["columns", "rows"])
             .with_label("Channels As"),
@@ -981,7 +1235,7 @@ fn params_chop_to() -> IndexMap<String, Param> {
 /// text you can select and copy. It is also how a channel leaves the patch,
 /// since a UDP Out DAT sends whatever text reaches it, so "send my six
 /// smoothed values to the lighting desk" is two nodes rather than a feature.
-fn cook_chop_to_dat(c: &mut DatCtx) -> DatData {
+pub(crate) fn cook_chop_to_dat(c: &mut DatCtx) -> DatData {
     let Some((names, samples, _)) = c.foreign(0).and_then(|f| f.as_channels()) else {
         return DatData::table(Vec::new());
     };
@@ -1041,218 +1295,4 @@ fn format_number(spec: &str, v: f32) -> String {
         };
         if s == "-0" { "0".into() } else { s }
     }
-}
-
-fn specs() -> &'static Vec<DatSpec> {
-    static SPECS: OnceLock<Vec<DatSpec>> = OnceLock::new();
-    SPECS.get_or_init(|| {
-        let mut v = vec![
-            spec(
-                TABLE,
-                "Table",
-                &[],
-                "A table of text, stored in the project file.",
-                params_table,
-                cook_table,
-            ),
-            spec(
-                TEXT,
-                "Text",
-                &[],
-                "A block of text.",
-                params_text,
-                cook_text,
-            ),
-            spec(
-                "selectDAT",
-                "Select",
-                &["in"],
-                "Pick rows and columns, by name or index.",
-                params_select,
-                cook_select,
-            ),
-            spec(
-                "mergeDAT",
-                "Merge",
-                &["a", "b"],
-                "Join two DATs by rows or by columns.",
-                params_merge,
-                cook_merge,
-            ),
-            spec(
-                "jsonDAT",
-                "JSON",
-                &["in"],
-                "Parse JSON text into a path/value table.",
-                params_json,
-                cook_json,
-            ),
-            spec(
-                NULL,
-                "Null",
-                &["in"],
-                "Pass-through. A stable name to reference.",
-                no_params,
-                cook_null,
-            ),
-        ];
-        // UDP In re-cooks every frame: messages arrive whether or not
-        // anything in the graph changed.
-        let mut udp_in = spec(
-            "udpinDAT",
-            "UDP In",
-            &[],
-            "Datagrams received on a port, one message per row.",
-            params_udp_in,
-            cook_udp_in,
-        );
-        udp_in.def.time_dependent = true;
-        v.push(udp_in);
-        v.push(spec(
-            "udpoutDAT",
-            "UDP Out",
-            &["in"],
-            "Sends its input's text as a datagram when it changes.",
-            params_udp_out,
-            cook_udp_out,
-        ));
-
-        // A Script DAT re-runs every frame: its source may read time, and
-        // there is no way to know it doesn't.
-        let mut script = spec(
-            SCRIPT,
-            "Script",
-            &["in"],
-            "Rows produced by a Python script.",
-            params_script,
-            cook_script,
-        );
-        script.def.time_dependent = true;
-        v.push(script);
-
-        for (type_name, label, summary, params, cook) in [
-            (
-                EXECUTE,
-                "Execute",
-                "Python callbacks at the start and end of a frame.",
-                params_execute as fn() -> IndexMap<String, Param>,
-                cook_execute as fn(&mut DatCtx) -> DatData,
-            ),
-            (
-                "chopexecuteDAT",
-                "CHOP Execute",
-                "Python callbacks when a watched channel changes or crosses a threshold.",
-                params_chop_execute,
-                cook_chop_execute,
-            ),
-            (
-                "parameterexecuteDAT",
-                "Parameter Execute",
-                "Python callbacks when a watched parameter changes.",
-                params_par_execute,
-                cook_par_execute,
-            ),
-        ] {
-            let mut ex = spec(type_name, label, &[], summary, params, cook);
-            // A callback that only ran when something downstream wanted it
-            // would not be a callback. These cook every frame, and the hosts
-            // treat them as roots.
-            ex.def.time_dependent = true;
-            v.push(ex);
-        }
-
-        let mut panel_ex = spec(
-            PANEL_EXECUTE,
-            "Panel Execute",
-            &[],
-            "Python callbacks when a panel value changes.",
-            params_panel_execute,
-            cook_panel_execute,
-        );
-        panel_ex.def.time_dependent = true;
-        v.push(panel_ex);
-
-        v.push(spec(
-            "sortDAT",
-            "Sort",
-            &["in"],
-            "Sort rows by a column, numerically or as text.",
-            params_sort,
-            cook_sort,
-        ));
-        v.push(spec(
-            "transposeDAT",
-            "Transpose",
-            &["in"],
-            "Swap rows and columns.",
-            no_params,
-            cook_transpose,
-        ));
-        v.push(spec(
-            "substituteDAT",
-            "Substitute",
-            &["in"],
-            "Fill $name placeholders from a two-column lookup table.",
-            params_substitute,
-            cook_substitute,
-        ));
-        v.push(spec(
-            "convertDAT",
-            "Convert",
-            &["in"],
-            "Between a table and a block of text.",
-            params_convert,
-            cook_convert,
-        ));
-
-        let mut to_dat = spec(
-            "choptodatDAT",
-            "CHOP to DAT",
-            &["in"],
-            "Channels as a table of numbers.",
-            params_chop_to,
-            cook_chop_to_dat,
-        );
-        to_dat.def.input_families = &[Family::Chop];
-        v.push(to_dat);
-
-        let mut in_dat = spec(
-            IN,
-            "In",
-            &[],
-            "A data input on this component's node.",
-            no_params,
-            cook_null,
-        );
-        in_dat.def.connector = Connector::In;
-        v.push(in_dat);
-
-        let mut out_dat = spec(
-            OUT,
-            "Out",
-            &["in"],
-            "This component's data output.",
-            no_params,
-            cook_null,
-        );
-        out_dat.def.connector = Connector::Out;
-        v.push(out_dat);
-        v
-    })
-}
-
-pub fn spec_for(type_name: &str) -> Option<&'static DatSpec> {
-    specs().iter().find(|s| s.def.type_name == type_name)
-}
-
-pub fn all() -> impl Iterator<Item = &'static DatSpec> {
-    specs().iter()
-}
-
-pub fn registry() -> OpRegistry {
-    let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
-    r
 }

@@ -5,6 +5,7 @@
 //! (PLAN.md §4).
 
 pub mod anim;
+mod clock;
 pub mod data;
 pub mod dmx;
 pub mod engine;

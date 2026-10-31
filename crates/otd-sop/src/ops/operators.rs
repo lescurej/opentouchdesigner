@@ -1,81 +1,13 @@
-//! The SOP operator table.
-//!
-//! Generators build points; filters map points to points. Keeping filters in
-//! that shape is deliberate — it is the form that moves to a compute shader
-//! without being rewritten (PLAN.md Phase 4, "GPU-first from day one").
-
-use std::sync::OnceLock;
-
 use otd_core::indexmap::IndexMap;
-use otd_core::{Connector, EvalContext, Family, Node, OpDef, OpRegistry, Param, Value};
+use otd_core::{Param, Value};
 
 use crate::{Geometry, Point, Topology};
 
-pub struct SopCtx<'a> {
-    pub node: &'a Node,
-    pub eval: &'a EvalContext<'a>,
-    pub inputs: Vec<Geometry>,
-}
-
-impl SopCtx<'_> {
-    fn val(&self, key: &str) -> Value {
-        self.node
-            .param(key)
-            .map(|p| p.eval(self.eval))
-            .unwrap_or(Value::Float(0.0))
-    }
-    fn f(&self, key: &str) -> f32 {
-        self.val(key).as_f32()
-    }
-    fn i(&self, key: &str) -> i64 {
-        self.val(key).as_i64()
-    }
-    fn b(&self, key: &str) -> bool {
-        self.val(key).as_bool()
-    }
-    fn v3(&self, key: &str) -> [f32; 3] {
-        let v = self.val(key).as_vec4_f32();
-        [v[0], v[1], v[2]]
-    }
-    fn v4(&self, key: &str) -> [f32; 4] {
-        self.val(key).as_vec4_f32()
-    }
-    fn menu(&self, key: &str) -> usize {
-        let Some(p) = self.node.param(key) else {
-            return 0;
-        };
-        let chosen = p.eval(self.eval).as_str();
-        p.menu
-            .as_ref()
-            .and_then(|m| m.iter().position(|i| *i == chosen))
-            .unwrap_or(0)
-    }
-    fn input(&self, i: usize) -> Geometry {
-        self.inputs.get(i).cloned().unwrap_or_default()
-    }
-}
-
-pub struct SopSpec {
-    pub def: OpDef,
-    pub cook: fn(&mut SopCtx) -> Geometry,
-}
-
-macro_rules! params {
-    ($($key:expr => $param:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut m: IndexMap<String, Param> = IndexMap::new();
-        $( m.insert($key.into(), $param); )*
-        m
-    }};
-}
-
-fn no_params() -> IndexMap<String, Param> {
-    params! {}
-}
+use super::SopCtx;
 
 // ------------------------------------------------------------------- box
 
-fn params_box() -> IndexMap<String, Param> {
+pub(crate) fn params_box() -> IndexMap<String, Param> {
     params! {
         "size" => Param::xyz([1.0, 1.0, 1.0]).with_label("Size"),
         "center" => Param::xyz([0.0, 0.0, 0.0]).with_label("Center"),
@@ -83,7 +15,7 @@ fn params_box() -> IndexMap<String, Param> {
 }
 
 /// The six faces, each as two triangles with a flat normal.
-fn cook_box(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_box(c: &mut SopCtx) -> Geometry {
     let s = c.v3("size");
     let o = c.v3("center");
     let (hx, hy, hz) = (s[0] * 0.5, s[1] * 0.5, s[2] * 0.5);
@@ -131,7 +63,7 @@ fn cook_box(c: &mut SopCtx) -> Geometry {
 
 // ---------------------------------------------------------------- sphere
 
-fn params_sphere() -> IndexMap<String, Param> {
+pub(crate) fn params_sphere() -> IndexMap<String, Param> {
     params! {
         "radius" => Param::float(0.5).with_label("Radius").with_range(0.01, 10.0),
         "rows" => Param::int(16).with_label("Rows").with_range(3.0, 128.0),
@@ -140,7 +72,7 @@ fn params_sphere() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_sphere(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_sphere(c: &mut SopCtx) -> Geometry {
     let r = c.f("radius");
     let rows = c.i("rows").clamp(3, 128) as usize;
     let cols = c.i("columns").clamp(3, 256) as usize;
@@ -183,7 +115,7 @@ fn cook_sphere(c: &mut SopCtx) -> Geometry {
 
 // ------------------------------------------------------------------ grid
 
-fn params_grid() -> IndexMap<String, Param> {
+pub(crate) fn params_grid() -> IndexMap<String, Param> {
     params! {
         "size" => Param::new(Value::Vec2([2.0, 2.0])).with_label("Size"),
         "rows" => Param::int(10).with_label("Rows").with_range(2.0, 512.0),
@@ -192,7 +124,7 @@ fn params_grid() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_grid(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_grid(c: &mut SopCtx) -> Geometry {
     let s = c.v4("size");
     let rows = c.i("rows").clamp(2, 512) as usize;
     let cols = c.i("columns").clamp(2, 512) as usize;
@@ -239,7 +171,7 @@ fn cook_grid(c: &mut SopCtx) -> Geometry {
 
 // ------------------------------------------------------------------ line
 
-fn params_line() -> IndexMap<String, Param> {
+pub(crate) fn params_line() -> IndexMap<String, Param> {
     params! {
         "from" => Param::xyz([-1.0, 0.0, 0.0]).with_label("From"),
         "to" => Param::xyz([1.0, 0.0, 0.0]).with_label("To"),
@@ -247,7 +179,7 @@ fn params_line() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_line(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_line(c: &mut SopCtx) -> Geometry {
     let a = c.v3("from");
     let b = c.v3("to");
     let n = c.i("points").clamp(2, 4096) as usize;
@@ -274,7 +206,7 @@ fn cook_line(c: &mut SopCtx) -> Geometry {
 
 // ------------------------------------------------------------- transform
 
-fn params_transform() -> IndexMap<String, Param> {
+pub(crate) fn params_transform() -> IndexMap<String, Param> {
     params! {
         "translate" => Param::xyz([0.0, 0.0, 0.0]).with_label("Translate"),
         "rotate" => Param::xyz([0.0, 0.0, 0.0]).with_label("Rotate (deg)"),
@@ -299,7 +231,7 @@ pub fn rotate_xyz(v: [f32; 3], deg: [f32; 3]) -> [f32; 3] {
     [x, y, z]
 }
 
-fn cook_transform(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_transform(c: &mut SopCtx) -> Geometry {
     let t = c.v3("translate");
     let r = c.v3("rotate");
     let s = c.v3("scale");
@@ -321,7 +253,7 @@ fn cook_transform(c: &mut SopCtx) -> Geometry {
 
 // ----------------------------------------------------------------- noise
 
-fn params_noise() -> IndexMap<String, Param> {
+pub(crate) fn params_noise() -> IndexMap<String, Param> {
     params! {
         "amplitude" => Param::float(0.2).with_label("Amplitude").with_range(0.0, 4.0),
         "period" => Param::float(1.0).with_label("Period").with_range(0.01, 10.0),
@@ -360,7 +292,7 @@ fn value_noise(p: [f32; 3]) -> f32 {
     acc
 }
 
-fn cook_noise(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_noise(c: &mut SopCtx) -> Geometry {
     let amp = c.f("amplitude");
     let period = c.f("period").max(1e-4);
     let off = c.v3("offset");
@@ -395,7 +327,7 @@ fn cook_noise(c: &mut SopCtx) -> Geometry {
 
 // ----------------------------------------------------------------- twist
 
-fn params_twist() -> IndexMap<String, Param> {
+pub(crate) fn params_twist() -> IndexMap<String, Param> {
     params! {
         "operation" => Param::menu("twist", &["twist", "bend", "taper"]).with_label("Operation"),
         "axis" => Param::menu("y", &["x", "y", "z"]).with_label("Primary Axis"),
@@ -407,7 +339,7 @@ fn params_twist() -> IndexMap<String, Param> {
 /// Twist, bend or taper along one axis, proportional to the distance from
 /// the origin along it. Normals are rotated with twist and bend; taper leaves
 /// them, so follow it with a Facet SOP when lighting matters.
-fn cook_twist(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_twist(c: &mut SopCtx) -> Geometry {
     let op = c.menu("operation");
     let a = c.menu("axis");
     // (axis, a perpendicular) — bend curls the axis toward the perpendicular.
@@ -457,7 +389,7 @@ fn cook_twist(c: &mut SopCtx) -> Geometry {
 
 // ----------------------------------------------------------------- facet
 
-fn params_facet() -> IndexMap<String, Param> {
+pub(crate) fn params_facet() -> IndexMap<String, Param> {
     params! {
         "mode" => Param::menu("smooth", &["smooth", "unique"]).with_label("Normals"),
     }
@@ -467,7 +399,7 @@ fn params_facet() -> IndexMap<String, Param> {
 /// and leaves the normals where the generator put them, so a noised grid
 /// lights like the flat grid it was; this is the fix. `unique` splits every
 /// triangle into its own three points for a faceted look.
-fn cook_facet(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_facet(c: &mut SopCtx) -> Geometry {
     let g = c.input(0);
     if g.topology != Topology::Triangles {
         return g;
@@ -509,26 +441,26 @@ fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 // ---------------------------------------------------------------- colour
 
-fn params_color() -> IndexMap<String, Param> {
+pub(crate) fn params_color() -> IndexMap<String, Param> {
     params! {
         "color" => Param::rgba([1.0, 1.0, 1.0, 1.0]).with_label("Color"),
     }
 }
 
-fn cook_color(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_color(c: &mut SopCtx) -> Geometry {
     let rgba = c.v4("color");
     c.input(0).map_points(|_, p| Point { color: rgba, ..*p })
 }
 
 // ----------------------------------------------------------------- merge
 
-fn cook_merge(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_merge(c: &mut SopCtx) -> Geometry {
     c.input(0).merged(&c.input(1))
 }
 
 // ----------------------------------------------------------------- blend
 
-fn params_blend() -> IndexMap<String, Param> {
+pub(crate) fn params_blend() -> IndexMap<String, Param> {
     params! {
         "blend" => Param::float(0.0).with_label("Blend").with_range(0.0, 1.0),
         "match" => Param::menu("stretch", &["stretch", "index"]).with_label("Match Points"),
@@ -558,7 +490,7 @@ fn params_blend() -> IndexMap<String, Param> {
 /// drawn stays the thing you wired into the first input, and at blend 1 you
 /// have A's connectivity holding B's shape. Producing a shape whose triangles
 /// rewire themselves halfway through would not be a morph, it would be a cut.
-fn cook_blend(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_blend(c: &mut SopCtx) -> Geometry {
     let a = c.input(0);
     let b = c.input(1);
     if a.is_empty() {
@@ -614,7 +546,7 @@ fn cook_blend(c: &mut SopCtx) -> Geometry {
 
 // ------------------------------------------------------------------ copy
 
-fn params_copy() -> IndexMap<String, Param> {
+pub(crate) fn params_copy() -> IndexMap<String, Param> {
     params! {
         "count" => Param::int(3).with_label("Copies").with_range(1.0, 512.0),
         "translate" => Param::xyz([1.0, 0.0, 0.0]).with_label("Translate Each"),
@@ -629,7 +561,7 @@ fn params_copy() -> IndexMap<String, Param> {
 /// the familiar mental model and for small counts. Anything large should be
 /// instanced instead, which is why the Geometry COMP takes its transforms
 /// from a CHOP rather than from geometry duplicated here.
-fn cook_copy(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_copy(c: &mut SopCtx) -> Geometry {
     let n = c.i("count").clamp(1, 512) as usize;
     let t = c.v3("translate");
     let r = c.v3("rotate");
@@ -669,43 +601,12 @@ fn cook_copy(c: &mut SopCtx) -> Geometry {
 
 // ---------------------------------------------------------------- null
 
-fn cook_null(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_null(c: &mut SopCtx) -> Geometry {
     c.input(0)
 }
-
-// ------------------------------------------------------------- the table
-
-pub const NULL: &str = "nullSOP";
-pub const IN: &str = "inSOP";
-pub const OUT: &str = "outSOP";
-
-fn spec(
-    type_name: &'static str,
-    label: &'static str,
-    inputs: &'static [&'static str],
-    summary: &'static str,
-    params: fn() -> IndexMap<String, Param>,
-    cook: fn(&mut SopCtx) -> Geometry,
-) -> SopSpec {
-    SopSpec {
-        def: OpDef {
-            type_name,
-            label,
-            family: Family::Sop,
-            inputs,
-            input_families: &[],
-            summary,
-            time_dependent: false,
-            params,
-            connector: Connector::None,
-        },
-        cook,
-    }
-}
-
 // ------------------------------------------------------------------ tube
 
-fn params_tube() -> IndexMap<String, Param> {
+pub(crate) fn params_tube() -> IndexMap<String, Param> {
     params! {
         "radius1" => Param::float(0.5).with_label("Bottom Radius").with_range(0.0, 8.0),
         "radius2" => Param::float(0.5).with_label("Top Radius").with_range(0.0, 8.0),
@@ -719,7 +620,7 @@ fn params_tube() -> IndexMap<String, Param> {
 
 /// A tube, cone or cylinder depending on the two radii — one operator rather
 /// than three, because they differ only in a number.
-fn cook_tube(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_tube(c: &mut SopCtx) -> Geometry {
     let (r1, r2) = (c.f("radius1"), c.f("radius2"));
     let h = c.f("height");
     let cols = c.i("columns").clamp(3, 256) as usize;
@@ -812,7 +713,7 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
 
 // ----------------------------------------------------------------- torus
 
-fn params_torus() -> IndexMap<String, Param> {
+pub(crate) fn params_torus() -> IndexMap<String, Param> {
     params! {
         "radius1" => Param::float(1.0).with_label("Outer Radius").with_range(0.0, 8.0),
         "radius2" => Param::float(0.3).with_label("Inner Radius").with_range(0.0, 8.0),
@@ -822,7 +723,7 @@ fn params_torus() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_torus(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_torus(c: &mut SopCtx) -> Geometry {
     let (big, small) = (c.f("radius1"), c.f("radius2"));
     let rows = c.i("rows").clamp(3, 256) as usize;
     let cols = c.i("columns").clamp(3, 256) as usize;
@@ -872,7 +773,7 @@ fn cook_torus(c: &mut SopCtx) -> Geometry {
 
 // ---------------------------------------------------------------- circle
 
-fn params_circle() -> IndexMap<String, Param> {
+pub(crate) fn params_circle() -> IndexMap<String, Param> {
     params! {
         "radius" => Param::new(Value::Vec2([1.0, 1.0])).with_label("Radius"),
         "divisions" => Param::int(32).with_label("Divisions").with_range(3.0, 512.0),
@@ -884,7 +785,7 @@ fn params_circle() -> IndexMap<String, Param> {
 
 /// A disc, a ring, or an arc of either. Unfilled it is a line primitive,
 /// which is what makes it useful as a path for a Copy SOP to walk.
-fn cook_circle(c: &mut SopCtx) -> Geometry {
+pub(crate) fn cook_circle(c: &mut SopCtx) -> Geometry {
     let r = c.v4("radius");
     let n = c.i("divisions").clamp(3, 512) as usize;
     let arc = c.f("arc").clamp(0.0, 360.0).to_radians();
@@ -936,179 +837,4 @@ fn cook_circle(c: &mut SopCtx) -> Geometry {
         indices,
         topology: Topology::Triangles,
     }
-}
-
-fn specs() -> &'static Vec<SopSpec> {
-    static SPECS: OnceLock<Vec<SopSpec>> = OnceLock::new();
-    SPECS.get_or_init(|| {
-        let mut v = vec![
-            spec(
-                "boxSOP",
-                "Box",
-                &[],
-                "A box with flat-shaded faces.",
-                params_box,
-                cook_box,
-            ),
-            spec(
-                "sphereSOP",
-                "Sphere",
-                &[],
-                "A UV sphere.",
-                params_sphere,
-                cook_sphere,
-            ),
-            spec(
-                "tubeSOP",
-                "Tube",
-                &[],
-                "A cylinder, cone or tapered tube, with optional caps.",
-                params_tube,
-                cook_tube,
-            ),
-            spec(
-                "torusSOP",
-                "Torus",
-                &[],
-                "A torus.",
-                params_torus,
-                cook_torus,
-            ),
-            spec(
-                "circleSOP",
-                "Circle",
-                &[],
-                "A disc, ring or arc — filled, or a line to copy along.",
-                params_circle,
-                cook_circle,
-            ),
-            spec(
-                "gridSOP",
-                "Grid",
-                &[],
-                "A flat grid of quads — the usual thing to displace.",
-                params_grid,
-                cook_grid,
-            ),
-            spec(
-                "lineSOP",
-                "Line",
-                &[],
-                "A run of points between two positions.",
-                params_line,
-                cook_line,
-            ),
-            spec(
-                "transformSOP",
-                "Transform",
-                &["in"],
-                "Translate, rotate and scale points.",
-                params_transform,
-                cook_transform,
-            ),
-            spec(
-                "noiseSOP",
-                "Noise",
-                &["in"],
-                "Displace points by value noise, along their normals or freely.",
-                params_noise,
-                cook_noise,
-            ),
-            spec(
-                "twistSOP",
-                "Twist",
-                &["in"],
-                "Twist, bend or taper along one axis, growing with distance from the origin. \
-                 Needs enough rows along that axis to curve smoothly.",
-                params_twist,
-                cook_twist,
-            ),
-            spec(
-                "facetSOP",
-                "Facet",
-                &["in"],
-                "Recompute normals from the triangles — put after Noise or Twist so lighting \
-                 follows the new shape. `unique` gives flat, faceted shading.",
-                params_facet,
-                cook_facet,
-            ),
-            spec(
-                "colorSOP",
-                "Color",
-                &["in"],
-                "Set the colour carried by every point.",
-                params_color,
-                cook_color,
-            ),
-            spec(
-                "mergeSOP",
-                "Merge",
-                &["a", "b"],
-                "Combine two pieces of geometry.",
-                no_params,
-                cook_merge,
-            ),
-            spec(
-                "blendSOP",
-                "Blend",
-                &["a", "b"],
-                "Morph between two shapes by interpolating point positions.",
-                params_blend,
-                cook_blend,
-            ),
-            spec(
-                "copySOP",
-                "Copy",
-                &["in"],
-                "Stamp copies with a compounding transform.",
-                params_copy,
-                cook_copy,
-            ),
-            spec(
-                NULL,
-                "Null",
-                &["in"],
-                "Pass-through. A stable name to reference.",
-                no_params,
-                cook_null,
-            ),
-        ];
-        let mut in_sop = spec(
-            IN,
-            "In",
-            &[],
-            "A geometry input on this component's node.",
-            no_params,
-            cook_null,
-        );
-        in_sop.def.connector = Connector::In;
-        v.push(in_sop);
-        let mut out_sop = spec(
-            OUT,
-            "Out",
-            &["in"],
-            "This component's geometry output.",
-            no_params,
-            cook_null,
-        );
-        out_sop.def.connector = Connector::Out;
-        v.push(out_sop);
-        v
-    })
-}
-
-pub fn spec_for(type_name: &str) -> Option<&'static SopSpec> {
-    specs().iter().find(|s| s.def.type_name == type_name)
-}
-
-pub fn all() -> impl Iterator<Item = &'static SopSpec> {
-    specs().iter()
-}
-
-pub fn registry() -> OpRegistry {
-    let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
-    r
 }

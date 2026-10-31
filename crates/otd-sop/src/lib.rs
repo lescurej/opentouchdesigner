@@ -260,15 +260,15 @@ impl SopHost {
 }
 
 impl Cooker for SopHost {
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<otd_core::CookOutput, CookError> {
         if graph.get(id).map(|n| n.family) != Some(Family::Sop) {
-            return Ok(());
+            return Ok(otd_core::CookOutput::Updated);
         }
         let SopHost { engine, store } = self;
         let eval = ctx.eval_ctx();
         let geo = engine.cook_node(graph, id, ctx, &eval, store)?;
         store.insert(id, geo);
-        Ok(())
+        Ok(otd_core::CookOutput::Updated)
     }
 }
 

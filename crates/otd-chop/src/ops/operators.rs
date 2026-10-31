@@ -1,159 +1,17 @@
-//! The CHOP operator table.
-//!
-//! Same shape as the TOP table in `otd-gpu`: one cook function and one entry
-//! per operator, so breadth stays cheap (PLAN.md §6).
-//!
-//! Two things differ from TOPs. CHOPs are **stateful** — a Lag, a Speed, a
-//! Trigger all carry values across frames — so every node gets an [`OpState`]
-//! scratchpad. And they are **time sliced**: a generator emits the samples
-//! covering the elapsed frame interval rather than a fixed buffer.
-
-use std::sync::OnceLock;
-
 use otd_core::indexmap::IndexMap;
-use otd_core::{
-    Connector, CookContext, Crossing, Crossings, EvalContext, Family, Node, OpDef, OpRegistry,
-    Param, Value,
-};
+use otd_core::{Crossing, EvalContext, Param};
 
 use crate::data::{CONTROL_RATE, Channel, ChopData, slice_len, slice_times};
-use crate::io::Io;
 
-/// Per-node scratch that survives between cooks.
-#[derive(Clone, Debug, Default)]
-pub struct OpState {
-    /// Continuous values — filter memory, accumulators, envelope levels.
-    pub f: Vec<f32>,
-    /// Discrete values — envelope stage, counters.
-    pub i: Vec<i64>,
-    /// The previous frame's last input sample, for edge detection.
-    pub prev: Vec<f32>,
-}
-
-impl OpState {
-    fn fit(&mut self, n: usize) {
-        self.f.resize(n, 0.0);
-        self.i.resize(n, 0);
-        self.prev.resize(n, 0.0);
-    }
-}
-
-pub struct ChopCtx<'a> {
-    pub graph: &'a otd_core::Graph,
-    pub id: otd_core::NodeId,
-    pub node: &'a Node,
-    pub eval: &'a EvalContext<'a>,
-    pub time: &'a CookContext,
-    /// One entry per declared input; unconnected inputs are empty.
-    pub inputs: Vec<ChopData>,
-    /// Inputs that came from another family, for the converter operators.
-    /// Same indexing as `inputs`; `None` for every ordinary CHOP input.
-    pub foreign: Crossings,
-    pub state: &'a mut OpState,
-    pub io: &'a mut Io,
-    pub path: &'a str,
-}
-
-impl ChopCtx<'_> {
-    pub fn val(&self, key: &str) -> Value {
-        self.node
-            .param(key)
-            .map(|p| p.eval(self.eval))
-            .unwrap_or(Value::Float(0.0))
-    }
-    pub fn f(&self, key: &str) -> f32 {
-        self.val(key).as_f32()
-    }
-    pub fn i(&self, key: &str) -> i64 {
-        self.val(key).as_i64()
-    }
-    pub fn b(&self, key: &str) -> bool {
-        self.val(key).as_bool()
-    }
-    pub fn s(&self, key: &str) -> String {
-        self.val(key).as_str()
-    }
-    pub fn menu(&self, key: &str) -> usize {
-        let Some(param) = self.node.param(key) else {
-            return 0;
-        };
-        let chosen = param.eval(self.eval).as_str();
-        param
-            .menu
-            .as_ref()
-            .and_then(|items| items.iter().position(|i| *i == chosen))
-            .unwrap_or(0)
-    }
-    /// The foreign-family input in a slot, if one is wired there.
-    pub fn foreign(&self, index: usize) -> Option<&Crossing> {
-        self.foreign.get(index).and_then(|c| c.as_ref())
-    }
-    pub fn input(&self, index: usize) -> &ChopData {
-        static EMPTY: OnceLock<ChopData> = OnceLock::new();
-        self.inputs
-            .get(index)
-            .unwrap_or_else(|| EMPTY.get_or_init(ChopData::empty))
-    }
-    /// The sample rate a generator should run at.
-    pub fn rate(&self) -> f64 {
-        let r = self.f("rate") as f64;
-        if r > 0.0 { r } else { CONTROL_RATE }
-    }
-}
-
-pub struct ChopSpec {
-    pub def: OpDef,
-    pub cook: fn(&mut ChopCtx) -> ChopData,
-}
-
-macro_rules! params {
-    ($($key:expr => $param:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut m: IndexMap<String, Param> = IndexMap::new();
-        $( m.insert($key.into(), $param); )*
-        m
-    }};
-}
-
-fn no_params() -> IndexMap<String, Param> {
-    params! {}
-}
-
-fn with_rate(mut m: IndexMap<String, Param>) -> IndexMap<String, Param> {
-    m.insert(
-        "rate".into(),
-        Param::float(CONTROL_RATE)
-            .with_label("Sample Rate")
-            .with_range(1.0, 48000.0),
-    );
-    m
-}
-
-/// Copy an input's shape, applying `f` to every sample of every channel.
-fn map_samples(input: &ChopData, mut f: impl FnMut(usize, usize, f32) -> f32) -> ChopData {
-    let channels = input
-        .channels
-        .iter()
-        .enumerate()
-        .map(|(ci, c)| Channel {
-            name: c.name.clone(),
-            samples: c
-                .samples
-                .iter()
-                .enumerate()
-                .map(|(si, v)| f(ci, si, *v))
-                .collect(),
-        })
-        .collect();
-    ChopData::new(channels, input.sample_rate, input.time_sliced)
-}
+use super::helpers::*;
+use super::ChopCtx;
 
 // ------------------------------------------------------------- constant
 
 pub const CONSTANT: &str = "constantCHOP";
 pub const CONSTANT_MAX_ROWS: i64 = 64;
 
-fn params_constant() -> IndexMap<String, Param> {
+pub(crate) fn params_constant() -> IndexMap<String, Param> {
     let mut m = IndexMap::new();
     m.insert(
         "rows".into(),
@@ -180,7 +38,7 @@ fn params_constant() -> IndexMap<String, Param> {
     with_rate(m)
 }
 
-fn cook_constant(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_constant(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
     let channels = if c.node.param("rows").is_some() {
@@ -191,7 +49,7 @@ fn cook_constant(c: &mut ChopCtx) -> ChopData {
     ChopData::new(channels, rate, true)
 }
 
-fn cook_constant_rows(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
+pub(crate) fn cook_constant_rows(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
     let rows = c.i("rows").clamp(1, CONSTANT_MAX_ROWS) as usize;
     let mut channels = Vec::new();
     for i in 0..rows {
@@ -206,7 +64,7 @@ fn cook_constant_rows(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
     channels
 }
 
-fn cook_constant_legacy(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
+pub(crate) fn cook_constant_legacy(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
     let name = c.s("name");
     let count = otd_core::channel_count_from_name(&name);
     let names = otd_core::expand_channel_names(&name, count);
@@ -220,8 +78,35 @@ fn cook_constant_legacy(c: &ChopCtx<'_>, n: usize) -> Vec<Channel> {
 // ----------------------------------------------------------- parameter
 
 pub const PARAMETER: &str = "parameterCHOP";
+pub const INFO: &str = "infoCHOP";
 
-fn params_parameter() -> IndexMap<String, Param> {
+pub(crate) fn params_info() -> IndexMap<String, Param> {
+    params! {
+        "op" => Param::str("..").with_label("Operator").as_path_ref(),
+    }
+}
+
+pub(crate) fn cook_info(c: &mut ChopCtx) -> ChopData {
+    let Some(info) = c.foreign.first().and_then(|x| x.as_ref()) else {
+        return ChopData::empty();
+    };
+    let Some(pairs) = info.as_info() else {
+        return ChopData::empty();
+    };
+    c.state.fit(pairs.len());
+    let channels: Vec<Channel> = pairs
+        .iter()
+        .enumerate()
+        .map(|(ci, (name, value))| {
+            let end = *value;
+            c.state.prev[ci] = end;
+            Channel::new(name.clone(), vec![end])
+        })
+        .collect();
+    ChopData::new(channels, CONTROL_RATE, false)
+}
+
+pub(crate) fn params_parameter() -> IndexMap<String, Param> {
     params! {
         "op" => Param::str("..").with_label("Operator").as_path_ref(),
         "parameters" => Param::str("value").with_label("Parameters"),
@@ -241,7 +126,7 @@ fn resolve_op_path(c: &ChopCtx<'_>, path: &str) -> Option<otd_core::NodeId> {
     }
 }
 
-fn cook_parameter(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_parameter(c: &mut ChopCtx) -> ChopData {
     let watch = match resolve_op_path(c, &c.s("op")) {
         Some(id) => id,
         None => return ChopData::empty(),
@@ -284,7 +169,7 @@ fn cook_parameter(c: &mut ChopCtx) -> ChopData {
 
 // ------------------------------------------------------------------ LFO
 
-fn params_lfo() -> IndexMap<String, Param> {
+pub(crate) fn params_lfo() -> IndexMap<String, Param> {
     with_rate(params! {
         "type" => Param::menu("sine", &["sine", "triangle", "ramp", "square", "pulse"])
             .with_label("Type"),
@@ -324,7 +209,7 @@ fn wave(kind: usize, phase: f32, pulse_width: f32) -> f32 {
     }
 }
 
-fn cook_lfo(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_lfo(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
     let (kind, freq, amp, offset, phase, pw) = (
@@ -358,7 +243,7 @@ chan1      0     0      smooth
 chan1      1     1      smooth
 ";
 
-fn params_animation() -> IndexMap<String, Param> {
+pub(crate) fn params_animation() -> IndexMap<String, Param> {
     with_rate(params! {
         "keys" => Param::str(DEFAULT_KEYS).with_label("Keys"),
         "play" => Param::menu("timeline", &["timeline", "loop", "hold"]).with_label("Play"),
@@ -367,7 +252,7 @@ fn params_animation() -> IndexMap<String, Param> {
     })
 }
 
-fn cook_animation(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_animation(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
     let (curves, _) = crate::anim::Curves::parse(&c.s("keys"));
@@ -415,17 +300,95 @@ fn cook_animation(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- noise
 
-fn params_noise() -> IndexMap<String, Param> {
+pub(crate) fn params_noise() -> IndexMap<String, Param> {
     with_rate(params! {
-        "type" => Param::menu("smooth", &["smooth", "random"]).with_label("Type"),
-        "name" => Param::str("noise").with_label("Name"),
-        "length" => Param::int(600).with_label("Length").with_range(1.0, 8192.0),
+        "type" => Param::menu("sparse", &["sparse", "hermite", "harmonic", "brownian", "random", "alligator"]).with_label("Type"),
+        "channelname" => Param::str("chan1").with_label("Channel Names"),
+        "start" => Param::float(0.0).with_label("Start"),
+        "startunit" => Param::menu("seconds", &["seconds", "frames", "samples"]).with_label("Start Unit"),
+        "end" => Param::float(10.0).with_label("End"),
+        "endunit" => Param::menu("seconds", &["seconds", "frames", "samples"]).with_label("End Unit"),
         "timeslice" => Param::bool(false).with_label("Time Slice"),
-        "period" => Param::float(1.0).with_label("Period").with_range(0.01, 10.0),
+        "period" => Param::float(1.0).with_label("Period").with_range(0.0, 10.0),
+        "periodunit" => Param::menu("seconds", &["seconds", "frames", "samples"]).with_label("Period Unit"),
+        "harmon" => Param::int(0).with_label("Harmonics").with_range(0.0, 20.0),
+        "spread" => Param::float(2.0).with_label("Harmonic Spread").with_range(1.0, 4.0),
+        "rough" => Param::float(0.5).with_label("Roughness").with_range(0.0, 1.0),
         "amplitude" => Param::float(1.0).with_label("Amplitude").with_range(0.0, 4.0),
         "offset" => Param::float(0.0).with_label("Offset").with_range(-2.0, 2.0),
         "seed" => Param::float(0.0).with_label("Seed"),
     })
+}
+
+fn unit_to_seconds(val: f64, unit: usize, rate: f64, fps: f64) -> f64 {
+    match unit {
+        1 => val / fps.max(1e-6),
+        2 => val / rate.max(1e-6),
+        _ => val,
+    }
+}
+
+fn noise_channel_field(c: &ChopCtx) -> String {
+    let cn = c.s("channelname");
+    if !cn.trim().is_empty() {
+        return cn;
+    }
+    let legacy = c.s("name");
+    if !legacy.trim().is_empty() {
+        return legacy;
+    }
+    "chan1".into()
+}
+
+fn noise_type_index(c: &ChopCtx) -> usize {
+    let chosen = c
+        .node
+        .param("type")
+        .map(|p| p.eval(c.eval).as_str())
+        .unwrap_or_default();
+    match chosen.as_str() {
+        "smooth" => 0,
+        "sparse" => 0,
+        "hermite" => 1,
+        "harmonic" | "harmonic summation" => 2,
+        "brownian" => 3,
+        "random" => 4,
+        "alligator" => 5,
+        _ => c.menu("type"),
+    }
+}
+
+fn noise_period_seconds(c: &ChopCtx, rate: f64) -> f32 {
+    let p = c.f("period");
+    if noise_type_index(c) == 4 && p <= 0.0 {
+        return 0.0;
+    }
+    let p = p.max(1e-6);
+    match c.menu("periodunit") {
+        1 => (p as f64 / c.time.fps.max(1e-6)) as f32,
+        2 => (p as f64 / rate.max(1e-6)) as f32,
+        _ => p,
+    }
+}
+
+fn noise_sample_count(c: &ChopCtx, rate: f64) -> usize {
+    if c.node.param("start").is_some() {
+        let start = unit_to_seconds(c.f("start") as f64, c.menu("startunit"), rate, c.time.fps);
+        let end = unit_to_seconds(c.f("end") as f64, c.menu("endunit"), rate, c.time.fps);
+        let secs = (end - start).max(0.0);
+        ((secs * rate).round() as usize).clamp(1, 8192)
+    } else {
+        c.i("length").clamp(1, 8192) as usize
+    }
+}
+
+fn noise_start_seconds(c: &ChopCtx) -> f64 {
+    let rate = c.rate();
+    if c.node.param("start").is_some() {
+        unit_to_seconds(c.f("start") as f64, c.menu("startunit"), rate, c.time.fps)
+    } else {
+        0.0
+    }
 }
 
 fn hash1(x: i64) -> f32 {
@@ -445,42 +408,128 @@ fn value_noise(t: f32, seed: i64) -> f32 {
     a + (b - a) * u
 }
 
-fn cook_noise(c: &mut ChopCtx) -> ChopData {
+fn hermite_noise(t: f32, seed: i64) -> f32 {
+    let i = t.floor() as i64;
+    hash1(i + seed * 7919)
+}
+
+fn noise_octaves(
+    t: f32,
+    seed: i64,
+    harmonics: i32,
+    rough: f32,
+    spread: f32,
+    sample: fn(f32, i64) -> f32,
+) -> f32 {
+    let hmax = harmonics.max(0);
+    if hmax == 0 {
+        return sample(t, seed);
+    }
+    let mut amp = 1.0f32;
+    let mut freq = 1.0f32;
+    let mut sum = 0.0f32;
+    let mut norm = 0.0f32;
+    for h in 0..=hmax {
+        sum += amp * sample(t * freq, seed + h as i64 * 997);
+        norm += amp;
+        amp *= rough.clamp(0.0, 1.0);
+        freq *= spread.max(1.0);
+    }
+    if norm > 0.0 {
+        sum / norm
+    } else {
+        sample(t, seed)
+    }
+}
+
+fn alligator_noise(t: f32, seed: i64) -> f32 {
+    hash1(t.floor() as i64 + seed * 7919)
+}
+
+fn noise_sample(
+    t_sec: f64,
+    period_sec: f32,
+    seed: i64,
+    kind: usize,
+    harmonics: i32,
+    rough: f32,
+    spread: f32,
+    white: &mut u64,
+) -> f32 {
+    if kind == 4 {
+        if period_sec <= 0.0 {
+            *white = white.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let h = (*white >> 32) as i64 ^ seed;
+            return hash1(h);
+        }
+        let x = (t_sec as f32) / period_sec;
+        return hash1((x * 1_000_000.0) as i64 + seed);
+    }
+    if period_sec <= 0.0 {
+        return 0.0;
+    }
+    let x = (t_sec as f32) / period_sec;
+    match kind {
+        1 => noise_octaves(x, seed, harmonics, rough, spread, hermite_noise),
+        2 => noise_octaves(x, seed, harmonics, rough, spread, value_noise),
+        3 => noise_octaves(x, seed, harmonics, rough, spread, value_noise),
+        5 => alligator_noise(x, seed),
+        _ => noise_octaves(x, seed, harmonics, rough, spread, value_noise),
+    }
+}
+
+pub(crate) fn cook_noise(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let time_slice = c.b("timeslice");
     let n = if time_slice {
         slice_len(rate, c.time)
     } else {
-        c.i("length").clamp(1, 8192) as usize
+        noise_sample_count(c, rate)
     };
-    let name = c.s("name");
-    let count = otd_core::channel_count_from_name(&name);
-    let (kind, period, amp, offset, seed) = (
-        c.menu("type"),
-        c.f("period").max(1e-4),
-        c.f("amplitude"),
-        c.f("offset"),
-        c.f("seed") as i64,
-    );
-    let names = otd_core::expand_channel_names(&name, count);
-    let times: Vec<f64> = if time_slice {
-        slice_times(c.time, n).collect()
+    let names = otd_core::expand_channel_name_field(&noise_channel_field(c));
+    c.state.fit(names.len());
+    let kind = noise_type_index(c);
+    let period_sec = noise_period_seconds(c, rate);
+    let amp = c.f("amplitude");
+    let offset = c.f("offset");
+    let base_seed = c.f("seed") as i64;
+    let harmonics = c.i("harmon") as i32;
+    let rough = c.f("rough");
+    let spread = c.f("spread");
+    let t0 = if time_slice {
+        c.time.time - c.time.dt
     } else {
-        (0..n).map(|i| i as f64 / rate.max(1e-6)).collect()
+        noise_start_seconds(c)
     };
+
     let channels = names
         .into_iter()
         .enumerate()
         .map(|(ch, name)| {
-            let samples = times
-                .iter()
-                .map(|t| {
-                    let x = (*t as f32) / period;
-                    let v = if kind == 1 {
-                        hash1((x * 1_000_000.0) as i64 + seed + ch as i64 * 104_729)
+            let seed = otd_core::channel_seed_for_name(base_seed, &name, ch);
+            let mut brown = 0.0f32;
+            let mut white = seed as u64 ^ 0x9e3779b97f4a7c15;
+            let samples: Vec<f32> = (0..n)
+                .map(|i| {
+                    let t = if time_slice {
+                        t0 + (i + 1) as f64 * c.time.dt / n.max(1) as f64
                     } else {
-                        value_noise(x, seed + ch as i64 * 31)
+                        t0 + i as f64 / rate.max(1e-6)
                     };
+                    let mut v = noise_sample(
+                        t,
+                        period_sec,
+                        seed,
+                        kind,
+                        harmonics,
+                        rough,
+                        spread,
+                        &mut white,
+                    );
+                    if kind == 3 {
+                        brown += v * (1.0 / rate.max(1.0) as f32);
+                        v = brown;
+                    }
                     v * amp + offset
                 })
                 .collect();
@@ -492,7 +541,7 @@ fn cook_noise(c: &mut ChopCtx) -> ChopData {
 
 // -------------------------------------------------------------- pattern
 
-fn params_pattern() -> IndexMap<String, Param> {
+pub(crate) fn params_pattern() -> IndexMap<String, Param> {
     params! {
         "type" => Param::menu("ramp", &["ramp", "sine", "triangle", "square", "gaussian"])
             .with_label("Type"),
@@ -505,7 +554,7 @@ fn params_pattern() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_pattern(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_pattern(c: &mut ChopCtx) -> ChopData {
     let len = c.i("length").clamp(1, 4096) as usize;
     let (kind, periods, amp, offset, phase) = (
         c.menu("type"),
@@ -566,7 +615,7 @@ const MATH_ALIGN: &[&str] = &[
     "squash",
 ];
 
-fn params_math() -> IndexMap<String, Param> {
+pub(crate) fn params_math() -> IndexMap<String, Param> {
     params! {
         "preop" => Param::menu("off", MATH_UNARY)
             .with_label("Channel Pre OP")
@@ -840,7 +889,7 @@ fn math_finish_sample(
     v
 }
 
-fn cook_math(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_math(c: &mut ChopCtx) -> ChopData {
     let preop = c.menu("preop");
     let chanop = c.menu("chanop");
     let chopop = c.menu("combine");
@@ -915,7 +964,7 @@ fn cook_math(c: &mut ChopCtx) -> ChopData {
 
 // ------------------------------------------------------------------ lag
 
-fn params_lag() -> IndexMap<String, Param> {
+pub(crate) fn params_lag() -> IndexMap<String, Param> {
     params! {
         "lagup" => Param::float(0.1).with_label("Lag Up (s)").with_range(0.0, 2.0),
         "lagdown" => Param::float(0.1).with_label("Lag Down (s)").with_range(0.0, 2.0),
@@ -931,7 +980,7 @@ fn lag_alpha(tau: f32, sample_rate: f64) -> f32 {
     1.0 - (-dt / tau).exp()
 }
 
-fn cook_lag(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_lag(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     let (up, down) = (c.f("lagup"), c.f("lagdown"));
@@ -958,14 +1007,14 @@ fn cook_lag(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- filter
 
-fn params_filter() -> IndexMap<String, Param> {
+pub(crate) fn params_filter() -> IndexMap<String, Param> {
     params! {
         "type" => Param::menu("lowpass", &["lowpass", "movingaverage"]).with_label("Type"),
         "width" => Param::float(0.2).with_label("Width (s)").with_range(0.0, 4.0),
     }
 }
 
-fn cook_filter(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_filter(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     let kind = c.menu("type");
@@ -1015,7 +1064,7 @@ fn cook_filter(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- logic
 
-fn params_logic() -> IndexMap<String, Param> {
+pub(crate) fn params_logic() -> IndexMap<String, Param> {
     params! {
         "convert" => Param::menu(
             "nonzero",
@@ -1027,7 +1076,7 @@ fn params_logic() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_logic(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_logic(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let (convert, threshold, invert, combine_op) = (
         c.menu("convert"),
@@ -1071,7 +1120,7 @@ fn cook_logic(c: &mut ChopCtx) -> ChopData {
 
 // -------------------------------------------------------------- trigger
 
-fn params_trigger() -> IndexMap<String, Param> {
+pub(crate) fn params_trigger() -> IndexMap<String, Param> {
     params! {
         "threshold" => Param::float(0.5).with_label("Threshold"),
         "attack" => Param::float(0.05).with_label("Attack (s)").with_range(0.0, 2.0),
@@ -1086,7 +1135,7 @@ const STAGE_ATTACK: i64 = 1;
 const STAGE_SUSTAIN: i64 = 2;
 const STAGE_RELEASE: i64 = 3;
 
-fn cook_trigger(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_trigger(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     let dt = 1.0 / rate as f32;
@@ -1152,7 +1201,7 @@ fn cook_trigger(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- timer
 
-fn params_timer() -> IndexMap<String, Param> {
+pub(crate) fn params_timer() -> IndexMap<String, Param> {
     with_rate(params! {
         "length" => Param::float(10.0).with_label("Length (s)").with_range(0.1, 600.0),
         "cycle" => Param::bool(true).with_label("Cycle"),
@@ -1160,7 +1209,7 @@ fn params_timer() -> IndexMap<String, Param> {
     })
 }
 
-fn cook_timer(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_timer(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
     let dt = (c.time.dt / n as f64) as f32;
@@ -1212,7 +1261,7 @@ fn cook_timer(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- speed
 
-fn params_speed() -> IndexMap<String, Param> {
+pub(crate) fn params_speed() -> IndexMap<String, Param> {
     params! {
         "gain" => Param::float(1.0).with_label("Gain").with_range(-4.0, 4.0),
         "initial" => Param::float(0.0).with_label("Initial Value"),
@@ -1223,7 +1272,7 @@ fn params_speed() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_speed(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_speed(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     let dt = 1.0 / rate as f32;
@@ -1264,7 +1313,7 @@ fn cook_speed(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- count
 
-fn params_count() -> IndexMap<String, Param> {
+pub(crate) fn params_count() -> IndexMap<String, Param> {
     params! {
         "threshold" => Param::float(0.5).with_label("Threshold"),
         "edge" => Param::menu("rising", &["rising", "falling", "both"]).with_label("Edge"),
@@ -1275,7 +1324,7 @@ fn params_count() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_count(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_count(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let (threshold, edge, reset, limit, lo, hi) = (
         c.f("threshold"),
@@ -1326,7 +1375,7 @@ fn cook_count(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- select
 
-fn params_select() -> IndexMap<String, Param> {
+pub(crate) fn params_select() -> IndexMap<String, Param> {
     params! {
         "channels" => Param::str("*").with_label("Channel Names"),
         "rename" => Param::str("").with_label("Rename To"),
@@ -1338,7 +1387,7 @@ pub fn name_matches(pattern: &str, name: &str) -> bool {
     otd_core::pattern_matches_channel(pattern, name)
 }
 
-fn cook_select(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_select(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let pattern = c.s("channels");
     let rename = c.s("rename");
@@ -1358,7 +1407,7 @@ fn cook_select(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- merge
 
-fn cook_merge(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_merge(c: &mut ChopCtx) -> ChopData {
     let a = c.input(0).clone();
     let b = c.input(1).clone();
     let len = a.num_samples().max(b.num_samples());
@@ -1392,13 +1441,13 @@ fn cook_merge(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- switch
 
-fn params_switch() -> IndexMap<String, Param> {
+pub(crate) fn params_switch() -> IndexMap<String, Param> {
     params! {
         "index" => Param::float(0.0).with_label("Index").with_range(0.0, 1.0),
     }
 }
 
-fn cook_switch(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_switch(c: &mut ChopCtx) -> ChopData {
     let index = c.f("index");
     if index >= 0.5 {
         c.input(1).clone()
@@ -1409,13 +1458,13 @@ fn cook_switch(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------------- null
 
-fn cook_null(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_null(c: &mut ChopCtx) -> ChopData {
     c.input(0).clone()
 }
 
 // ---------------------------------------------------------------- delay
 
-fn params_delay() -> IndexMap<String, Param> {
+pub(crate) fn params_delay() -> IndexMap<String, Param> {
     params! {
         "delay" => Param::float(0.25).with_label("Delay (s)").with_range(0.0, 10.0),
         "mix" => Param::float(1.0).with_label("Mix").with_range(0.0, 1.0),
@@ -1429,7 +1478,7 @@ fn params_delay() -> IndexMap<String, Param> {
 /// makes this a CHOP rather than a parameter trick: the delay is in *samples*
 /// of the input's own rate, so the same node delays a 60 Hz control channel
 /// and a 48 kHz audio channel by the same wall-clock time.
-fn cook_delay(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_delay(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     let want = ((c.f("delay") as f64) * rate).round().max(0.0) as usize;
@@ -1476,7 +1525,7 @@ fn cook_delay(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- trail
 
-fn params_trail() -> IndexMap<String, Param> {
+pub(crate) fn params_trail() -> IndexMap<String, Param> {
     params! {
         "window" => Param::float(2.0).with_label("Window (s)").with_range(0.05, 60.0),
     }
@@ -1487,7 +1536,7 @@ fn params_trail() -> IndexMap<String, Param> {
 /// The ring lives in the float scratch like Delay's, but the output is the
 /// whole history rather than one late sample — which is what a waveform
 /// line or a per-sample instance layout wants to draw.
-fn cook_trail(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_trail(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let rate = input.sample_rate.max(1.0);
     // ponytail: 65536 samples per channel caps a 48 kHz trail at ~1.4 s.
@@ -1514,7 +1563,7 @@ fn cook_trail(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- spring
 
-fn params_spring() -> IndexMap<String, Param> {
+pub(crate) fn params_spring() -> IndexMap<String, Param> {
     params! {
         "spring" => Param::float(80.0).with_label("Spring Constant").with_range(0.0, 1000.0),
         "damping" => Param::float(6.0).with_label("Damping").with_range(0.0, 100.0),
@@ -1527,7 +1576,7 @@ fn params_spring() -> IndexMap<String, Param> {
 /// every frame. Position is `state.f`, velocity is `state.prev`, and
 /// `state.i` marks a channel as started so the first cook begins at rest on
 /// the input instead of flying in from zero.
-fn cook_spring(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_spring(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let dt = 1.0 / input.sample_rate.max(1.0) as f32;
     let (k, d) = (c.f("spring").max(0.0), c.f("damping").max(0.0));
@@ -1558,7 +1607,7 @@ fn cook_spring(c: &mut ChopCtx) -> ChopData {
 
 // ------------------------------------------------------------------ fan
 
-fn params_fan() -> IndexMap<String, Param> {
+pub(crate) fn params_fan() -> IndexMap<String, Param> {
     params! {
         "operation" => Param::menu("fanout", &["fanout", "fanin"]).with_label("Operation"),
         "channels" => Param::int(4).with_label("Channels (fan out)").with_range(1.0, 64.0),
@@ -1568,7 +1617,7 @@ fn params_fan() -> IndexMap<String, Param> {
 /// Fan out: one index channel becomes `chan0..chanN-1`, 1 where the rounded
 /// index matches. Fan in: many channels become `chan1`, the index of the
 /// first one above zero, or -1 when none is.
-fn cook_fan(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_fan(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let n = input.channels.first().map_or(1, |ch| ch.samples.len()).max(1);
     let channels = if c.menu("operation") == 0 {
@@ -1602,7 +1651,7 @@ fn cook_fan(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------- expression
 
-fn params_expression() -> IndexMap<String, Param> {
+pub(crate) fn params_expression() -> IndexMap<String, Param> {
     params! {
         "expr" => Param::str("v").with_label("Expression"),
     }
@@ -1618,7 +1667,7 @@ fn params_expression() -> IndexMap<String, Param> {
 /// the difference between an operator you can put on an audio-rate channel and
 /// one you cannot: parsing 512 times a frame would cost more than the
 /// arithmetic by two orders of magnitude.
-fn cook_expression(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_expression(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let source = c.s("expr");
     let Ok(expr) = otd_core::Expr::parse(&source) else {
@@ -1655,7 +1704,7 @@ fn cook_expression(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- limit
 
-fn params_limit() -> IndexMap<String, Param> {
+pub(crate) fn params_limit() -> IndexMap<String, Param> {
     params! {
         "type" => Param::menu("clamp", &["clamp", "loop", "zigzag", "quantise"])
             .with_label("Type"),
@@ -1665,7 +1714,7 @@ fn params_limit() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_limit(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_limit(c: &mut ChopCtx) -> ChopData {
     let (lo, hi) = (c.f("min"), c.f("max"));
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     let span = (hi - lo).max(1e-6);
@@ -1692,7 +1741,7 @@ fn cook_limit(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- slope
 
-fn params_slope() -> IndexMap<String, Param> {
+pub(crate) fn params_slope() -> IndexMap<String, Param> {
     params! {
         "units" => Param::menu("persecond", &["persecond", "persample"])
             .with_label("Units"),
@@ -1700,7 +1749,7 @@ fn params_slope() -> IndexMap<String, Param> {
 }
 
 /// The derivative — the inverse of the Speed CHOP, which integrates.
-fn cook_slope(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_slope(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let scale = if c.menu("units") == 0 {
         input.sample_rate.max(1.0) as f32
@@ -1731,7 +1780,7 @@ fn cook_slope(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------------- hold
 
-fn params_hold() -> IndexMap<String, Param> {
+pub(crate) fn params_hold() -> IndexMap<String, Param> {
     params! {
         "threshold" => Param::float(0.5).with_label("Trigger Threshold").with_range(-10.0, 10.0),
     }
@@ -1740,7 +1789,7 @@ fn params_hold() -> IndexMap<String, Param> {
 /// Sample and hold: input 0's value is frozen until input 1 rises past the
 /// threshold. Two inputs rather than a parameter because the thing that says
 /// "now" is nearly always another channel — a beat, a MIDI note, a button.
-fn cook_hold(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_hold(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let trigger = c.input(1).clone();
     let threshold = c.f("threshold");
@@ -1778,7 +1827,7 @@ fn cook_hold(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- shuffle
 
-fn params_shuffle() -> IndexMap<String, Param> {
+pub(crate) fn params_shuffle() -> IndexMap<String, Param> {
     params! {
         "method" => Param::menu(
             "transpose",
@@ -1792,7 +1841,7 @@ fn params_shuffle() -> IndexMap<String, Param> {
 /// Transpose is the one that earns its keep: N channels of one sample become
 /// one channel of N samples, which is how a pile of separate values becomes
 /// something a CHOP to TOP or an instancing Geometry COMP can consume.
-fn cook_shuffle(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_shuffle(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let n = input.num_samples();
     let channels = match c.menu("method") {
@@ -1843,7 +1892,7 @@ fn cook_shuffle(c: &mut ChopCtx) -> ChopData {
 
 // ---------------------------------------------------------------- rename
 
-fn params_rename() -> IndexMap<String, Param> {
+pub(crate) fn params_rename() -> IndexMap<String, Param> {
     params! {
         "from" => Param::str("*").with_label("Rename Channels"),
         "to" => Param::str("chan[1-]").with_label("To"),
@@ -1853,7 +1902,7 @@ fn params_rename() -> IndexMap<String, Param> {
 /// Rename channels, TD's numbered-pattern style: `chan[1-]` names them
 /// `chan1`, `chan2`, … A plain name with no bracket renames every match to
 /// the same thing, which is what you want feeding a Merge.
-fn cook_rename(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_rename(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let from = c.s("from");
     let to = c.s("to");
@@ -1883,7 +1932,7 @@ fn cook_rename(c: &mut ChopCtx) -> ChopData {
 
 // --------------------------------------------------------------- analyze
 
-fn params_analyze() -> IndexMap<String, Param> {
+pub(crate) fn params_analyze() -> IndexMap<String, Param> {
     params! {
         "function" => Param::menu(
             "average",
@@ -1897,7 +1946,7 @@ fn params_analyze() -> IndexMap<String, Param> {
 /// A whole waveform is rarely what a parameter wants; one number that
 /// describes it usually is. Keeping the channel names means a downstream
 /// export still reads `ch('/analyze1', 'chan1')` and gets the summary.
-fn cook_analyze(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_analyze(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let func = c.menu("function");
     let channels = input
@@ -1927,7 +1976,7 @@ fn cook_analyze(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------------- cross
 
-fn params_cross() -> IndexMap<String, Param> {
+pub(crate) fn params_cross() -> IndexMap<String, Param> {
     params! {
         "cross" => Param::float(0.5).with_label("Cross").with_range(0.0, 1.0),
         "curve" => Param::menu("linear", &["linear", "equalpower", "smooth"])
@@ -1940,7 +1989,7 @@ fn params_cross() -> IndexMap<String, Param> {
 /// Equal power is the default worth knowing about: a linear crossfade between
 /// two uncorrelated signals dips ~3 dB in the middle, which is audible on
 /// audio and visible on anything driving brightness.
-fn cook_cross(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_cross(c: &mut ChopCtx) -> ChopData {
     let a = c.input(0).clone();
     let b = c.input(1).clone();
     let t = c.f("cross").clamp(0.0, 1.0);
@@ -1987,7 +2036,7 @@ fn sample_held(s: &[f32], i: usize) -> f32 {
 
 // -------------------------------------------------------------- resample
 
-fn params_resample() -> IndexMap<String, Param> {
+pub(crate) fn params_resample() -> IndexMap<String, Param> {
     params! {
         "length" => Param::int(64).with_label("Length (samples)").with_range(1.0, 8192.0),
         "interp" => Param::menu("linear", &["linear", "nearest"]).with_label("Interpolate"),
@@ -1995,7 +2044,7 @@ fn params_resample() -> IndexMap<String, Param> {
 }
 
 /// Change how many samples a buffer has, keeping its shape.
-fn cook_resample(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_resample(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let n = c.i("length").clamp(1, 8192) as usize;
     let nearest = c.menu("interp") == 1;
@@ -2031,40 +2080,17 @@ fn cook_resample(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------------- clock
 
-fn params_clock() -> IndexMap<String, Param> {
-    with_rate(params! {})
+pub(crate) fn params_clock() -> IndexMap<String, Param> {
+    crate::clock::params_clock()
 }
 
-/// Wall-clock time as channels: `second`, `minute`, `hour`, `frame`.
-///
-/// Distinct from the timeline on purpose. The timeline is the patch's clock
-/// and is scrubbable; this is the one that keeps running when the timeline is
-/// paused, which is what an installation that has to change at 9pm needs.
-fn cook_clock(c: &mut ChopCtx) -> ChopData {
-    let n = slice_len(c.rate(), c.time);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
-    let secs = now as i64;
-    let vals = [
-        (secs % 60) as f32,
-        ((secs / 60) % 60) as f32,
-        ((secs / 3600) % 24) as f32,
-        c.time.frame as f32,
-    ];
-    let names = ["second", "minute", "hour", "frame"];
-    let channels = names
-        .iter()
-        .zip(vals)
-        .map(|(name, v)| Channel::constant(*name, v, n))
-        .collect();
-    ChopData::new(channels, c.rate(), true)
+pub(crate) fn cook_clock(c: &mut ChopCtx) -> ChopData {
+    crate::clock::cook_clock(c)
 }
 
 // ------------------------------------------------------------------ beat
 
-fn params_beat() -> IndexMap<String, Param> {
+pub(crate) fn params_beat() -> IndexMap<String, Param> {
     with_rate(params! {
         "tempo" => Param::float(120.0).with_label("Tempo (BPM)").with_range(20.0, 300.0),
         "beatsperbar" => Param::int(4).with_label("Beats Per Bar").with_range(1.0, 32.0),
@@ -2077,7 +2103,7 @@ fn params_beat() -> IndexMap<String, Param> {
 /// Derived from the timeline's absolute time rather than from a counter, so a
 /// dropped frame does not put the beat permanently behind — the same reason
 /// the Animation CHOP and Movie File In are functions of time.
-fn cook_beat(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_beat(c: &mut ChopCtx) -> ChopData {
     let rate = c.rate();
     let n = slice_len(rate, c.time);
     let bps = (c.f("tempo") as f64 / 60.0).max(1e-6);
@@ -2117,7 +2143,7 @@ fn cook_beat(c: &mut ChopCtx) -> ChopData {
 
 // ----------------------------------------------------------------- panel
 
-fn params_panel() -> IndexMap<String, Param> {
+pub(crate) fn params_panel() -> IndexMap<String, Param> {
     params! {
         "ops" => Param::str("").with_label("Panel COMPs (paths)"),
     }
@@ -2134,7 +2160,7 @@ fn params_panel() -> IndexMap<String, Param> {
 /// Paths rather than a search: enumerating the graph is not something the
 /// narrow view a CHOP gets should be widened to allow, and naming what you
 /// want is a line of text.
-fn cook_panel(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_panel(c: &mut ChopCtx) -> ChopData {
     let paths = c.s("ops");
     let channels: Vec<Channel> = paths
         .split_whitespace()
@@ -2156,7 +2182,7 @@ fn cook_panel(c: &mut ChopCtx) -> ChopData {
 
 // -------------------------------------------------------- DAT to CHOP
 
-fn params_particles() -> IndexMap<String, Param> {
+pub(crate) fn params_particles() -> IndexMap<String, Param> {
     params! {
         "count" => Param::int(256).with_label("Particle Count").with_range(1.0, 4096.0),
         "emitx" => Param::float(0.5).with_label("Emitter X (0..1)").with_range(0.0, 1.0),
@@ -2169,7 +2195,7 @@ fn params_particles() -> IndexMap<String, Param> {
     }
 }
 
-fn cook_particles(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_particles(c: &mut ChopCtx) -> ChopData {
     let n = c.i("count").clamp(1, 4096) as usize;
     let lifetime = c.f("lifetime").clamp(0.1, 20.0);
     let (emitx, emity, speed, gravity) = (c.f("emitx"), c.f("emity"), c.f("speed"), c.f("gravity"));
@@ -2211,14 +2237,14 @@ fn cook_particles(c: &mut ChopCtx) -> ChopData {
         .zip(output).map(|(name, samples)| Channel::new(name, samples)).collect(), CONTROL_RATE, false)
 }
 
-fn params_blobtrack() -> IndexMap<String, Param> {
+pub(crate) fn params_blobtrack() -> IndexMap<String, Param> {
     params! {
         "threshold" => Param::float(0.5).with_label("Luminance Threshold").with_range(0.0, 1.0),
         "minarea" => Param::float(0.002).with_label("Minimum Frame Fraction").with_range(0.0, 1.0),
     }
 }
 
-fn cook_blobtrack(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_blobtrack(c: &mut ChopCtx) -> ChopData {
     let blob = match c.foreign(0) {
         Some(Crossing::Pixels { width, height, rgba }) => crate::tracking::largest(
             *width as usize, *height as usize, rgba, c.f("threshold"), c.f("minarea")),
@@ -2240,7 +2266,7 @@ fn cook_blobtrack(c: &mut ChopCtx) -> ChopData {
         CONTROL_RATE, false)
 }
 
-fn params_dat_to() -> IndexMap<String, Param> {
+pub(crate) fn params_dat_to() -> IndexMap<String, Param> {
     params! {
         "layout" => Param::menu("columns", &["columns", "rows"])
             .with_label("Channels From"),
@@ -2252,7 +2278,7 @@ fn params_dat_to() -> IndexMap<String, Param> {
 /// Numbers out of a table. A cue list, a CSV of positions, a JSON payload
 /// already flattened by a JSON DAT — all of them become channels here, which
 /// is the point of the DAT family being a family at all.
-fn cook_dat_to_chop(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_dat_to_chop(c: &mut ChopCtx) -> ChopData {
     let Some(rows) = c.foreign(0).and_then(|f| f.as_table()) else {
         return ChopData::empty();
     };
@@ -2324,7 +2350,7 @@ fn sanitise(raw: &str) -> String {
 
 // -------------------------------------------------------- SOP to CHOP
 
-fn params_sop_to() -> IndexMap<String, Param> {
+pub(crate) fn params_sop_to() -> IndexMap<String, Param> {
     params! {
         "attrs" => Param::str("P")
             .with_label("Attributes (P N uv Cd)"),
@@ -2337,7 +2363,7 @@ fn params_sop_to() -> IndexMap<String, Param> {
 /// decide where 256 things go, and the positions come back out here as the
 /// `tx`/`ty`/`tz` an instancing Geometry COMP reads — geometry driving
 /// geometry, without either end knowing about the other.
-fn cook_sop_to_chop(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_sop_to_chop(c: &mut ChopCtx) -> ChopData {
     let Some(points) = c.foreign(0) else {
         return ChopData::empty();
     };
@@ -2376,7 +2402,7 @@ fn cook_sop_to_chop(c: &mut ChopCtx) -> ChopData {
 
 // -------------------------------------------------------- TOP to CHOP
 
-fn params_top_to() -> IndexMap<String, Param> {
+pub(crate) fn params_top_to() -> IndexMap<String, Param> {
     params! {
         "active" => Param::bool(true).with_label("Active"),
         "layout" => Param::menu("rows", &["rows", "columns", "average", "image"])
@@ -2400,7 +2426,7 @@ fn params_top_to() -> IndexMap<String, Param> {
 ///    resolution. Put a Resolution TOP in front of it. Reading 1920×1080 back
 ///    every frame to get four numbers is the classic way to turn a 60 fps
 ///    patch into a 12 fps one.
-fn cook_top_to_chop(c: &mut ChopCtx) -> ChopData {
+pub(crate) fn cook_top_to_chop(c: &mut ChopCtx) -> ChopData {
     if !c.b("active") {
         return ChopData::empty();
     }
@@ -2478,461 +2504,4 @@ fn cook_top_to_chop(c: &mut ChopCtx) -> ChopData {
         .map(|(i, s)| Channel::new(names[i], s))
         .collect();
     ChopData::new(channels, CONTROL_RATE, false)
-}
-
-// ------------------------------------------------------------ the table
-
-pub const NULL: &str = "nullCHOP";
-/// A component's channel input, surfaced as a connector on its node.
-pub const IN: &str = "inCHOP";
-/// A component's channel output.
-pub const OUT: &str = "outCHOP";
-
-fn specs() -> &'static Vec<ChopSpec> {
-    static SPECS: OnceLock<Vec<ChopSpec>> = OnceLock::new();
-    SPECS.get_or_init(|| {
-        let mut v = vec![
-            spec_animated(
-                "particleCHOP", "Particle", &[],
-                "Stateful 2D particle emitter with velocity, gravity, lifetime and respawn. \
-                 tx/ty/tz are instance positions (6 scene units across); size/life fade to zero. \
-                 Emitter coordinates are normalized, origin top-left. Connect via geometryCOMP.instancechop; \
-                 set sx/sy/sz to size. Active stops births; existing particles finish. \
-                 Reset clears the simulation. CPU, at most 4096 particles; dt capped at 0.1s; no collisions or flocking.",
-                params_particles, cook_particles,
-            ),
-            spec(
-                "constantCHOP",
-                "Constant",
-                &[],
-                "Fixed values as channels.",
-                params_constant,
-                cook_constant,
-            ),
-            spec(
-                PARAMETER,
-                "Parameter",
-                &[],
-                "Another operator's parameter values as channels (does not cook that operator).",
-                params_parameter,
-                cook_parameter,
-            ),
-            spec_animated(
-                "lfoCHOP",
-                "LFO",
-                &[],
-                "A repeating waveform over time.",
-                params_lfo,
-                cook_lfo,
-            ),
-            spec_animated(
-                "animationCHOP",
-                "Animation",
-                &[],
-                "Keyframed curves over time.",
-                params_animation,
-                cook_animation,
-            ),
-            spec_animated(
-                "noiseCHOP",
-                "Noise",
-                &[],
-                "Smooth or random noise over time.",
-                params_noise,
-                cook_noise,
-            ),
-            spec(
-                "patternCHOP",
-                "Pattern",
-                &[],
-                "A fixed-length waveform buffer.",
-                params_pattern,
-                cook_pattern,
-            ),
-            spec(
-                "mathCHOP",
-                "Math",
-                &["a", "b"],
-                "Combine and scale channels.",
-                params_math,
-                cook_math,
-            ),
-            spec_animated(
-                "lagCHOP",
-                "Lag",
-                &["in"],
-                "Smooth a channel, with separate rise and fall times.",
-                params_lag,
-                cook_lag,
-            ),
-            spec_animated(
-                "filterCHOP",
-                "Filter",
-                &["in"],
-                "Low-pass or moving-average smoothing.",
-                params_filter,
-                cook_filter,
-            ),
-            spec(
-                "logicCHOP",
-                "Logic",
-                &["in"],
-                "Turn channels into on/off and combine them.",
-                params_logic,
-                cook_logic,
-            ),
-            spec_animated(
-                "triggerCHOP",
-                "Trigger",
-                &["in"],
-                "An attack/decay/sustain/release envelope per channel.",
-                params_trigger,
-                cook_trigger,
-            ),
-            spec_animated(
-                "timerCHOP",
-                "Timer",
-                &[],
-                "A running timer with fraction, seconds, cycles and done.",
-                params_timer,
-                cook_timer,
-            ),
-            spec_animated(
-                "speedCHOP",
-                "Speed",
-                &["in"],
-                "Integrate a channel: velocity becomes position.",
-                params_speed,
-                cook_speed,
-            ),
-            spec_animated(
-                "countCHOP",
-                "Count",
-                &["in"],
-                "Count threshold crossings.",
-                params_count,
-                cook_count,
-            ),
-            spec(
-                "selectCHOP",
-                "Select",
-                &["in"],
-                "Pick and rename channels.",
-                params_select,
-                cook_select,
-            ),
-            spec(
-                "mergeCHOP",
-                "Merge",
-                &["a", "b"],
-                "Put two CHOPs' channels side by side.",
-                no_params,
-                cook_merge,
-            ),
-            spec(
-                "switchCHOP",
-                "Switch",
-                &["0", "1"],
-                "Choose one of two inputs.",
-                params_switch,
-                cook_switch,
-            ),
-            spec(
-                NULL,
-                "Null",
-                &["in"],
-                "Pass-through. A stable name to export from.",
-                no_params,
-                cook_null,
-            ),
-            spec_animated(
-                "delayCHOP",
-                "Delay",
-                &["in"],
-                "Play a channel back later, with optional feedback.",
-                params_delay,
-                cook_delay,
-            ),
-            spec_animated(
-                "trailCHOP",
-                "Trail",
-                &["in"],
-                "The last few seconds of each channel as one buffer, oldest sample first — \
-                 draw a waveform, or lay out one instance per sample.",
-                params_trail,
-                cook_trail,
-            ),
-            spec_animated(
-                "springCHOP",
-                "Spring",
-                &["in"],
-                "Follow a channel like a mass on a spring: overshoot, wobble, then settle. \
-                 Raise damping to stop the wobble; raise the spring constant to follow faster.",
-                params_spring,
-                cook_spring,
-            ),
-            spec(
-                "fanCHOP",
-                "Fan",
-                &["in"],
-                "Fan out an index channel to one on/off channel per value (chan0..chanN-1), \
-                 or fan many channels in to the index of the first one above zero (-1 if none).",
-                params_fan,
-                cook_fan,
-            ),
-            spec_animated(
-                "expressionCHOP",
-                "Expression",
-                &["in"],
-                "Apply an expression to every sample. `v` is the sample.",
-                params_expression,
-                cook_expression,
-            ),
-            spec(
-                "limitCHOP",
-                "Limit",
-                &["in"],
-                "Clamp, wrap, fold or quantise a channel.",
-                params_limit,
-                cook_limit,
-            ),
-            spec_animated(
-                "slopeCHOP",
-                "Slope",
-                &["in"],
-                "The rate of change of a channel.",
-                params_slope,
-                cook_slope,
-            ),
-            spec_animated(
-                "holdCHOP",
-                "Hold",
-                &["in", "trigger"],
-                "Freeze input 1's value until input 2 fires.",
-                params_hold,
-                cook_hold,
-            ),
-            spec(
-                "shuffleCHOP",
-                "Shuffle",
-                &["in"],
-                "Rearrange the channel/sample grid — transpose, reverse, sequence.",
-                params_shuffle,
-                cook_shuffle,
-            ),
-            spec(
-                "renameCHOP",
-                "Rename",
-                &["in"],
-                "Rename channels by pattern.",
-                params_rename,
-                cook_rename,
-            ),
-            spec(
-                "analyzeCHOP",
-                "Analyze",
-                &["in"],
-                "Reduce each channel to one number.",
-                params_analyze,
-                cook_analyze,
-            ),
-            spec(
-                "crossCHOP",
-                "Cross",
-                &["a", "b"],
-                "Blend two inputs, with an equal-power option.",
-                params_cross,
-                cook_cross,
-            ),
-            spec(
-                "resampleCHOP",
-                "Resample",
-                &["in"],
-                "Change how many samples a buffer has, keeping its shape.",
-                params_resample,
-                cook_resample,
-            ),
-            spec_animated(
-                "panelCHOP",
-                "Panel",
-                &[],
-                "Panel widget values as channels.",
-                params_panel,
-                cook_panel,
-            ),
-            spec_animated(
-                "clockCHOP",
-                "Clock",
-                &[],
-                "Wall-clock time, which keeps running when the timeline is paused.",
-                params_clock,
-                cook_clock,
-            ),
-            spec_animated(
-                "beatCHOP",
-                "Beat",
-                &[],
-                "A tempo clock: ramp, pulse, count and bar.",
-                params_beat,
-                cook_beat,
-            ),
-            converter_spec(
-                "dattochopCHOP",
-                "DAT to CHOP",
-                Family::Dat,
-                "Columns or rows of a table, as channels.",
-                params_dat_to,
-                cook_dat_to_chop,
-            ),
-            converter_spec(
-                "soptochopCHOP",
-                "SOP to CHOP",
-                Family::Sop,
-                "Point attributes as channels, one sample per point.",
-                params_sop_to,
-                cook_sop_to_chop,
-            ),
-            // Animated: a readback has to happen every frame to be worth
-            // anything, and the source is a moving picture by assumption.
-            {
-                let mut s = converter_spec(
-                    "blobtrackCHOP", "Blob Track", Family::Top,
-                    "Largest connected bright region. Channels: present, count, x, y, area, width, height, vx, vy. \
-                     Coordinates and sizes are 0..1, origin top-left; velocity is frame-fractions/second. \
-                     CPU readback of last frame; downsample to 160x90 first. \
-                     Not person recognition or persistent identity: switching largest regions can jump. \
-                     A missing/empty input returns zero channels values.",
-                    params_blobtrack, cook_blobtrack,
-                );
-                s.def.time_dependent = true;
-                s
-            },
-            {
-                let mut s = converter_spec(
-                    "toptochopCHOP",
-                    "TOP to CHOP",
-                    Family::Top,
-                    "Pixels as channels r g b a. `image` reads every pixel (top row first, at most \
-                     128x128) and adds u/v positions, centred, v up — instance a Geometry COMP with \
-                     tx=u ty=v tz=g for a camera point cloud. Reads last frame; costs a GPU sync, \
-                     so put a Resolution TOP in front.",
-                    params_top_to,
-                    cook_top_to_chop,
-                );
-                s.def.time_dependent = true;
-                s
-            },
-            connector_spec(
-                IN,
-                "In",
-                &[],
-                "A channel input on this component's node.",
-                Connector::In,
-            ),
-            connector_spec(
-                OUT,
-                "Out",
-                &["in"],
-                "This component's channel output.",
-                Connector::Out,
-            ),
-        ];
-        v.extend(crate::io::specs());
-        v
-    })
-}
-
-/// Small helper so the table above reads as a table.
-pub(crate) fn spec(
-    type_name: &'static str,
-    label: &'static str,
-    inputs: &'static [&'static str],
-    summary: &'static str,
-    params: fn() -> IndexMap<String, Param>,
-    cook: fn(&mut ChopCtx) -> ChopData,
-) -> ChopSpec {
-    ChopSpec {
-        def: OpDef {
-            type_name,
-            label,
-            family: Family::Chop,
-            inputs,
-            input_families: &[],
-            summary,
-            time_dependent: false,
-            params,
-            connector: Connector::None,
-        },
-        cook,
-    }
-}
-
-/// The In and Out operators that give a component its channel connectors.
-/// An In has no wire of its own; the engine fills it from outside.
-pub(crate) fn connector_spec(
-    type_name: &'static str,
-    label: &'static str,
-    inputs: &'static [&'static str],
-    summary: &'static str,
-    connector: Connector,
-) -> ChopSpec {
-    let mut s = spec(type_name, label, inputs, summary, no_params, cook_null);
-    s.def.connector = connector;
-    s
-}
-
-/// A converter: one input, of somebody else's family.
-///
-/// The input is called `in` like any other, because from the patch's point of
-/// view it is one — the only thing that differs is which wires will land on
-/// it, and the graph enforces that from [`OpDef::input_families`].
-pub(crate) fn converter_spec(
-    type_name: &'static str,
-    label: &'static str,
-    from: Family,
-    summary: &'static str,
-    params: fn() -> IndexMap<String, Param>,
-    cook: fn(&mut ChopCtx) -> ChopData,
-) -> ChopSpec {
-    let mut s = spec(type_name, label, &["in"], summary, params, cook);
-    s.def.input_families = match from {
-        Family::Dat => &[Family::Dat],
-        Family::Sop => &[Family::Sop],
-        Family::Top => &[Family::Top],
-        Family::Mat => &[Family::Mat],
-        Family::Comp => &[Family::Comp],
-        Family::Chop => &[Family::Chop],
-    };
-    s
-}
-
-/// Same, for operators that must cook every frame — generators over time and
-/// anything reading a device.
-pub(crate) fn spec_animated(
-    type_name: &'static str,
-    label: &'static str,
-    inputs: &'static [&'static str],
-    summary: &'static str,
-    params: fn() -> IndexMap<String, Param>,
-    cook: fn(&mut ChopCtx) -> ChopData,
-) -> ChopSpec {
-    let mut s = spec(type_name, label, inputs, summary, params, cook);
-    s.def.time_dependent = true;
-    s
-}
-
-pub fn spec_for(type_name: &str) -> Option<&'static ChopSpec> {
-    specs().iter().find(|s| s.def.type_name == type_name)
-}
-
-pub fn all() -> impl Iterator<Item = &'static ChopSpec> {
-    specs().iter()
-}
-
-pub fn registry() -> OpRegistry {
-    let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
-    r
 }

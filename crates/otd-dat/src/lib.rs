@@ -10,8 +10,11 @@
 //! values: a DAT is text, and the operator reading it decides what the text
 //! means.
 
+pub mod callbacks;
 pub mod net;
 pub mod ops;
+pub mod udp;
+pub mod webserver;
 
 use otd_core::{
     ChannelSource, CookContext, CookError, Cooker, Crossings, EvalContext, Family, Graph, NodeId,
@@ -91,6 +94,77 @@ impl DatData {
             .and_then(|r| r.get(column))
             .map(|s| s.as_str())
     }
+
+    pub fn set_cell(&mut self, row: usize, col: usize, value: impl Into<String>) {
+        while self.rows.len() <= row {
+            self.rows.push(Vec::new());
+        }
+        while self.rows[row].len() <= col {
+            self.rows[row].push(String::new());
+        }
+        self.rows[row][col] = value.into();
+        if self.is_text && (row > 0 || col > 0 || self.rows.len() > 1) {
+            self.is_text = false;
+        }
+    }
+
+    pub fn clear_grid(&mut self) {
+        self.rows.clear();
+        if self.is_text {
+            self.rows.push(vec![String::new()]);
+        }
+    }
+
+    pub fn append_row(&mut self, cells: &[impl AsRef<str>]) {
+        self.is_text = false;
+        self.rows
+            .push(cells.iter().map(|c| c.as_ref().to_string()).collect());
+    }
+
+    pub fn append_col(&mut self, default: &str) {
+        self.is_text = false;
+        let target = self.num_cols().max(1);
+        if self.rows.is_empty() {
+            self.rows.push(vec![default.to_string()]);
+            return;
+        }
+        for row in &mut self.rows {
+            while row.len() < target {
+                row.push(String::new());
+            }
+            row.push(default.to_string());
+        }
+    }
+
+    pub fn insert_row(&mut self, index: usize, cells: &[impl AsRef<str>]) {
+        self.is_text = false;
+        let row: Vec<String> = cells.iter().map(|c| c.as_ref().to_string()).collect();
+        if index >= self.rows.len() {
+            self.rows.push(row);
+        } else {
+            self.rows.insert(index, row);
+        }
+    }
+
+    pub fn delete_row(&mut self, index: usize) {
+        if index < self.rows.len() {
+            self.rows.remove(index);
+        }
+    }
+
+    pub fn to_param_text(&self) -> String {
+        self.as_text()
+    }
+
+    pub fn apply_cell_write(grid: &mut Vec<Vec<String>>, row: usize, col: usize, value: &str) {
+        while grid.len() <= row {
+            grid.push(Vec::new());
+        }
+        while grid[row].len() <= col {
+            grid[row].push(String::new());
+        }
+        grid[row][col] = value.to_string();
+    }
 }
 
 /// Every DAT's most recent output.
@@ -140,6 +214,43 @@ pub trait ScriptHost {
     ) -> Result<bool, String> {
         Ok(false)
     }
+
+    fn webserver_http(
+        &self,
+        _source: &str,
+        _dat_name: &str,
+        _job: &webserver::HttpJob,
+        _ctx: &EvalContext,
+        _path: &str,
+    ) -> Result<webserver::HttpReply, String> {
+        Err("no Python interpreter in this build".into())
+    }
+
+    fn webserver_event(
+        &self,
+        _source: &str,
+        _func: &str,
+        _dat_name: &str,
+        _ctx: &EvalContext,
+        _path: &str,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn webserver_ws(
+        &self,
+        _source: &str,
+        _func: &str,
+        _dat_name: &str,
+        _client: &str,
+        _uri: Option<&str>,
+        _text: Option<&str>,
+        _binary: Option<&[u8]>,
+        _ctx: &EvalContext,
+        _path: &str,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 #[derive(Default)]
@@ -166,6 +277,20 @@ impl DatEngine {
     pub fn reset(&mut self) {
         self.status.clear();
         self.net.reset();
+    }
+
+    pub fn apply_udp_sends(&mut self, _graph: &Graph, sends: &[(String, Vec<u8>)]) -> usize {
+        let mut n = 0;
+        for (path, data) in sends {
+            let Some(out) = self.net.udp_out.get_mut(path) else {
+                continue;
+            };
+            if out.listener.send_to(data, out.target).is_ok() {
+                out.last_sent = Some(String::from_utf8_lossy(data).into_owned());
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Cook one DAT and return its contents.
@@ -254,15 +379,15 @@ impl DatHost {
 }
 
 impl Cooker for DatHost {
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<otd_core::CookOutput, CookError> {
         if graph.get(id).map(|n| n.family) != Some(Family::Dat) {
-            return Ok(());
+            return Ok(otd_core::CookOutput::Updated);
         }
         let DatHost { engine, store } = self;
         let eval = ctx.eval_ctx();
         let data = engine.cook_node(graph, id, ctx, &eval, store, None, Crossings::new())?;
         store.insert(id, data);
-        Ok(())
+        Ok(otd_core::CookOutput::Updated)
     }
 }
 
