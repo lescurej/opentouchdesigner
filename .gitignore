@@ -5,6 +5,7 @@
 # Rendered output from the headless example
 *.png
 !docs/**/*.png
+!examples/media/apple.png
 
 # API keys. Never committed — this repo is public, and a key in a git
 # history is a key that has to be rotated, not deleted.
@@ -12,4 +13,5 @@
 .env.*
 !.env.example
 dist/
+.cache/
 .DS_Store

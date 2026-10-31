@@ -15,22 +15,44 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/OpenTouchDesigner.app"
 DMG="$DIST/OpenTouchDesigner-$VERSION-macos.dmg"
+FETCH="$ROOT/scripts/fetch-bundled-python.sh"
 
 cd "$ROOT"
 rm -rf "$DIST"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 echo "==> building"
-# Native by default. A universal binary needs a universal *Python* to link
-# PyO3 against, and a stock Homebrew Python is one architecture — so
-# cross-linking fails on most machines with a linker error that has nothing
-# to do with this code. Opt in with OTD_UNIVERSAL=1 when you have both, and
-# get a clear message rather than a mystery when you do not.
 HOST="$(rustc -vV | awk '/^host:/ {print $2}')"
 BIN_APP=()
 BIN_CLI=()
+PY_RESOURCES=()
+
+python_rpath_subdir() {
+    local t="$1"
+    if [ "${OTD_UNIVERSAL:-0}" = "1" ]; then
+        case "$t" in
+            aarch64-apple-darwin) echo "python-aarch64" ;;
+            x86_64-apple-darwin) echo "python-x86_64" ;;
+            *) echo "python" ;;
+        esac
+    else
+        echo "python"
+    fi
+}
+
 build() {
     local t="$1"
+    local py_root
+    py_root="$("$FETCH" "$t")"
+    local subdir
+    subdir="$(python_rpath_subdir "$t")"
+    PY_RESOURCES+=("${py_root}:${subdir}")
+
+    export OTD_BUNDLE_PYTHON=1
+    export OTD_PYTHON_RPATH_SUBDIR="$subdir"
+    export PYO3_PYTHON="$py_root/bin/python3"
+    export RUSTFLAGS="-C link-arg=-Wl,-rpath,@executable_path/../Resources/${subdir}/lib -L ${py_root}/lib"
+
     cargo build --release --target "$t" -p otd-app -p otd-cli
     BIN_APP+=("target/$t/release/otd-app")
     BIN_CLI+=("target/$t/release/otd")
@@ -49,10 +71,27 @@ if [ "${OTD_UNIVERSAL:-0}" = "1" ]; then
 fi
 
 echo "==> bundling"
-# The headless runtime rides along: a show machine that has the editor should
-# have the thing that runs a patch without one.
 lipo -create "${BIN_APP[@]}" -output "$APP/Contents/MacOS/OpenTouchDesigner"
 lipo -create "${BIN_CLI[@]}" -output "$APP/Contents/MacOS/otd"
+
+for entry in "${PY_RESOURCES[@]}"; do
+    src="${entry%%:*}"
+    subdir="${entry##*:}"
+    dest="$APP/Contents/Resources/$subdir"
+    rm -rf "$dest"
+    cp -R "$src" "$dest"
+    echo "    python -> Contents/Resources/$subdir"
+done
+
+echo "==> verifying python link"
+for bin in OpenTouchDesigner otd; do
+    exe="$APP/Contents/MacOS/$bin"
+    if otool -L "$exe" | grep -qE '/opt/homebrew|/usr/local/Cellar'; then
+        echo "!! $bin still links to a build-machine Python — refusing to ship"
+        otool -L "$exe" | grep -i python || true
+        exit 1
+    fi
+done
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -90,7 +129,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "==> icon"
-"$ROOT/scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
+OTD_BIN="$APP/Contents/MacOS/otd" \
+    "$ROOT/scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
 if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
   echo "==> bundling ffmpeg (from PATH)"
@@ -102,18 +142,10 @@ else
   echo "!! ffmpeg not on PATH — movies need brew install ffmpeg or rebuild after installing it"
 fi
 
+echo "==> default media"
+cp "$ROOT/examples/media/apple.png" "$APP/Contents/Resources/apple.png"
+
 echo "==> signing (ad-hoc)"
-# Ad-hoc, not a Developer ID — but *a* signature over the bundle, which is a
-# different thing from the linker-signed binary cargo leaves behind. Without
-# this step `codesign -dv` reports "Info.plist=not bound" and "Sealed
-# Resources=none", and that is not cosmetic: TCC reads the camera and
-# microphone usage descriptions out of a bundle's *sealed* Info.plist. Unbound,
-# there is no usage string to show, so macOS declines to prompt at all — and a
-# camera it will not ask about is a camera that never works. The node just sits
-# black, because a denied AVFoundation session reports nothing.
-#
-# Last, after the icon and both binaries are in place: signing seals what is
-# there, and anything written into the bundle afterwards breaks the seal.
 codesign --force --deep --sign - \
     --identifier dev.opentouchdesigner.editor \
     "$APP"

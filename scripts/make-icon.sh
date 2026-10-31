@@ -7,7 +7,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-"$ROOT/target/release/otd" render "$ROOT/examples/tunnel.otd" \
+resolve_otd() {
+    if [ -n "${OTD_BIN:-}" ] && [ -x "$OTD_BIN" ]; then
+        echo "$OTD_BIN"
+        return
+    fi
+    local host
+    host="$(rustc -vV | awk '/^host:/ {print $2}')"
+    if [ -x "$ROOT/target/$host/release/otd" ]; then
+        echo "$ROOT/target/$host/release/otd"
+        return
+    fi
+    if [ -x "$ROOT/target/release/otd" ]; then
+        echo "$ROOT/target/release/otd"
+        return
+    fi
+    echo "make-icon.sh: otd not found — run: cargo build --release -p otd-cli" >&2
+    exit 1
+}
+OTD="$(resolve_otd)"
+
+"$OTD" render "$ROOT/examples/tunnel.otd" \
     --node /out1 --frames 150 --out "$WORK/frames" >/dev/null
 
 # Centre square crop of a 16:9 frame, then every size macOS asks for.

@@ -44,7 +44,8 @@ cargo run -p otd-app
 ```
 
 No CMake, no vcpkg, no SDK downloads. macOS, Windows and Linux from the same
-checkout.
+checkout. On macOS, movie decode uses AVFoundation (`cidre`) and needs **Xcode**
+(selected with `xcode-select`, not Command Line Tools alone) to compile `otd-gpu`.
 
 ---
 
@@ -236,8 +237,8 @@ Level, Blur, Kaleidoscope or Chroma Key after whatever is selected and views
 the result. Movies decode through `ffmpeg` (`brew install ffmpeg`); stills do
 not need it.
 
-The **Output** button in the top bar opens a second window showing only the
-viewer, letterboxed — drag it to a projector and toggle Fullscreen.
+**Window COMP** operators open a dedicated output window (Window Placement or
+each operator's Window page) — drag it to a projector and use Fullscreen there.
 
 **Perform mode** (`F1`) hides the editor in the main window instead. It is
 cheaper as well as darker: with nothing on the canvas, every node that was
@@ -362,11 +363,9 @@ A failing expression keeps its constant and reports one line.
 Substitute, JSON, Script, Execute, CHOP Execute, Parameter Execute, UDP In,
 UDP Out and Null. A table's contents live in the project file, so a cue list is
 versioned with the patch that uses it. Script DATs run Python and return
-rows. UDP In presents received datagrams as a table, one message per row;
-UDP Out sends its input's text as one datagram when it *changes* — a DAT
-cooks whenever anything upstream does, and resending an unchanged payload
-every cook would turn a cook into a broadcast. Both are tested as real
-loopbacks, like OSC and DMX.
+rows. UDP In lists incoming datagrams in a table (address, port, message);
+UDP Out shows incoming replies the same way — send with **Send Input On Change**
+(or script `send()` when available). Both are tested as real loopbacks, like OSC and DMX.
 
 **3D** (`otd-sop`, `otd-gpu`) — Box, Sphere, Tube, Torus, Circle, Grid, Line,
 Transform, Noise, Color, Merge, Copy and Null SOPs; Geometry, Camera and Light
