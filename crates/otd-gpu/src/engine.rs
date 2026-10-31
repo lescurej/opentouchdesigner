@@ -14,13 +14,15 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use otd_core::cook::resolve_bypass;
-use otd_core::{CookContext, CookError, Cooker, Crossings, EvalContext, Graph, NodeId};
+use otd_core::{
+    CookContext, CookError, CookOutput, Cooker, Crossings, EvalContext, Graph, Node, NodeId,
+};
 use slotmap::SecondaryMap;
 use wgpu::util::DeviceExt;
 
 use crate::context::GpuContext;
 use crate::ops::{self, Sizing, WideParams};
-use crate::record::Recorder;
+use crate::record::{self, Recorder};
 use crate::render3d::{self, Renderer};
 use crate::scene::Scene;
 use crate::shader;
@@ -103,7 +105,10 @@ pub struct TopEngine {
     recorders: SecondaryMap<NodeId, Recorder>,
     /// Nodes that asked to be recorded this frame, drained in `end_frame`
     /// once the encoder has been submitted and the pixels are real.
-    pending_records: Vec<NodeId>,
+    pending_records: Vec<PendingRecord>,
+    movie_out_edge: SecondaryMap<NodeId, MovieOutEdge>,
+    movie_out_seq: SecondaryMap<NodeId, u32>,
+    movie_out_stills: SecondaryMap<NodeId, u64>,
     /// Feedback nodes cooked this frame, with the target they resolved to.
     ///
     /// Their copy happens at the end of the frame rather than at their own
@@ -116,7 +121,220 @@ pub struct TopEngine {
     /// re-lay-out every other one — and so a static caption costs nothing at
     /// all after its first frame.
     text_keys: SecondaryMap<NodeId, String>,
+    movie_ui: SecondaryMap<NodeId, MovieUiEdge>,
     pub passes_this_frame: u32,
+}
+
+#[derive(Default)]
+struct MovieUiEdge {
+    reload: bool,
+    cue_pulse: bool,
+    cue: bool,
+    play: bool,
+    last_playmode: String,
+    cue_hold_pause: bool,
+}
+
+#[derive(Default)]
+struct MovieOutEdge {
+    record: bool,
+    addframe: bool,
+}
+
+enum PendingRecord {
+    Stream(NodeId),
+    Still {
+        id: NodeId,
+        path: String,
+        image_type: String,
+    },
+}
+
+impl TopEngine {
+    fn movie_edge(&mut self, id: NodeId) -> &mut MovieUiEdge {
+        if !self.movie_ui.contains_key(id) {
+            self.movie_ui.insert(id, MovieUiEdge::default());
+        }
+        self.movie_ui.get_mut(id).unwrap()
+    }
+}
+
+fn legacy_play_menu(node: &Node, eval: &EvalContext) -> Option<String> {
+    let p = node.param("play")?;
+    let menu = p.menu.as_ref()?;
+    if !menu.iter().any(|i| i == "loop") {
+        return None;
+    }
+    Some(p.eval(eval).as_str().to_string())
+}
+
+fn movie_effective_fps(node: &Node, eval: &EvalContext, info: &crate::video::Info) -> f64 {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    if get("overridesample").map(|v| v.as_bool()).unwrap_or(false) {
+        get("samplerate")
+            .map(|v| v.as_f64())
+            .filter(|f| *f > 0.0)
+            .unwrap_or(info.fps)
+    } else {
+        info.fps
+    }
+    .max(1e-6)
+}
+
+fn movie_trim_range(node: &Node, eval: &EvalContext, fps: f64, length: i64) -> (i64, i64) {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    if !get("trim").map(|v| v.as_bool()).unwrap_or(false) {
+        return (0, length.saturating_sub(1).max(0));
+    }
+    let start_unit = get("tstartunit")
+        .map(|v| v.as_str())
+        .unwrap_or_else(|| "indices".into());
+    let end_unit = get("tendunit")
+        .map(|v| v.as_str())
+        .unwrap_or_else(|| "fraction".into());
+    let start = crate::video::position_from_units(
+        get("tstart").map(|v| v.as_f64()).unwrap_or(0.0),
+        &start_unit,
+        fps,
+        length,
+    );
+    let end = crate::video::position_from_units(
+        get("tend").map(|v| v.as_f64()).unwrap_or(1.0),
+        &end_unit,
+        fps,
+        length,
+    );
+    (
+        start.max(0),
+        end.max(start).min(length.saturating_sub(1).max(0)),
+    )
+}
+
+fn movie_map_index(
+    index: i64,
+    trim_start: i64,
+    trim_end: i64,
+    extend_left: &str,
+    extend_right: &str,
+    legacy_play: Option<&str>,
+) -> (i64, bool) {
+    let span = (trim_end - trim_start + 1).max(1);
+    let (right, once_past_end) = if let Some(mode) = legacy_play {
+        match mode {
+            "loop" => ("cycle", false),
+            "hold" => ("hold", false),
+            "once" => ("hold", true),
+            _ => ("cycle", false),
+        }
+    } else {
+        (extend_right, matches!(extend_right, "black" | "zero"))
+    };
+
+    if index < trim_start {
+        let mapped = match extend_left {
+            "cycle" => trim_start + (trim_start - index).rem_euclid(span),
+            "black" | "zero" => return (trim_start, true),
+            _ => trim_start,
+        };
+        return (mapped, false);
+    }
+    if index > trim_end {
+        if once_past_end {
+            return (trim_end, true);
+        }
+        let mapped = match right {
+            "cycle" => trim_start + (index - trim_start).rem_euclid(span),
+            "mirror" => {
+                let o = index - trim_end;
+                trim_end - o.rem_euclid(span)
+            }
+            "black" | "zero" => return (trim_end, true),
+            _ => trim_end,
+        };
+        return (mapped, false);
+    }
+    (index, false)
+}
+
+fn movie_decode_tuning(node: &Node, eval: &EvalContext) -> (bool, usize, u32) {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    let hw = get("hwdecode").map(|v| v.as_bool()).unwrap_or(true);
+    let pre = get("prereadframes")
+        .map(|v| v.as_i64())
+        .unwrap_or(16)
+        .clamp(0, 120) as usize;
+    let cpus = get("maxdecodecpus")
+        .map(|v| v.as_i64())
+        .unwrap_or(0)
+        .clamp(0, 64) as u32;
+    (hw, pre.max(1), cpus)
+}
+
+fn movie_open_start_index(node: &Node, eval: &EvalContext, info: &crate::video::Info) -> i64 {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
+    let fps = movie_effective_fps(node, eval, info);
+    let length = (info.duration * fps).round().max(1.0) as i64;
+    let playmode = get("playmode")
+        .map(|v| v.as_str())
+        .unwrap_or_else(|| "sequential".into());
+    match playmode.as_str() {
+        "specify" => {
+            let val = get("index").map(|v| v.as_f64()).unwrap_or(0.0);
+            let unit = get("indexunit")
+                .map(|v| v.as_str())
+                .unwrap_or_else(|| "indices".into());
+            crate::video::position_from_units(val, &unit, fps, length)
+        }
+        "sequential" => 0,
+        _ => (eval.time * speed * fps).floor().max(0.0) as i64,
+    }
+}
+
+fn movie_specify_index(node: &Node, eval: &EvalContext, fps: f64, length: i64) -> i64 {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    let unit = get("indexunit")
+        .map(|v| v.as_str())
+        .unwrap_or_else(|| "indices".into());
+    let val = get("index").map(|v| v.as_f64()).unwrap_or(0.0);
+    crate::video::position_from_units(val, &unit, fps, length)
+}
+
+fn movie_preread_frames(playmode: &str, user: usize) -> usize {
+    if playmode == "specify" {
+        1
+    } else {
+        user
+    }
+}
+
+fn movie_timecode_index(
+    node: &Node,
+    eval: &EvalContext,
+    scene: Option<&dyn Scene>,
+    fps: f64,
+    length: i64,
+    fallback: i64,
+) -> i64 {
+    let get = |key: &str| node.param(key).map(|p| p.eval(eval));
+    let path = get("timecodeop").map(|v| v.as_str()).unwrap_or_default();
+    if path.trim().is_empty() {
+        return fallback;
+    }
+    let Some(chans) = scene.and_then(|s| s.channels(path.trim())) else {
+        return fallback;
+    };
+    let Some(v) = chans.iter().find_map(|(_, s)| s.last()).copied() else {
+        return fallback;
+    };
+    let mode = get("timecodemode")
+        .map(|v| v.as_str())
+        .unwrap_or_else(|| "absolute".into());
+    let idx = match mode.as_str() {
+        "usefiletimecode" => v.floor() as i64,
+        _ => (f64::from(v) * fps.max(1e-6)).floor() as i64,
+    };
+    idx.clamp(0, length.saturating_sub(1).max(0))
 }
 
 impl TopEngine {
@@ -231,8 +449,19 @@ impl TopEngine {
             pending_feedback: Vec::new(),
             fonts: crate::text::FontCache::default(),
             text_keys: SecondaryMap::new(),
+            movie_ui: SecondaryMap::new(),
+            movie_out_edge: SecondaryMap::new(),
+            movie_out_seq: SecondaryMap::new(),
+            movie_out_stills: SecondaryMap::new(),
             passes_this_frame: 0,
         }
+    }
+
+    fn movie_out_edge(&mut self, id: NodeId) -> &mut MovieOutEdge {
+        if !self.movie_out_edge.contains_key(id) {
+            self.movie_out_edge.insert(id, MovieOutEdge::default());
+        }
+        self.movie_out_edge.get_mut(id).unwrap()
     }
 
     /// Draw calls and instances issued this frame, for the perf panel.
@@ -416,35 +645,117 @@ impl TopEngine {
         // *After* the submit, on purpose: a readback taken during the cook
         // copies a texture whose passes have not run yet, and a recording one
         // frame behind what the artist watched is a file that is wrong.
-        for id in std::mem::take(&mut self.pending_records) {
-            self.capture(id);
+        for job in std::mem::take(&mut self.pending_records) {
+            self.capture(job);
         }
         for t in std::mem::take(&mut self.scratch) {
             self.pool.release(t);
         }
     }
 
-    /// Copy a recording node's output to its encoder.
-    fn capture(&mut self, id: NodeId) {
+    /// Copy a recording node's output to its encoder or to a still file.
+    fn capture(&mut self, job: PendingRecord) {
+        let id = match &job {
+            PendingRecord::Stream(node) | PendingRecord::Still { id: node, .. } => *node,
+        };
         let Some(tex) = self.nodes.get(id).and_then(|n| n.output.as_ref()) else {
             return;
         };
-        let Some(recorder) = self.recorders.get(id) else {
-            return;
-        };
-        if tex.key.width != recorder.width || tex.key.height != recorder.height {
-            // The input changed size mid-recording. Every frame in a file has
-            // to be the same shape, so this is a new file rather than a
-            // silently stretched one; the next cook notices the key changed.
-            return;
-        }
-        match crate::read_pixels_rgba8(&self.ctx, tex) {
-            Ok((_, _, pixels)) => recorder.push(pixels),
+        let pixels = match crate::read_pixels_rgba8(&self.ctx, tex) {
+            Ok((_, _, px)) => px,
             Err(e) => {
                 self.nodes.entry(id).unwrap().or_default().status =
                     Some(format!("could not read the frame back: {e}"));
+                return;
+            }
+        };
+        match job {
+            PendingRecord::Stream(id) => {
+                let Some(recorder) = self.recorders.get(id) else {
+                    return;
+                };
+                if tex.key.width != recorder.width || tex.key.height != recorder.height {
+                    return;
+                }
+                recorder.push(pixels);
+            }
+            PendingRecord::Still {
+                id,
+                path,
+                image_type,
+            } => {
+                match record::write_still(
+                    &path,
+                    tex.key.width,
+                    tex.key.height,
+                    &pixels,
+                    &image_type,
+                ) {
+                    Ok(()) => {
+                        let count = self.movie_out_stills.get(id).copied().unwrap_or(0) + 1;
+                        self.movie_out_stills.insert(id, count);
+                        if let Some(n) = self.movie_out_seq.get_mut(id) {
+                            *n += 1;
+                        }
+                    }
+                    Err(e) => {
+                        self.nodes.entry(id).unwrap().or_default().status = Some(e);
+                    }
+                }
             }
         }
+    }
+
+    fn movie_out_frames_written(&self, id: NodeId) -> u64 {
+        self.recorders
+            .get(id)
+            .map(|r| r.frames_written())
+            .unwrap_or(0)
+            + self.movie_out_stills.get(id).copied().unwrap_or(0)
+    }
+
+    fn cook_movie_out_top(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        ctx: &CookContext,
+        eval: &EvalContext,
+        node: &otd_core::Node,
+        label: &str,
+    ) -> Result<(), CookError> {
+        let input_size = self.input_size(graph, id, 0).unwrap_or(FALLBACK_SIZE);
+        let (width, height) = ops::movie_output_dimensions(node, eval, input_size);
+        self.ensure_output(id, width, height);
+        let in0 = self.input_view(graph, id, 0);
+        let out = self.nodes[id].output.as_ref().unwrap().view.clone();
+        let nearest = ops::movie_sampler_nearest(node, eval);
+        let use_fit = (width, height) != input_size;
+        let params = if use_fit {
+            let mut p = ops::NO_PARAMS;
+            p[0][0] = ops::movie_fit_mode(node, eval);
+            p
+        } else {
+            ops::NO_PARAMS
+        };
+        let uniforms = self.uniforms(width, height, ctx, params);
+        let buf = self.write_uniform(id, 0, uniforms);
+        let dummy = self.dummy.clone();
+        let pipeline = if use_fit {
+            PipelineRef::Builtin("fitTOP")
+        } else {
+            PipelineRef::Builtin(ops::NULL)
+        };
+        self.run_pass(Pass {
+            label,
+            pipeline,
+            target: &out,
+            uniform: &buf,
+            in0: &in0,
+            in1: &dummy,
+            nearest,
+        })?;
+        self.cook_movie_out(id, node, eval);
+        Ok(())
     }
 
     /// Lay out and upload a Text TOP's glyphs, then tint them.
@@ -552,12 +863,30 @@ impl TopEngine {
 
     /// Start, stop or keep a recording, and note whether to capture this frame.
     fn cook_movie_out(&mut self, id: NodeId, node: &otd_core::Node, eval: &EvalContext) {
-        let recording = node
+        let text = |key: &str| {
+            node.param(key)
+                .map(|p| p.eval(eval).as_str())
+                .unwrap_or_default()
+        };
+        let record = node
             .param("record")
             .map(|p| p.eval(eval).as_bool())
             .unwrap_or(false);
-        if !recording {
-            // Dropping the recorder is what closes the file — see its `Drop`.
+        let pause = node
+            .param("pause")
+            .map(|p| p.eval(eval).as_bool())
+            .unwrap_or(false);
+        let addframe = node
+            .param("addframe")
+            .map(|p| p.eval(eval).as_bool())
+            .unwrap_or(false);
+        let edge = self.movie_out_edge(id);
+        let record_pulse = record && !edge.record;
+        let add_pulse = addframe && !edge.addframe;
+        edge.record = record;
+        edge.addframe = addframe;
+
+        if !record {
             if self.recorders.remove(id).is_some() {
                 self.nodes.entry(id).unwrap().or_default().status = None;
             }
@@ -571,57 +900,133 @@ impl TopEngine {
         else {
             return;
         };
-        let text = |key: &str| {
-            node.param(key)
-                .map(|p| p.eval(eval).as_str())
-                .unwrap_or_default()
-        };
-        let path = text("file");
+
+        let mut out_type = text("type");
+        if out_type.is_empty() {
+            out_type = "movie".into();
+        }
         let fps = node
             .param("fps")
             .map(|p| p.eval(eval).as_f32() as f64)
             .unwrap_or(60.0);
-        let codec = match text("codec").as_str() {
-            "h265" => "libx265",
-            "prores" => "prores_ks",
-            _ => "libx264",
-        };
-        let quality = node
-            .param("quality")
-            .map(|p| p.eval(eval).as_i64())
-            .unwrap_or(75)
-            .clamp(0, 100) as u32;
-
-        // Everything that would make the frames inconsistent is in the key, so
-        // changing any of it starts a new file instead of writing mismatched
-        // frames into the open one.
-        let key = format!("{path}|{width}x{height}|{fps:.3}|{codec}|{quality}");
-        if self.recorders.get(id).map(|r| r.key.as_str()) != Some(key.as_str()) {
-            self.recorders.remove(id);
-            match Recorder::start(key, &path, width, height, fps, quality, codec) {
-                Ok(r) => {
-                    self.recorders.insert(id, r);
-                    self.nodes.entry(id).unwrap().or_default().status = None;
-                }
-                Err(e) => {
-                    self.nodes.entry(id).unwrap().or_default().status = Some(e);
-                    return;
-                }
+        if let Some(limit) = ops::movie_out_length_limit_frames(node, eval, fps) {
+            let written = self.movie_out_frames_written(id);
+            if written >= limit {
+                self.recorders.remove(id);
+                self.nodes.entry(id).unwrap().or_default().status =
+                    Some(format!("limit reached ({written} frames)"));
+                return;
             }
         }
 
-        if let Some(problem) = self.recorders.get(id).and_then(|r| r.problem()) {
-            self.nodes.entry(id).unwrap().or_default().status = Some(problem);
-        } else {
-            let written = self
-                .recorders
-                .get(id)
-                .map(|r| r.frames_written())
-                .unwrap_or(0);
-            self.nodes.entry(id).unwrap().or_default().status =
-                Some(format!("recording — {written} frames"));
+        let capture = match out_type.as_str() {
+            "image" => record_pulse || add_pulse,
+            "imagesequence" => {
+                if pause {
+                    add_pulse
+                } else {
+                    true
+                }
+            }
+            "stopframemovie" => add_pulse,
+            _ => {
+                if pause {
+                    add_pulse
+                } else {
+                    true
+                }
+            }
+        };
+        if !capture {
+            if self.recorders.contains_key(id) {
+                let written = self.movie_out_frames_written(id);
+                self.nodes.entry(id).unwrap().or_default().status =
+                    Some(format!("recording (paused) — {written} frames"));
+            }
+            return;
         }
-        self.pending_records.push(id);
+
+        let image_type = text("imagefiletype");
+        let image_type = if image_type.is_empty() {
+            "png".to_string()
+        } else {
+            image_type
+        };
+        let stream = matches!(out_type.as_str(), "movie" | "stopframemovie");
+
+        if stream {
+            let path = text("file");
+            let codec = match text("codec").as_str() {
+                "h265" => "libx265",
+                "prores" => "prores_ks",
+                _ => "libx264",
+            };
+            let quality = node
+                .param("quality")
+                .map(|p| p.eval(eval).as_i64())
+                .unwrap_or(75)
+                .clamp(0, 100) as u32;
+            let key = format!("{path}|{width}x{height}|{fps:.3}|{codec}|{quality}|{out_type}");
+            if self.recorders.get(id).map(|r| r.key.as_str()) != Some(key.as_str()) {
+                self.recorders.remove(id);
+                match Recorder::start(key, &path, width, height, fps, quality, codec) {
+                    Ok(r) => {
+                        self.recorders.insert(id, r);
+                        self.nodes.entry(id).unwrap().or_default().status = None;
+                    }
+                    Err(e) => {
+                        self.nodes.entry(id).unwrap().or_default().status = Some(e);
+                        return;
+                    }
+                }
+            }
+            if let Some(problem) = self.recorders.get(id).and_then(|r| r.problem()) {
+                self.nodes.entry(id).unwrap().or_default().status = Some(problem);
+            } else {
+                let written = self.movie_out_frames_written(id);
+                self.nodes.entry(id).unwrap().or_default().status =
+                    Some(format!("recording — {written} frames"));
+            }
+            self.pending_records.push(PendingRecord::Stream(id));
+            return;
+        }
+
+        let base_path = text("file");
+        let leading = node
+            .param("leadingzerosdigits")
+            .map(|p| p.eval(eval).as_i64())
+            .unwrap_or(4)
+            .clamp(1, 12) as u32;
+        let start_n = node
+            .param("n")
+            .map(|p| p.eval(eval).as_i64())
+            .unwrap_or(1)
+            .max(0) as u32;
+        if !self.movie_out_seq.contains_key(id) {
+            self.movie_out_seq.insert(id, start_n);
+        }
+        let index = *self.movie_out_seq.get(id).unwrap();
+        let unique = node
+            .param("uniquesuff")
+            .map(|p| p.eval(eval).as_bool())
+            .unwrap_or(false);
+        let path = if out_type.as_str() == "image" {
+            let mut p = base_path.clone();
+            if unique {
+                p = record::sequence_path(&p, index, leading, &image_type);
+            }
+            p
+        } else {
+            record::sequence_path(&base_path, index, leading, &image_type)
+        };
+        self.pending_records.push(PendingRecord::Still {
+            id,
+            path,
+            image_type,
+        });
+        let written = self.movie_out_frames_written(id);
+        self.nodes.entry(id).unwrap().or_default().status =
+            Some(format!("writing — {} frames queued", written + 1));
     }
 
     /// The texture a node currently presents, following bypass flags.
@@ -641,21 +1046,46 @@ impl TopEngine {
         self.nodes.get(id).and_then(|n| n.status.as_deref())
     }
 
+    pub fn output_texture_size(&self, id: NodeId) -> Option<(u32, u32)> {
+        self.nodes
+            .get(id)
+            .and_then(|n| n.output.as_ref())
+            .map(|t| (t.key.width, t.key.height))
+    }
+
+    pub fn movie_info(&self, id: NodeId, ch: &mut Vec<(String, f32)>) -> bool {
+        if let Some(v) = self.videos.get(id) {
+            ch.extend(v.info_channels());
+            true
+        } else {
+            ch.push(("open".into(), 0.0));
+            false
+        }
+    }
+
     /// Drop a node's GPU resources, returning its texture to the pool.
     ///
     /// Dropping the decoder is what stops its thread and kills its ffmpeg
     /// process, so deleting a camera node releases the camera.
     /// How many frames a recording node has written, for the editor.
     pub fn frames_recorded(&self, id: NodeId) -> Option<u64> {
-        self.recorders.get(id).map(|r| r.frames_written())
+        let n = self.movie_out_frames_written(id);
+        if n == 0 { None } else { Some(n) }
     }
 
     pub fn forget(&mut self, id: NodeId) {
         self.videos.remove(id);
+        self.movie_ui.remove(id);
+        self.movie_out_edge.remove(id);
+        self.movie_out_seq.remove(id);
+        self.movie_out_stills.remove(id);
         // Deleting a recording node finalises its file rather than truncating
         // it: the drop closes the pipe and waits for ffmpeg's trailer.
         self.recorders.remove(id);
-        self.pending_records.retain(|p| *p != id);
+        self.pending_records.retain(|p| match p {
+            PendingRecord::Stream(node) => *node != id,
+            PendingRecord::Still { id: node, .. } => *node != id,
+        });
         self.text_keys.remove(id);
         if let Some(mut n) = self.nodes.remove(id) {
             if let Some(t) = n.output.take() {
@@ -671,6 +1101,17 @@ impl TopEngine {
             self.forget(id);
         }
         self.pool.clear();
+    }
+
+    pub fn shutdown(&mut self) {
+        let recorder_ids: Vec<NodeId> = self.recorders.keys().collect();
+        for id in recorder_ids {
+            if let Some(mut rec) = self.recorders.remove(id) {
+                rec.abort();
+            }
+        }
+        self.videos.clear();
+        self.pending_records.clear();
     }
 
     pub fn pooled_bytes(&self) -> u64 {
@@ -913,6 +1354,7 @@ impl TopEngine {
     /// Copy another node's current texture into `id`'s output. Shared by
     /// Feedback (which reads before the target re-cooks) and Select (which
     /// reads after, because it declares the target as a dependency).
+
     /// Cook a Movie File In or a Video Device In.
     ///
     /// The shape is the same as every device operator in this codebase: open
@@ -925,8 +1367,9 @@ impl TopEngine {
         id: NodeId,
         ctx: &CookContext,
         eval: &EvalContext,
+        scene: Option<&dyn Scene>,
         label: &str,
-    ) -> Result<(), CookError> {
+    ) -> Result<CookOutput, CookError> {
         let node = graph.get(id).ok_or(CookError::NoSuchNode)?;
         let camera = node.op_type == ops::VIDEO_DEVICE_IN;
         let get = |key: &str| node.param(key).map(|p| p.eval(eval));
@@ -946,15 +1389,36 @@ impl TopEngine {
             )
         } else {
             let file = get("file").map(|v| v.as_str()).unwrap_or_default();
-            let resolved = if file.trim().is_empty() {
-                String::new()
-            } else {
-                graph.resolve_external(file.trim()).display().to_string()
-            };
+            let resolved = otd_core::media::resolve_media_path(graph, &file)
+                .display()
+                .to_string();
             (format!("file:{resolved}"), resolved)
         };
 
         let active = get("active").map(|v| v.as_bool()).unwrap_or(true);
+        let playmode_early = if camera {
+            String::new()
+        } else {
+            get("playmode")
+                .map(|v| v.as_str())
+                .unwrap_or_else(|| "sequential".into())
+        };
+        if !camera {
+            let always = get("alwaysloadinitial")
+                .map(|v| v.as_bool())
+                .unwrap_or(true);
+            let playing = get("play").map(|v| v.as_bool()).unwrap_or(true);
+            if !always
+                && playmode_early == "sequential"
+                && !playing
+                && self.videos.get(id).is_none()
+            {
+                self.ensure_output(id, fallback.0, fallback.1);
+                return self
+                    .clear_to_black(id, ctx, label)
+                    .map(|_| CookOutput::Updated);
+            }
+        }
         if !active || crate::ops::nothing_to_open(camera, &file) {
             // Nothing asked for: release the device and show black at the
             // fallback size, so a downstream chain still has a shape.
@@ -962,7 +1426,19 @@ impl TopEngine {
             let entry = self.nodes.entry(id).unwrap().or_default();
             entry.status = None;
             self.ensure_output(id, fallback.0, fallback.1);
-            return self.clear_to_black(id, ctx, label);
+            return self
+                .clear_to_black(id, ctx, label)
+                .map(|_| CookOutput::Updated);
+        }
+
+        if !camera {
+            let reload_now = get("reload").map(|v| v.as_bool()).unwrap_or(false);
+            let was = self.movie_ui.get(id).map(|e| e.reload).unwrap_or(false);
+            if reload_now && !was {
+                self.videos.remove(id);
+                self.movie_edge(id).cue_hold_pause = false;
+            }
+            self.movie_edge(id).reload = reload_now;
         }
 
         // ---- Open, if this is a different source from the one running.
@@ -982,9 +1458,19 @@ impl TopEngine {
             } else {
                 match crate::video::probe(&file) {
                     Some(info) => {
-                        let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
-                        let start = (ctx.time * speed * info.fps).floor() as i64;
-                        crate::video::Source::file(key.clone(), &file, info, start.max(0))
+                        let start = movie_open_start_index(node, eval, &info).max(0);
+                        match crate::video::Source::file(key.clone(), &file, info, start) {
+                            Ok(mut source) => {
+                                let (hw, pre, cpus) = movie_decode_tuning(node, eval);
+                                source.set_decode_tuning(
+                                    hw,
+                                    movie_preread_frames(&playmode_early, pre),
+                                    cpus,
+                                );
+                                Ok(source)
+                            }
+                            Err(e) => Err(e),
+                        }
                     }
                     None if !std::path::Path::new(&file).exists() => {
                         Err(format!("no file at {file}"))
@@ -1007,29 +1493,182 @@ impl TopEngine {
                 Err(e) => {
                     entry.status = Some(e);
                     self.ensure_output(id, fallback.0, fallback.1);
-                    return self.clear_to_black(id, ctx, label);
+                    return self
+                        .clear_to_black(id, ctx, label)
+                        .map(|_| CookOutput::Updated);
                 }
             }
         }
 
+        if !camera {
+            if let Some(source) = self.videos.get_mut(id) {
+                let (hw, pre, cpus) = movie_decode_tuning(node, eval);
+                source.set_decode_tuning(
+                    hw,
+                    movie_preread_frames(&playmode_early, pre),
+                    cpus,
+                );
+            }
+        }
+
         let speed = get("speed").map(|v| v.as_f64()).unwrap_or(1.0);
-        let play_mode = get("play").map(|v| v.as_str()).unwrap_or_default().to_string();
+        let interp = get("interp").map(|v| v.as_bool()).unwrap_or(false);
+        let playmode = playmode_early.clone();
+        let legacy = if camera {
+            None
+        } else {
+            legacy_play_menu(node, eval)
+        };
+        let extend_left = get("extendleft")
+            .map(|v| v.as_str())
+            .unwrap_or_else(|| "hold".into());
+        let extend_right = get("extendright")
+            .map(|v| v.as_str())
+            .unwrap_or_else(|| "cycle".into());
+        let step = get("stepsize").map(|v| v.as_i64()).unwrap_or(1).max(1);
+
+        let mut cue_seek_index: Option<i64> = None;
+        let mut cue_fired = false;
+        let mut reset_sequential_playback = false;
+        if !camera {
+            if let Some(source) = self.videos.get(id) {
+                if source.info.fps > 0.0 {
+                    let fps = movie_effective_fps(node, eval, &source.info);
+                    let length = (source.info.duration * fps).round().max(1.0) as i64;
+                    let cue_now = get("cue").map(|v| v.as_bool()).unwrap_or(false);
+                    let cue_pulse = get("cuepulse").map(|v| v.as_bool()).unwrap_or(false);
+                    let play_now = get("play").map(|v| v.as_bool()).unwrap_or(true);
+                    let edge = self.movie_edge(id);
+                    if play_now && !edge.play {
+                        edge.cue_hold_pause = false;
+                    }
+                    let cue_fire = (cue_now && !edge.cue) || (cue_pulse && !edge.cue_pulse);
+                    if cue_fire {
+                        let val = get("cuepoint").map(|v| v.as_f64()).unwrap_or(0.0);
+                        let unit = get("cuepointunit")
+                            .map(|v| v.as_str())
+                            .unwrap_or_else(|| "indices".into());
+                        cue_seek_index =
+                            Some(crate::video::position_from_units(val, &unit, fps, length));
+                        cue_fired = true;
+                        let behavior = get("cuebehavior")
+                            .map(|v| v.as_str())
+                            .unwrap_or_else(|| "repeat".into());
+                        edge.cue_hold_pause = behavior == "repeat";
+                    }
+                    edge.cue = cue_now;
+                    edge.cue_pulse = cue_pulse;
+                    edge.play = play_now;
+                    if edge.last_playmode.is_empty() {
+                        edge.last_playmode = playmode.clone();
+                    } else if edge.last_playmode != playmode {
+                        reset_sequential_playback = playmode == "sequential";
+                        edge.last_playmode = playmode.clone();
+                        edge.cue_hold_pause = false;
+                    }
+                }
+            }
+        }
+        if reset_sequential_playback {
+            if let Some(s) = self.videos.get_mut(id) {
+                s.reset_sequential_playback();
+            }
+        }
+
+        let playback_active = if camera {
+            false
+        } else {
+            let playing = get("play").map(|v| v.as_bool()).unwrap_or(true);
+            let hold = self
+                .movie_ui
+                .get(id)
+                .map(|e| e.cue_hold_pause)
+                .unwrap_or(false);
+            if playmode.as_str() == "sequential" {
+                playing && !hold
+            } else {
+                !cue_fired || !hold
+            }
+        };
+        if !camera {
+            if let Some(source) = self.videos.get_mut(id) {
+                source.set_snap_index(playmode.as_str() == "specify");
+                source.set_movie_playing(playback_active);
+                source.playback_speed = speed;
+            }
+        }
 
         let (wanted, ended_message) = {
             let source = &mut self.videos[id];
             if camera || source.info.fps <= 0.0 {
                 (0, false)
             } else {
-                let raw = source.wanted_index(ctx.time, ctx.dt, speed);
-                let length = (source.info.duration * source.info.fps).round() as i64;
-                match play_mode.as_str() {
-                    "loop" if length > 1 => (raw.rem_euclid(length), false),
-                    "hold" if length > 1 => (raw.clamp(0, length - 1), false),
-                    "once" if length > 1 => (raw.clamp(0, length - 1), raw >= length),
-                    _ => (raw.max(0), false),
-                }
+                let fps = movie_effective_fps(node, eval, &source.info);
+                let length = (source.info.duration * fps).round().max(1.0) as i64;
+                let (trim_start, trim_end) = movie_trim_range(node, eval, fps, length);
+
+                let raw = if let Some(idx) = cue_seek_index {
+                    if playmode == "sequential" {
+                        let _ = source.sequential_wall_dt(ctx.abs_time, ctx.dt.max(0.0), 0.25);
+                    }
+                    source.seek_playhead_to(idx);
+                    idx
+                } else {
+                    match playmode.as_str() {
+                        "specify" => {
+                            let idx = movie_specify_index(node, eval, fps, length);
+                            source.seek_playhead_to(idx);
+                            idx
+                        }
+                        "sequential" => {
+                            let dt = source.sequential_wall_dt(ctx.abs_time, ctx.dt.max(0.0), 0.25);
+                            source.wanted_index_sequential(
+                                eval.time,
+                                dt,
+                                speed,
+                                playback_active,
+                                interp,
+                                fps,
+                            )
+                        }
+                        "timecodeop" => {
+                            let locked = source.wanted_index_locked(eval.time, speed, fps, interp);
+                            let idx = movie_timecode_index(node, eval, scene, fps, length, locked);
+                            source.seek_playhead_to(idx);
+                            idx
+                        }
+                        "locked" => source.wanted_index_locked(eval.time, speed, fps, interp),
+                        _ => source.wanted_index_locked(eval.time, speed, fps, interp),
+                    }
+                };
+
+                let stepped = if step > 1 { (raw / step) * step } else { raw };
+                movie_map_index(
+                    stepped,
+                    trim_start,
+                    trim_end,
+                    &extend_left,
+                    &extend_right,
+                    legacy.as_deref(),
+                )
             }
         };
+
+        if !camera {
+            if let Some(source) = self.videos.get_mut(id) {
+                let fps = if source.info.fps > 0.0 {
+                    movie_effective_fps(node, eval, &source.info)
+                } else {
+                    1.0
+                };
+                let length = if source.info.fps > 0.0 {
+                    (source.info.duration * fps).round().max(1.0) as i64
+                } else {
+                    1
+                };
+                source.set_playback_report(wanted, length, fps, ended_message);
+            }
+        }
 
         let path_for_seek = file.clone();
         let frame = self.videos[id].advance(&path_for_seek, wanted).cloned();
@@ -1041,7 +1680,9 @@ impl TopEngine {
             let problem = self.videos[id].problem();
             self.nodes.entry(id).unwrap().or_default().status = problem;
             self.ensure_output(id, fallback.0, fallback.1);
-            return self.clear_to_black(id, ctx, label);
+            return self
+                .clear_to_black(id, ctx, label)
+                .map(|_| CookOutput::Updated);
         };
 
         // A frame arrived, so whatever was last complained about is over.
@@ -1054,28 +1695,67 @@ impl TopEngine {
 
         // `once` past the end shows black rather than freezing, so a clip
         // that has finished looks finished.
+        let out_size = ops::movie_output_dimensions(node, eval, (frame.width, frame.height));
         if ended_message {
-            self.ensure_output(id, frame.width, frame.height);
-            return self.clear_to_black(id, ctx, label);
+            self.ensure_output(id, out_size.0, out_size.1);
+            return self
+                .clear_to_black(id, ctx, label)
+                .map(|_| CookOutput::Updated);
         }
 
-        self.upload_frame(id, &frame, revision);
-        self.ensure_output(id, frame.width, frame.height);
+        let same_frame = self.nodes[id]
+            .upload
+            .as_ref()
+            .is_some_and(|u| u.revision == revision)
+            && self.nodes[id].output.is_some();
+        if same_frame {
+            return Ok(CookOutput::Unchanged);
+        }
 
+        let update = get("updateimage").map(|v| v.as_bool()).unwrap_or(true);
+        if update {
+            self.upload_frame(id, &frame, revision);
+        } else if self.nodes[id].upload.is_none() {
+            self.upload_frame(id, &frame, revision);
+        }
+
+        if self.nodes[id].upload.is_none() {
+            self.ensure_output(id, out_size.0, out_size.1);
+            return self
+                .clear_to_black(id, ctx, label)
+                .map(|_| CookOutput::Updated);
+        }
+
+        self.ensure_output(id, out_size.0, out_size.1);
         let source_view = self.nodes[id].upload.as_ref().unwrap().view.clone();
         let out = self.nodes[id].output.as_ref().unwrap().view.clone();
-        let uniforms = self.uniforms(frame.width, frame.height, ctx, ops::NO_PARAMS);
+        let nearest = ops::movie_sampler_nearest(node, eval);
+        let use_fit = out_size != (frame.width, frame.height);
+        let params = if use_fit {
+            let mut p = ops::NO_PARAMS;
+            p[0][0] = ops::movie_fit_mode(node, eval);
+            p
+        } else {
+            ops::NO_PARAMS
+        };
+        let uniforms = self.uniforms(out_size.0, out_size.1, ctx, params);
         let buf = self.write_uniform(id, 0, uniforms);
         let dummy = self.dummy.clone();
+        let pipeline = if use_fit {
+            PipelineRef::Builtin("fitTOP")
+        } else {
+            PipelineRef::Builtin(ops::NULL)
+        };
         self.run_pass(Pass {
             label,
-            pipeline: PipelineRef::Builtin(ops::NULL),
+            pipeline,
             target: &out,
             uniform: &buf,
             in0: &source_view,
             in1: &dummy,
-            nearest: false,
+            nearest,
         })
+        .map(|_| CookOutput::Updated)
     }
 
     /// Copy a decoded frame into this node's upload texture.
@@ -1403,6 +2083,7 @@ impl TopEngine {
         foreign: &Crossings,
     ) -> Result<(), CookError> {
         self.cook_top(graph, id, ctx, eval, scene, foreign)
+            .map(|_| ())
     }
 }
 
@@ -1447,7 +2128,12 @@ impl Cooker for TopEngine {
         Vec::new()
     }
 
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        ctx: &CookContext,
+    ) -> Result<CookOutput, CookError> {
         // No CHOPs in sight: parameters resolve against time alone, and
         // there is no geometry to draw.
         let eval = ctx.eval_ctx();
@@ -1456,7 +2142,7 @@ impl Cooker for TopEngine {
 }
 
 impl TopEngine {
-    fn cook_top(
+    pub fn cook_top(
         &mut self,
         graph: &Graph,
         id: NodeId,
@@ -1464,7 +2150,7 @@ impl TopEngine {
         eval: &EvalContext,
         scene: Option<&dyn Scene>,
         foreign: &Crossings,
-    ) -> Result<(), CookError> {
+    ) -> Result<CookOutput, CookError> {
         let node = graph.get(id).ok_or(CookError::NoSuchNode)?;
         let path = graph.path(id);
         // Parameters are evaluated knowing where they live, so `parent.x`
@@ -1476,7 +2162,7 @@ impl TopEngine {
 
         // COMPs hold sub-networks; they have no texture of their own yet.
         if node.family != otd_core::Family::Top {
-            return Ok(());
+            return Ok(CookOutput::Updated);
         }
 
         let spec = ops::spec(&node.op_type)
@@ -1485,7 +2171,9 @@ impl TopEngine {
         // outside. Nothing else in the engine has to know about components.
         if node.connector == otd_core::Connector::In {
             let source = graph.connector_source(id);
-            return self.blit_from(graph, id, source, ctx, &path);
+            return self
+                .blit_from(graph, id, source, ctx, &path)
+                .map(|_| CookOutput::Updated);
         }
 
         // ---- Feedback holds the target's picture from the END of the last
@@ -1511,7 +2199,7 @@ impl TopEngine {
                 // Nothing to read: a black frame, so downstream still samples
                 // something rather than failing.
                 self.ensure_output(id, FALLBACK_SIZE.0, FALLBACK_SIZE.1);
-                return Ok(());
+                return Ok(CookOutput::Updated);
             };
             // Match the target's size now so operators sized from this one are
             // right on the first frame; the content arrives at end_frame.
@@ -1523,12 +2211,14 @@ impl TopEngine {
                 .unwrap_or(FALLBACK_SIZE);
             self.ensure_output(id, size.0, size.1);
             self.pending_feedback.push((id, target));
-            return Ok(());
+            return Ok(CookOutput::Updated);
         }
         // ---- Select reads the same way, but its target has already cooked.
         if node.op_type == ops::SELECT {
             let target = referenced_target(graph, id, "top");
-            return self.blit_from(graph, id, target, ctx, &path);
+            return self
+                .blit_from(graph, id, target, ctx, &path)
+                .map(|_| CookOutput::Updated);
         }
         // ---- CHOP to TOP: the pixels come from a wire of another family.
         if node.op_type == ops::CHOP_TO_TOP {
@@ -1536,12 +2226,20 @@ impl TopEngine {
                 .first()
                 .and_then(|c| c.as_ref())
                 .and_then(|c| c.as_channels());
-            return self.cook_chop_to_top(id, ctx, eval, node, channels, &path);
+            return self
+                .cook_chop_to_top(id, ctx, eval, node, channels, &path)
+                .map(|_| CookOutput::Updated);
         }
 
         // ---- Video: the pixels come from a decoder thread, not a shader.
         if node.op_type == ops::MOVIE_IN || node.op_type == ops::VIDEO_DEVICE_IN {
-            return self.cook_video(graph, id, ctx, eval, &path);
+            return self.cook_video(graph, id, ctx, eval, scene, &path);
+        }
+
+        if node.op_type == ops::MOVIE_OUT {
+            return self
+                .cook_movie_out_top(graph, id, ctx, eval, node, &path)
+                .map(|_| CookOutput::Updated);
         }
 
         // ---- Cache holds whatever it last saw while Active is off.
@@ -1551,7 +2249,7 @@ impl TopEngine {
                 .map(|p| p.eval(eval).as_bool())
                 .unwrap_or(true);
             if !active && self.nodes.get(id).is_some_and(|n| n.output.is_some()) {
-                return Ok(());
+                return Ok(CookOutput::Unchanged);
             }
         }
 
@@ -1575,36 +2273,15 @@ impl TopEngine {
         // parameter: changing it is a uniform write, not a re-lay-out.
         if node.op_type == ops::TEXT {
             self.cook_text(id, ctx, eval, node, width, height, &path)?;
-            return Ok(());
-        }
-
-        // ---- Movie File Out passes its input through like a Null, and the
-        // recording is a side effect of having done so. Reading the *output*
-        // rather than the input means what lands in the file is exactly what
-        // the node's viewer shows.
-        if node.op_type == ops::MOVIE_OUT {
-            let in0 = self.input_view(graph, id, 0);
-            let out = self.nodes[id].output.as_ref().unwrap().view.clone();
-            let uniforms = self.uniforms(width, height, ctx, ops::NO_PARAMS);
-            let buf = self.write_uniform(id, 0, uniforms);
-            let dummy = self.dummy.clone();
-            self.run_pass(Pass {
-                label: &path,
-                pipeline: PipelineRef::Builtin(ops::NULL),
-                target: &out,
-                uniform: &buf,
-                in0: &in0,
-                in1: &dummy,
-                nearest: false,
-            })?;
-            self.cook_movie_out(id, node, eval);
-            return Ok(());
+            return Ok(CookOutput::Updated);
         }
 
         // ---- The 3D pipeline is a different beast: vertex buffers, a depth
         // attachment, a cull mode. It gets its own module.
         if node.op_type == ops::RENDER {
-            return self.cook_render(graph, id, ctx, eval, scene, width, height);
+            return self
+                .cook_render(graph, id, ctx, eval, scene, width, height)
+                .map(|_| CookOutput::Updated);
         }
 
         // ---- Shader: built in, or compiled from a parameter.
@@ -1625,7 +2302,7 @@ impl TopEngine {
                     // does not black out a running patch.
                     pipeline_key = entry.shader_key.clone();
                     if pipeline_key.is_none() {
-                        return Ok(());
+                        return Ok(CookOutput::Updated);
                     }
                 }
             }
@@ -1691,5 +2368,6 @@ impl TopEngine {
                 nearest,
             })
         }
+        .map(|_| CookOutput::Updated)
     }
 }

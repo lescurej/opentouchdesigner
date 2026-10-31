@@ -45,7 +45,9 @@ fn render(ctx: &GpuContext, graph: &Graph, node: NodeId) -> (u32, Vec<u8>) {
 /// A horizontal black-to-white ramp, which is the input that makes banding
 /// and posterisation measurable.
 fn ramp(graph: &mut Graph, reg: &otd_core::OpRegistry, root: NodeId, size: i64) -> NodeId {
-    let r = graph.create(root, reg.get("rampTOP").unwrap(), None).unwrap();
+    let r = graph
+        .create(root, reg.get("rampTOP").unwrap(), None)
+        .unwrap();
     graph.set_param(r, "resw", Value::Int(size)).unwrap();
     graph.set_param(r, "resh", Value::Int(size)).unwrap();
     r

@@ -277,6 +277,9 @@ fn a_movie_plays_and_the_timeline_decides_which_frame() {
     rig.graph
         .set_param(movie, "file", Value::Str(path.display().to_string()))
         .unwrap();
+    rig.graph
+        .set_param(movie, "playmode", Value::Str("locked".into()))
+        .unwrap();
 
     assert!(
         rig.run_until_picture(movie),
@@ -332,6 +335,58 @@ impl Rig {
         }
         false
     }
+}
+
+#[test]
+fn sequential_movie_instances_advance_independently() {
+    let gpu = gpu_or_skip!();
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg is not installed");
+        return;
+    }
+    let dir = scratch("seq-dup");
+    let path = build_rgb_clip(&dir);
+
+    let mut rig = Rig::new(gpu);
+    let a = rig.add(ops::MOVIE_IN, "movie_a");
+    let b = rig.add(ops::MOVIE_IN, "movie_b");
+    for id in [a, b] {
+        rig.graph
+            .set_param(id, "file", Value::Str(path.display().to_string()))
+            .unwrap();
+        rig.graph
+            .set_param(id, "playmode", Value::Str("sequential".into()))
+            .unwrap();
+    }
+    assert!(rig.run_until_picture(a));
+    assert!(rig.run_until_picture(b));
+
+    for _ in 0..120 {
+        rig.time.advance(1.0 / 60.0);
+        rig.run(a);
+        rig.run(b);
+    }
+
+    let mut ch_a = Vec::new();
+    let mut ch_b = Vec::new();
+    assert!(rig.engine.movie_info(a, &mut ch_a));
+    assert!(rig.engine.movie_info(b, &mut ch_b));
+    let idx_a = ch_a
+        .iter()
+        .find(|(n, _)| n == "index")
+        .map(|(_, v)| *v)
+        .unwrap_or(0.0);
+    let idx_b = ch_b
+        .iter()
+        .find(|(n, _)| n == "index")
+        .map(|(_, v)| *v)
+        .unwrap_or(0.0);
+    assert!(
+        idx_a > idx_b + 5.0,
+        "first instance should be ahead of a fresh duplicate: a={idx_a} b={idx_b}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

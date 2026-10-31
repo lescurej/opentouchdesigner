@@ -21,3 +21,6 @@ wgpu = { version = "29", features = ["glsl"] }
 
 [dev-dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cidre = { version = "0.9.2", default-features = false, features = ["av", "cm", "cv", "ns", "cf", "blocks", "objc", "async", "dispatch", "macos_12_0"] }

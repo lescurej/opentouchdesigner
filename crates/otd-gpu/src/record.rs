@@ -33,6 +33,102 @@ use std::sync::mpsc::{SyncSender, sync_channel};
 /// letting a 4K recording quietly take a gigabyte of RAM.
 const QUEUE_DEPTH: usize = 8;
 
+pub fn write_still(
+    path: &str,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    image_type: &str,
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("nothing to record: the input has no picture".into());
+    }
+    if path.trim().is_empty() {
+        return Err("set a File to record to".into());
+    }
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!("no such folder: {}", parent.display()));
+        }
+    }
+    let expected = (width as usize) * (height as usize) * 4;
+    if pixels.len() != expected {
+        return Err(format!(
+            "frame size mismatch: got {} bytes, expected {expected}",
+            pixels.len()
+        ));
+    }
+    let pix_fmt = match image_type {
+        "jpeg" | "jpg" => "rgba",
+        _ => "rgba",
+    };
+    let mut command = Command::new("ffmpeg");
+    command
+        .arg("-y")
+        .args(["-f", "rawvideo"])
+        .args(["-pix_fmt", pix_fmt])
+        .args(["-s", &format!("{width}x{height}")])
+        .args(["-i", "-"])
+        .args(["-frames:v", "1"]);
+    if image_type == "jpeg" || image_type == "jpg" {
+        command.args(["-q:v", "2"]);
+    }
+    command
+        .arg(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "ffmpeg is not installed — `brew install ffmpeg`".to_string()
+        }
+        _ => format!("could not start ffmpeg: {e}"),
+    })?;
+    let mut stdin = child.stdin.take().ok_or("ffmpeg took no input pipe")?;
+    stdin
+        .write_all(pixels)
+        .map_err(|e| format!("could not write frame: {e}"))?;
+    drop(stdin);
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("ffmpeg failed: {e}"))?;
+    if !out.status.success() {
+        let text = String::from_utf8_lossy(&out.stderr);
+        let last = text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("ffmpeg refused to write the image");
+        return Err(last.trim().to_string());
+    }
+    Ok(())
+}
+
+pub fn sequence_path(template: &str, index: u32, leading_zeros: u32, image_type: &str) -> String {
+    let pad = leading_zeros.max(1) as usize;
+    let suffix = format!("{index:0pad$}");
+    if template.contains('#') {
+        return template.replace('#', &suffix);
+    }
+    let path = std::path::Path::new(template);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
+    let parent = path.parent().unwrap_or(std::path::Path::new(""));
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .unwrap_or(match image_type {
+            "jpeg" | "jpg" => "jpg",
+            "tiff" | "tif" => "tiff",
+            "bmp" => "bmp",
+            _ => "png",
+        });
+    parent
+        .join(format!("{stem}_{suffix}.{ext}"))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// A running recording.
 pub struct Recorder {
     /// What this was opened for — path, size and rate. A change to any of
@@ -46,6 +142,7 @@ pub struct Recorder {
     child: Arc<ChildHandle>,
     written: Arc<AtomicU64>,
     problem: Arc<std::sync::Mutex<Option<String>>>,
+    aborted: bool,
 }
 
 struct ChildHandle(std::sync::Mutex<Option<Child>>);
@@ -58,6 +155,14 @@ impl ChildHandle {
         if let Ok(mut slot) = self.0.lock() {
             if let Some(mut child) = slot.take() {
                 let _ = child.wait();
+            }
+        }
+    }
+
+    fn kill(&self) {
+        if let Ok(mut slot) = self.0.lock() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
             }
         }
     }
@@ -192,6 +297,7 @@ impl Recorder {
             child,
             written,
             problem,
+            aborted: false,
         })
     }
 
@@ -209,11 +315,21 @@ impl Recorder {
     pub fn problem(&self) -> Option<String> {
         self.problem.lock().ok().and_then(|p| p.clone())
     }
+
+    pub fn abort(&mut self) {
+        self.aborted = true;
+        self.stop.store(true, Ordering::Relaxed);
+        self.frames = None;
+        self.child.kill();
+    }
 }
 
 impl Drop for Recorder {
     fn drop(&mut self) {
-        self.stop.store(false, Ordering::Relaxed);
+        if self.aborted {
+            return;
+        }
+        self.stop.store(true, Ordering::Relaxed);
         // Closing the sender ends the worker's loop, which drops stdin, which
         // lets ffmpeg write its trailer. Then wait for it: a `Drop` that
         // returned before the file was closed would make "stop recording and

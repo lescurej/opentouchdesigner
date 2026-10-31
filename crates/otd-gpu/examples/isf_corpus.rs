@@ -60,7 +60,10 @@ fn main() {
         let isf = match otd_gpu::isf::import(&source) {
             Ok(isf) => isf,
             Err(e) => {
-                reasons.entry(bucket(&e.to_string())).or_default().push(name);
+                reasons
+                    .entry(bucket(&e.to_string()))
+                    .or_default()
+                    .push(name);
                 continue;
             }
         };
@@ -85,7 +88,10 @@ fn main() {
     }
 
     let total = files.len();
-    println!("\n{ok}/{total} imported and compiled ({}%)\n", ok * 100 / total);
+    println!(
+        "\n{ok}/{total} imported and compiled ({}%)\n",
+        ok * 100 / total
+    );
 
     let mut rows: Vec<(&String, &Vec<String>)> = reasons.iter().collect();
     rows.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
@@ -103,7 +109,12 @@ fn main() {
 }
 
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(90).collect()
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(90)
+        .collect()
 }
 
 fn collect(dir: &Path, out: &mut Vec<std::path::PathBuf>) {

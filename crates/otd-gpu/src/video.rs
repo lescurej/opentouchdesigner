@@ -32,7 +32,14 @@
 //! can block a frame. And a missing file, missing camera or missing ffmpeg
 //! degrades to a message on the node, because losing a source mid-show must
 //! not stop the render.
+//!
+//! On macOS, movie files are decoded in-process with AVFoundation (cidre);
+//! ffmpeg remains the fallback when that path fails and on other platforms.
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -68,6 +75,21 @@ pub fn is_still(path: &str) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| STILL_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+pub fn position_from_units(value: f64, unit: &str, fps: f64, span: i64) -> i64 {
+    match unit {
+        "seconds" => (value * fps.max(1e-6)).floor() as i64,
+        "frames" | "indices" => value.floor() as i64,
+        "fraction" => {
+            if span <= 1 {
+                0
+            } else {
+                (value.clamp(0.0, 1.0) * (span - 1) as f64).round() as i64
+            }
+        }
+        _ => value.floor() as i64,
+    }
 }
 
 /// What a source is worth knowing before the first frame arrives.
@@ -110,6 +132,10 @@ pub fn missing_ffmpeg() -> String {
 /// Ask ffprobe what a file is. Returns `None` when ffprobe is missing or the
 /// file is not media — the caller turns that into a message on the node.
 pub fn probe(path: &str) -> Option<Info> {
+    #[cfg(target_os = "macos")]
+    if let Some(info) = macos::probe(path) {
+        return Some(info);
+    }
     let out = ffprobe_command()?
         .args([
             "-v",
@@ -257,12 +283,33 @@ fn choose_mode(modes: &[Mode], want_w: u32, want_h: u32, want_fps: f64) -> Optio
 
 // ------------------------------------------------------------------ decoding
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MovieDecodeBackend {
+    AvFoundation,
+    Ffmpeg,
+}
+
+impl MovieDecodeBackend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AvFoundation => "AVFoundation (cidre)",
+            Self::Ffmpeg => "ffmpeg",
+        }
+    }
+}
+
 /// A running decode: a thread, and a short queue of frames it has produced.
 struct Reader {
     frames: Receiver<(i64, Arc<Frame>)>,
     stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
     /// Kept so the pipe can be killed rather than waited on.
     child: Option<Arc<SharedChild>>,
+    file_backend: Option<MovieDecodeBackend>,
+    #[cfg(target_os = "macos")]
+    capture_hold: Option<macos::MacCaptureHold>,
+    #[cfg(target_os = "macos")]
+    file_decode_hold: Option<macos::MacFileDecodeHold>,
 }
 
 /// A child process that can be killed from the owning thread while the
@@ -273,18 +320,27 @@ impl SharedChild {
     fn kill(&self) {
         if let Ok(mut c) = self.0.lock() {
             let _ = c.kill();
-            let _ = c.wait();
         }
     }
 }
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        // Killing the process is what unblocks the thread's read; without it
-        // a paused camera would keep a thread alive for the session.
+        self.stop.store(true, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(h) = &self.file_decode_hold {
+                h.cancel();
+            }
+            if let Some(mut h) = self.capture_hold.take() {
+                h.stop();
+            }
+        }
         if let Some(child) = &self.child {
             child.kill();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
     }
 }
@@ -324,6 +380,30 @@ pub struct Source {
     playhead: f64,
     /// Last `CookContext::time` seen; detects pause vs advance.
     last_timeline_time: f64,
+    /// Last transport `abs_time` applied to the sequential playhead.
+    ///
+    /// The cook runs once per timeline frame while the app advances
+    /// `abs_time` every display frame. The gap is the real interval.
+    last_sequential_abs_time: f64,
+    /// Previous `wanted` from the cook; a large jump means scrub, not decode lag.
+    last_wanted: i64,
+    /// Decoded ahead of the playhead while paused or catching up.
+    pending_frames: VecDeque<(i64, Arc<Frame>)>,
+    /// One future frame removed from the channel when pre-read is full.
+    blocked_frame: Option<(i64, Arc<Frame>)>,
+    movie_playing: bool,
+    /// Specify mode: decode only the requested index, never catch up through intermediates.
+    snap_index: bool,
+    pub(crate) playback_speed: f64,
+    dropped_frames: u64,
+    prefer_hw: bool,
+    preread: usize,
+    max_decode_cpus: u32,
+    /// Last mapped frame index from the cook (Info CHOP `index`).
+    playback_index: i64,
+    playback_length: i64,
+    playback_sample_rate: f64,
+    playback_ended: bool,
     /// When a live source was opened, and whether it has ever delivered.
     ///
     /// A camera that is refused does not fail: on macOS a denied
@@ -374,7 +454,13 @@ impl Source {
             reader: Some(Reader {
                 frames,
                 stop,
+                worker: None,
                 child: None,
+                file_backend: None,
+                #[cfg(target_os = "macos")]
+                capture_hold: None,
+                #[cfg(target_os = "macos")]
+                file_decode_hold: None,
             }),
             current: -1,
             frame: None,
@@ -383,12 +469,34 @@ impl Source {
             problem,
             playhead: 0.0,
             last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: 1.0,
+            playback_ended: false,
             opened: None,
         }
     }
 
+    pub fn set_decode_tuning(&mut self, prefer_hw: bool, preread: usize, max_cpus: u32) {
+        self.prefer_hw = prefer_hw;
+        self.preread = preread.clamp(1, 120);
+        self.max_decode_cpus = max_cpus;
+    }
+
     /// Open a media file through ffmpeg, starting at `start_index`.
     pub fn file(key: String, path: &str, info: Info, start_index: i64) -> Result<Source, String> {
+        let sample_rate = info.fps.max(1e-6);
         let mut source = Source {
             key,
             info,
@@ -401,6 +509,21 @@ impl Source {
             problem: Default::default(),
             playhead: start_index as f64,
             last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: start_index,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: start_index,
+            playback_length: 1,
+            playback_sample_rate: sample_rate,
+            playback_ended: false,
             opened: None,
         };
         source.reader = Some(source.spawn_file(path, start_index)?);
@@ -428,6 +551,50 @@ impl Source {
             device.trim().to_string()
         };
 
+        #[cfg(target_os = "macos")]
+        {
+            let problem: Arc<std::sync::Mutex<Option<String>>> = Default::default();
+            if let Ok((reader, info)) = macos::spawn_camera_reader(
+                &device,
+                width,
+                height,
+                fps,
+                QUEUE_DEPTH,
+                problem.clone(),
+            ) {
+                let sample_rate = info.fps.max(1e-6);
+                return Ok(Source {
+                    key,
+                    info,
+                    live: true,
+                    reader: Some(reader),
+                    current: -1,
+                    frame: None,
+                    revision: 0,
+                    awaiting_seek: false,
+                    problem,
+                    playhead: 0.0,
+                    last_timeline_time: f64::NAN,
+                    last_sequential_abs_time: f64::NAN,
+                    last_wanted: 0,
+                    pending_frames: VecDeque::new(),
+                    blocked_frame: None,
+                    movie_playing: true,
+                    snap_index: false,
+                    playback_speed: 1.0,
+                    dropped_frames: 0,
+                    prefer_hw: true,
+                    preread: QUEUE_DEPTH,
+                    max_decode_cpus: 0,
+                    playback_index: 0,
+                    playback_length: 1,
+                    playback_sample_rate: sample_rate,
+                    playback_ended: false,
+                    opened: Some(Instant::now()),
+                });
+            }
+        }
+
         let modes = camera_modes(format, &device);
         let (chosen_w, chosen_h, chosen_fps) = match choose_mode(&modes, width, height, fps) {
             Some((mode, rate)) => (mode.width, mode.height, rate),
@@ -448,7 +615,7 @@ impl Source {
             .args(["-video_size", &format!("{chosen_w}x{chosen_h}")])
             .args(["-i", &device]);
         let problem: Arc<std::sync::Mutex<Option<String>>> = Default::default();
-        let reader = spawn_ffmpeg(command, chosen_w, chosen_h, 0, problem.clone())?;
+        let reader = spawn_ffmpeg(command, chosen_w, chosen_h, 0, problem.clone(), QUEUE_DEPTH)?;
         Ok(Source {
             key,
             info: Info {
@@ -466,8 +633,151 @@ impl Source {
             problem,
             playhead: 0.0,
             last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: chosen_fps.max(1e-6),
+            playback_ended: false,
             opened: Some(Instant::now()),
         })
+    }
+
+    pub fn set_playback_report(&mut self, index: i64, length: i64, sample_rate: f64, ended: bool) {
+        self.playback_index = index;
+        self.playback_length = length.max(1);
+        self.playback_sample_rate = sample_rate.max(1e-6);
+        self.playback_ended = ended;
+    }
+
+    pub fn info_channels(&self) -> Vec<(String, f32)> {
+        let mut out = Vec::new();
+        let w = self
+            .info
+            .width
+            .max(self.frame.as_ref().map(|f| f.width).unwrap_or(0));
+        let h = self
+            .info
+            .height
+            .max(self.frame.as_ref().map(|f| f.height).unwrap_or(0));
+        let length = self.playback_length.max(1);
+        let index = self.playhead as f32;
+        let true_index = self.current.max(0);
+        let rate = self.playback_sample_rate;
+        out.push(("index".into(), index));
+        out.push(("true_index".into(), true_index as f32));
+        out.push(("length".into(), length as f32));
+        out.push(("fraction".into(), index / length as f32));
+        out.push(("sample_rate".into(), rate as f32));
+        out.push(("duration".into(), self.info.duration as f32));
+        out.push(("resx".into(), w as f32));
+        out.push(("resy".into(), h as f32));
+        out.push(("open".into(), 1.0));
+        out.push((
+            "reader".into(),
+            if self.reader.is_some() { 1.0 } else { 0.0 },
+        ));
+        out.push(("pending".into(), self.pending_frames.len() as f32));
+        out.push(("pre_read_misses".into(), self.dropped_frames as f32));
+        out.push((
+            "awaiting_seek".into(),
+            if self.awaiting_seek { 1.0 } else { 0.0 },
+        ));
+        out.push(("playhead".into(), self.playhead as f32));
+        out.push(("ended".into(), if self.playback_ended { 1.0 } else { 0.0 }));
+        let decode_backend = self
+            .movie_decode_backend()
+            .map(|be| match be {
+                MovieDecodeBackend::AvFoundation => 0.0,
+                MovieDecodeBackend::Ffmpeg => 1.0,
+            })
+            .unwrap_or(-1.0);
+        out.push(("decode_backend".into(), decode_backend));
+        if self.live {
+            out.push(("live".into(), 1.0));
+        }
+        out
+    }
+
+    pub fn set_movie_playing(&mut self, playing: bool) {
+        if self.live || playing == self.movie_playing {
+            return;
+        }
+        self.movie_playing = playing;
+    }
+
+    pub fn set_snap_index(&mut self, snap: bool) {
+        self.snap_index = snap;
+    }
+
+    pub fn movie_playback_status(&self, ideal: i64) -> Option<String> {
+        if self.live {
+            return None;
+        }
+        let lag = ideal.saturating_sub(self.current.max(0));
+        let decode = if self.reader.is_some() { "on" } else { "off" };
+        if lag == 0 && self.dropped_frames == 0 && self.reader.is_some() {
+            return None;
+        }
+        Some(format!(
+            "lag {lag} · pending {} · decode {decode} · drops {}",
+            self.pending_frames.len(),
+            self.dropped_frames
+        ))
+    }
+
+    fn best_pending_upto(&mut self, wanted: i64) -> Option<(i64, Arc<Frame>)> {
+        let mut best: Option<(i64, Arc<Frame>)> = None;
+        while let Some((idx, _)) = self.pending_frames.front() {
+            if *idx > wanted {
+                break;
+            }
+            let (idx, frame) = self.pending_frames.pop_front().unwrap();
+            if best.as_ref().is_none_or(|(b, _)| idx >= *b) {
+                best = Some((idx, frame));
+            }
+        }
+        best
+    }
+
+    fn pending_limit(&self) -> usize {
+        self.preread.clamp(1, 120)
+    }
+
+    fn push_pending(&mut self, index: i64, frame: Arc<Frame>) -> bool {
+        if index <= self.current.max(0) || self.pending_frames.len() >= self.pending_limit() {
+            return false;
+        }
+        self.pending_frames.push_back((index, frame));
+        true
+    }
+
+    fn restart_reader(&mut self, path: &str, at: i64) {
+        self.pending_frames.clear();
+        self.blocked_frame = None;
+        if let Some(old) = self.reader.take() {
+            drop(old);
+        }
+        if let Ok(reader) = self.spawn_file(path, at.max(0)) {
+            self.reader = Some(reader);
+            if !self.snap_index {
+                self.current = at.max(0) - 1;
+            }
+            self.awaiting_seek = true;
+        }
+    }
+
+    fn needs_seek(&self, wanted: i64, prev_wanted: i64) -> bool {
+        wanted < prev_wanted || wanted - prev_wanted > SEEK_AHEAD_LIMIT
     }
 
     /// Media frame index to decode, from timeline time and playback speed.
@@ -475,30 +785,107 @@ impl Source {
     /// Advances by `dt * speed * fps` while the timeline runs so a dropped
     /// UI frame does not jump two indices at once; snaps on scrub or pause.
     pub fn wanted_index(&mut self, timeline_time: f64, dt: f64, speed: f64) -> i64 {
-        let fps = self.info.fps;
-        if fps <= 0.0 || self.live {
+        self.wanted_index_sequential(timeline_time, dt, speed, true, false, self.info.fps)
+    }
+
+    pub fn wanted_index_locked(
+        &mut self,
+        timeline_time: f64,
+        speed: f64,
+        fps: f64,
+        interp: bool,
+    ) -> i64 {
+        let fps = fps.max(1e-6);
+        if self.info.fps <= 0.0 || self.live {
             return 0;
         }
-        let timeline = (timeline_time * speed * fps).floor();
-        let time_advances = dt > 0.0
-            && speed != 0.0
-            && (timeline_time - self.last_timeline_time).abs() > 1e-12;
-        if time_advances {
-            self.playhead += dt * speed * fps;
-            let drift = (timeline - self.playhead.floor()).abs();
-            if drift > 2.0 {
-                self.playhead = timeline;
-            }
+        self.playhead = (timeline_time * speed * fps).max(0.0);
+        self.last_timeline_time = timeline_time;
+        if interp {
+            self.playhead.round() as i64
         } else {
-            self.playhead = timeline;
+            self.playhead.floor() as i64
+        }
+    }
+
+    /// Sequential play (TouchDesigner): advances at `dt × speed × sample_rate`
+    /// and ignores timeline position while playing.
+    pub fn wanted_index_sequential(
+        &mut self,
+        timeline_time: f64,
+        dt: f64,
+        speed: f64,
+        playing: bool,
+        interp: bool,
+        fps: f64,
+    ) -> i64 {
+        let fps = fps.max(1e-6);
+        if self.info.fps <= 0.0 || self.live {
+            return 0;
+        }
+        let advancing = playing && speed != 0.0 && self.movie_playing;
+        if advancing && dt > 0.0 {
+            self.playhead += dt * speed * fps;
+            if self.playhead < 0.0 {
+                self.playhead = 0.0;
+            }
         }
         self.last_timeline_time = timeline_time;
-        self.playhead.floor() as i64
+        if interp {
+            self.playhead.round() as i64
+        } else {
+            self.playhead.floor() as i64
+        }
+    }
+
+    pub fn seek_playhead_to(&mut self, index: i64) {
+        self.playhead = index as f64;
+    }
+
+    pub fn reset_sequential_playback(&mut self) {
+        self.playhead = 0.0;
+        self.last_timeline_time = f64::NAN;
+        self.last_sequential_abs_time = f64::NAN;
+    }
+
+    /// Seconds of transport time since the previous sequential cook.
+    ///
+    /// The first call uses `fallback_dt` (this frame's `ctx.dt`). Later calls
+    /// use the `abs_time` gap, so several display frames collapsed into one
+    /// timeline frame still move the playhead. `cap` drops a hitch instead of
+    /// seeking across it. Pause does not move `abs_time`, so resume continues
+    /// at the same index.
+    pub fn sequential_wall_dt(&mut self, abs_time: f64, fallback_dt: f64, cap: f64) -> f64 {
+        let cap = cap.max(0.0);
+        let dt = if self.last_sequential_abs_time.is_nan() {
+            fallback_dt.max(0.0).min(cap)
+        } else {
+            (abs_time - self.last_sequential_abs_time).max(0.0).min(cap)
+        };
+        self.last_sequential_abs_time = abs_time;
+        dt
     }
 
     fn spawn_file(&self, path: &str, start_index: i64) -> Result<Reader, String> {
+        #[cfg(target_os = "macos")]
+        if self.prefer_hw {
+            if let Ok(reader) = macos::spawn_file_reader(
+                path,
+                &self.info,
+                start_index,
+                self.preread,
+                self.problem.clone(),
+            ) {
+                return Ok(reader);
+            }
+        }
         let mut command = ffmpeg_command().ok_or_else(missing_ffmpeg)?;
-        command.args(["-v", "error", "-threads", "0"]);
+        command.args(["-v", "error"]);
+        if self.max_decode_cpus > 0 {
+            command.args(["-threads", &self.max_decode_cpus.to_string()]);
+        } else {
+            command.args(["-threads", "0"]);
+        }
         if start_index > 0 {
             // Before -i, so ffmpeg seeks the container rather than decoding
             // and discarding everything up to the seek point.
@@ -515,70 +902,148 @@ impl Source {
             self.info.height,
             start_index,
             self.problem.clone(),
+            self.preread,
         )
     }
 
-    /// The frame to show, given the index the timeline is asking for.
-    ///
-    /// `wanted` is ignored for a live source, which always shows the newest
-    /// frame that has arrived.
-    pub fn advance(&mut self, path: &str, wanted: i64) -> Option<&Arc<Frame>> {
-        let mut adopted = false;
+    fn route_incoming_frame(
+        &mut self,
+        wanted: i64,
+        index: i64,
+        frame: Arc<Frame>,
+        pick: &mut Option<(i64, Arc<Frame>)>,
+    ) -> bool {
+        if self.snap_index {
+            if index != wanted {
+                return true;
+            }
+            *pick = Some((index, frame));
+            return true;
+        }
+        if index <= wanted {
+            if pick.as_ref().is_none_or(|(i, _)| index >= *i) {
+                *pick = Some((index, frame));
+            }
+            return true;
+        }
+        if self.push_pending(index, frame) {
+            return true;
+        }
+        false
+    }
 
-        // Take everything waiting. For a live source that means the newest
-        // frame wins and latency stays at one frame; for a file it means
-        // catching up after a slow frame costs no extra frames of lag.
-        while let Some(reader) = &self.reader {
+    fn drain_reader(&mut self, wanted: i64, pick: &mut Option<(i64, Arc<Frame>)>) {
+        loop {
+            if let Some((index, frame)) = self.blocked_frame.take() {
+                if !self.route_incoming_frame(wanted, index, frame.clone(), pick) {
+                    self.blocked_frame = Some((index, frame));
+                    return;
+                }
+                continue;
+            }
+            let Some(reader) = &self.reader else {
+                return;
+            };
             match reader.frames.try_recv() {
                 Ok((index, frame)) => {
-                    self.current = index;
-                    self.frame = Some(frame);
-                    adopted = true;
-                    if !self.live && index >= wanted {
+                    if !self.route_incoming_frame(wanted, index, frame.clone(), pick) {
+                        self.blocked_frame = Some((index, frame));
+                        return;
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.reader = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn advance(&mut self, path: &str, wanted: i64) -> Option<&Arc<Frame>> {
+        let wanted = wanted.max(0);
+        let prev_wanted = self.last_wanted;
+        self.last_wanted = wanted;
+
+        if self.live {
+            while let Some(reader) = &self.reader {
+                match reader.frames.try_recv() {
+                    Ok((index, frame)) => {
+                        self.current = index;
+                        self.frame = Some(frame);
+                        self.awaiting_seek = false;
+                        self.opened = None;
+                        self.revision += 1;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.reader = None;
                         break;
                     }
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // The stream ended. For a file that is the last frame,
-                    // and the caller decides whether to loop.
-                    self.reader = None;
-                    break;
+            }
+            return self.frame.as_ref();
+        }
+
+        if self.info.fps > 0.0 {
+            if self.snap_index {
+                if wanted != prev_wanted {
+                    self.restart_reader(path, wanted);
                 }
+            } else if self.needs_seek(wanted, prev_wanted) {
+                self.restart_reader(path, wanted);
+            }
+        }
+        if !self.snap_index {
+            if self.info.fps > 0.0 && self.reader.is_none() && self.frame.is_none() {
+                self.restart_reader(path, wanted);
+            } else if self.reader.is_none() && self.movie_playing && wanted > self.current.max(0) {
+                self.restart_reader(path, self.current.max(0));
+            }
+        } else if self.info.fps > 0.0 && self.reader.is_none() && self.frame.is_none() {
+            self.restart_reader(path, wanted);
+        }
+
+        let mut pick = if self.snap_index {
+            None
+        } else {
+            self.best_pending_upto(wanted)
+        };
+        if self.snap_index {
+            pick = self
+                .pending_frames
+                .iter()
+                .find(|(i, _)| *i == wanted)
+                .map(|(i, f)| (*i, f.clone()));
+            if pick.is_none() && self.current == wanted {
+                if let Some(f) = self.frame.clone() {
+                    pick = Some((self.current, f));
+                }
+            }
+        } else if pick.is_none() && self.current >= 0 && self.current <= wanted {
+            if let Some(f) = self.frame.clone() {
+                pick = Some((self.current, f));
             }
         }
 
-        if adopted {
-            // Whatever we were waiting for has arrived.
-            self.awaiting_seek = false;
-            // It delivered, so it is not the silent case. Stopping the clock
-            // rather than checking `frame.is_some()` keeps a camera that
-            // produced one frame and then stalled from being accused of a
-            // permission problem it does not have.
-            self.opened = None;
-            self.revision += 1;
-            if self.info.width == 0 {
-                if let Some(f) = &self.frame {
-                    self.info.width = f.width;
-                    self.info.height = f.height;
-                }
-            }
-        }
+        self.drain_reader(wanted, &mut pick);
 
-        // A file whose playhead moved backwards, or jumped far ahead, is
-        // cheaper to re-open at the new time than to decode up to.
-        if !self.live && self.info.fps > 0.0 {
-            let backwards = wanted < self.current;
-            let far_ahead = wanted > self.current + SEEK_AHEAD_LIMIT;
-            // A backward jump is somebody scrubbing and must feel immediate,
-            // so it preempts a pending seek. A forward one waits for the last
-            // seek to land, or playback faster than this machine decodes
-            // spends all its time starting processes it then kills.
-            if backwards || (far_ahead && !self.awaiting_seek) {
-                if let Ok(reader) = self.spawn_file(path, wanted.max(0)) {
-                    self.reader = Some(reader);
-                    self.current = wanted.max(0) - 1;
-                    self.awaiting_seek = true;
+        if let Some((index, frame)) = pick {
+            if self.current != index || !self.frame.as_ref().is_some_and(|f| Arc::ptr_eq(f, &frame))
+            {
+                if self.movie_playing && self.current >= 0 && index > self.current + 1 {
+                    self.dropped_frames = self
+                        .dropped_frames
+                        .saturating_add((index - self.current - 1) as u64);
+                }
+                self.current = index;
+                self.frame = Some(frame);
+                self.awaiting_seek = false;
+                self.opened = None;
+                self.revision += 1;
+                if self.info.width == 0 {
+                    self.info.width = self.frame.as_ref().unwrap().width;
+                    self.info.height = self.frame.as_ref().unwrap().height;
                 }
             }
         }
@@ -603,6 +1068,13 @@ impl Source {
     pub fn problem(&self) -> Option<String> {
         let said = self.problem.lock().ok().and_then(|p| p.clone());
         said.or_else(|| self.silent_camera())
+    }
+
+    pub fn movie_decode_backend(&self) -> Option<MovieDecodeBackend> {
+        if self.live {
+            return None;
+        }
+        self.reader.as_ref()?.file_backend
     }
 
     /// A live source that has produced nothing for too long.
@@ -642,6 +1114,7 @@ fn spawn_ffmpeg(
     height: u32,
     start_index: i64,
     problem: Arc<std::sync::Mutex<Option<String>>>,
+    queue_depth: usize,
 ) -> Result<Reader, String> {
     if width == 0 || height == 0 {
         return Err("source has no picture size".into());
@@ -684,10 +1157,11 @@ fn spawn_ffmpeg(
     }
     let child = Arc::new(SharedChild(std::sync::Mutex::new(child)));
     let stop = Arc::new(AtomicBool::new(false));
-    let (tx, frames): (SyncSender<(i64, Arc<Frame>)>, _) = sync_channel(QUEUE_DEPTH);
+    let (tx, frames): (SyncSender<(i64, Arc<Frame>)>, _) =
+        sync_channel(queue_depth.max(1).min(120));
 
     let worker_stop = stop.clone();
-    let _ = std::thread::Builder::new()
+    let worker = std::thread::Builder::new()
         .name("otd-video-decode".into())
         .spawn(move || {
             let bytes = width as usize * height as usize * 4;
@@ -697,10 +1171,11 @@ fn spawn_ffmpeg(
                 if stdout.read_exact(&mut buffer).is_err() {
                     break; // End of stream, or the process was killed.
                 }
+                let pixels = std::mem::replace(&mut buffer, vec![0u8; bytes]);
                 let frame = Arc::new(Frame {
                     width,
                     height,
-                    pixels: buffer.clone(),
+                    pixels,
                 });
                 // Block when the cook is behind: back-pressure is what keeps
                 // a fast source from filling memory. Only a disconnect ends
@@ -721,12 +1196,19 @@ fn spawn_ffmpeg(
                 }
                 index += 1;
             }
-        });
+        })
+        .map_err(|e| format!("could not start ffmpeg decode thread: {e}"))?;
 
     Ok(Reader {
         frames,
         stop,
+        worker: Some(worker),
         child: Some(child),
+        file_backend: Some(MovieDecodeBackend::Ffmpeg),
+        #[cfg(target_os = "macos")]
+        capture_hold: None,
+        #[cfg(target_os = "macos")]
+        file_decode_hold: None,
     })
 }
 
@@ -840,12 +1322,500 @@ mod tests {
             problem: Default::default(),
             playhead: 0.0,
             last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: 30.0,
+            playback_ended: false,
             opened: None,
         };
-        assert_eq!(source.wanted_index(0.0, 1.0 / 60.0, 1.0), 0);
-        assert_eq!(source.wanted_index(1.0 / 60.0, 1.0 / 60.0, 1.0), 0);
-        assert_eq!(source.wanted_index(2.0 / 60.0, 1.0 / 60.0, 1.0), 1);
-        assert_eq!(source.wanted_index(5.0, 0.0, 1.0), 150);
+        assert_eq!(
+            source.wanted_index_sequential(0.0, 1.0 / 60.0, 1.0, true, false, 30.0),
+            0
+        );
+        assert_eq!(
+            source.wanted_index_sequential(1.0 / 60.0, 1.0 / 60.0, 1.0, true, false, 30.0),
+            1
+        );
+        assert_eq!(
+            source.wanted_index_sequential(2.0 / 60.0, 1.0 / 60.0, 1.0, true, false, 30.0),
+            1
+        );
+        assert_eq!(source.wanted_index_locked(5.0, 1.0, 30.0, false), 150);
+    }
+
+    #[test]
+    fn integrated_dt_does_not_run_ahead_of_movie_playing() {
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 25.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: false,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 250,
+            playback_sample_rate: 25.0,
+            playback_ended: false,
+            opened: None,
+        };
+        for _ in 0..5 {
+            source.wanted_index_sequential(0.0, 1.0 / 60.0, 1.0, true, false, 25.0);
+        }
+        assert!(
+            source.playhead.abs() < 1e-6,
+            "play param true while movie_playing false must not advance playhead"
+        );
+        source.set_movie_playing(true);
+        source.wanted_index_sequential(0.0, 1.0 / 60.0, 1.0, true, false, 25.0);
+        assert!(
+            (source.playhead - 25.0 / 60.0).abs() < 0.02,
+            "after play starts, one frame should advance by dt*fps, got {}",
+            source.playhead
+        );
+    }
+
+    #[test]
+    fn sequential_wall_dt_covers_display_frames_sharing_one_timeline_frame() {
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 24.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 240,
+            playback_sample_rate: 24.0,
+            playback_ended: false,
+            opened: None,
+        };
+        let cap = 0.25;
+        let d0 = source.sequential_wall_dt(1.0 / 120.0, 1.0 / 120.0, cap);
+        source.wanted_index_sequential(0.0, d0, 1.0, true, false, 24.0);
+        let d1 = source.sequential_wall_dt(3.0 / 120.0, 1.0 / 120.0, cap);
+        assert!(
+            (d1 - 2.0 / 120.0).abs() < 1e-9,
+            "one cook must cover the skipped display frame, got {d1}"
+        );
+        source.wanted_index_sequential(0.0, d1, 1.0, true, false, 24.0);
+        assert!(
+            (source.playhead - 24.0 * 3.0 / 120.0).abs() < 1e-6,
+            "24fps media over 3/120s, got {}",
+            source.playhead
+        );
+
+        let held = source.playhead;
+        let paused = source.sequential_wall_dt(1.5, 0.5, cap);
+        source.wanted_index_sequential(0.0, paused, 1.0, false, false, 24.0);
+        assert!((source.playhead - held).abs() < 1e-9);
+        let resumed = source.sequential_wall_dt(1.5 + 1.0 / 60.0, 1.0 / 60.0, cap);
+        source.wanted_index_sequential(0.0, resumed, 1.0, true, false, 24.0);
+        assert!(
+            (source.playhead - held - 24.0 / 60.0).abs() < 1e-6,
+            "resume must not catch up the pause, got {}",
+            source.playhead
+        );
+    }
+
+    #[test]
+    fn info_index_follows_continuous_playhead_for_chop_slope() {
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 25.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 250,
+            playback_sample_rate: 25.0,
+            playback_ended: false,
+            opened: None,
+        };
+        source.wanted_index_sequential(0.0, 1.0 / 60.0, 1.0, true, false, 25.0);
+        let index = source
+            .info_channels()
+            .into_iter()
+            .find(|(n, _)| n == "index")
+            .map(|(_, v)| v)
+            .unwrap();
+        assert!(
+            (index - 25.0 / 60.0).abs() < 0.02,
+            "info index should ramp at media fps, got {index}"
+        );
+    }
+
+    #[test]
+    fn sequential_instances_do_not_snap_to_global_timeline_while_playing() {
+        let mut a = Source {
+            key: "a".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 30.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: 30.0,
+            playback_ended: false,
+            opened: None,
+        };
+        let info = Info {
+            width: 640,
+            height: 480,
+            fps: 30.0,
+            duration: 10.0,
+        };
+        let mut b = Source {
+            key: "b".into(),
+            info,
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: 30.0,
+            playback_ended: false,
+            opened: None,
+        };
+        let dt = 1.0 / 60.0;
+        for _ in 0..300 {
+            a.wanted_index_sequential(0.0, dt, 1.0, true, false, 30.0);
+        }
+        let ia = a.wanted_index_sequential(0.0, dt, 1.0, true, false, 30.0);
+        let ib = b.wanted_index_sequential(99.0, dt, 1.0, true, false, 30.0);
+        assert!(ia > 100, "first instance should have advanced: {ia}");
+        assert!(ib < 10, "fresh instance should start near 0: {ib}");
+    }
+
+    #[test]
+    fn sequential_paused_does_not_snap_to_timeline() {
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 640,
+                height: 480,
+                fps: 30.0,
+                duration: 10.0,
+            },
+            live: false,
+            reader: None,
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: QUEUE_DEPTH,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 1,
+            playback_sample_rate: 30.0,
+            playback_ended: false,
+            opened: None,
+        };
+        for _ in 0..60 {
+            source.wanted_index_sequential(0.0, 1.0 / 60.0, 1.0, true, false, 30.0);
+        }
+        let at_pause = source.playhead;
+        source.wanted_index_sequential(50.0, 0.0, 1.0, false, false, 30.0);
+        assert!(
+            (source.playhead - at_pause).abs() < 1e-6,
+            "paused sequential must not follow timeline scrub"
+        );
+    }
+
+    #[test]
+    fn due_frames_are_drained_even_when_pre_read_is_full() {
+        let (tx, frames) = sync_channel(32);
+        tx.send((
+            19,
+            Arc::new(Frame {
+                width: 2,
+                height: 2,
+                pixels: vec![0; 16],
+            }),
+        ))
+        .unwrap();
+        for index in 20..24_i64 {
+            tx.send((
+                index,
+                Arc::new(Frame {
+                    width: 2,
+                    height: 2,
+                    pixels: vec![0; 16],
+                }),
+            ))
+            .unwrap();
+        }
+        drop(tx);
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 2,
+                height: 2,
+                fps: 25.0,
+                duration: 20.0,
+            },
+            live: false,
+            reader: Some(Reader {
+                frames,
+                stop: Arc::new(AtomicBool::new(false)),
+                worker: None,
+                child: None,
+                file_backend: None,
+                #[cfg(target_os = "macos")]
+                capture_hold: None,
+                #[cfg(target_os = "macos")]
+                file_decode_hold: None,
+            }),
+            current: 18,
+            frame: Some(Arc::new(Frame {
+                width: 2,
+                height: 2,
+                pixels: vec![1; 16],
+            })),
+            revision: 1,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 19.0,
+            last_timeline_time: 0.0,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 18,
+            pending_frames: (21..25)
+                .map(|i| {
+                    (
+                        i,
+                        Arc::new(Frame {
+                            width: 2,
+                            height: 2,
+                            pixels: vec![0; 16],
+                        }),
+                    )
+                })
+                .collect(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: 4,
+            max_decode_cpus: 0,
+            playback_index: 19,
+            playback_length: 500,
+            playback_sample_rate: 25.0,
+            playback_ended: false,
+            opened: None,
+        };
+        source.advance("", 19);
+        assert_eq!(source.current, 19);
+    }
+
+    #[test]
+    fn a_fast_decoder_stays_on_the_playhead_instead_of_freezing() {
+        let (tx, frames) = sync_channel(256);
+        for index in 0..200_i64 {
+            tx.send((
+                index,
+                Arc::new(Frame {
+                    width: 2,
+                    height: 2,
+                    pixels: vec![0; 16],
+                }),
+            ))
+            .unwrap();
+        }
+        let mut source = Source {
+            key: "t".into(),
+            info: Info {
+                width: 2,
+                height: 2,
+                fps: 25.0,
+                duration: 20.0,
+            },
+            live: false,
+            reader: Some(Reader {
+                frames,
+                stop: Arc::new(AtomicBool::new(false)),
+                worker: None,
+                child: None,
+                file_backend: None,
+                #[cfg(target_os = "macos")]
+                capture_hold: None,
+                #[cfg(target_os = "macos")]
+                file_decode_hold: None,
+            }),
+            current: -1,
+            frame: None,
+            revision: 0,
+            awaiting_seek: false,
+            problem: Default::default(),
+            playhead: 0.0,
+            last_timeline_time: f64::NAN,
+            last_sequential_abs_time: f64::NAN,
+            last_wanted: 0,
+            pending_frames: VecDeque::new(),
+            blocked_frame: None,
+            movie_playing: true,
+            snap_index: false,
+            playback_speed: 1.0,
+            dropped_frames: 0,
+            prefer_hw: true,
+            preread: 4,
+            max_decode_cpus: 0,
+            playback_index: 0,
+            playback_length: 500,
+            playback_sample_rate: 25.0,
+            playback_ended: false,
+            opened: None,
+        };
+        let mut shown = -1_i64;
+        for n in 0..240 {
+            let wanted =
+                source.wanted_index_sequential(n as f64 / 60.0, 1.0 / 60.0, 1.0, true, false, 25.0);
+            source.advance("", wanted);
+            assert!(
+                source.pending_frames.len() <= 4,
+                "pre-read window grew to {}",
+                source.pending_frames.len()
+            );
+            if source.current > shown {
+                shown = source.current;
+            }
+            assert!(
+                source.current <= wanted,
+                "presented {} ahead of playhead {wanted}",
+                source.current
+            );
+        }
+        assert!(
+            shown >= 90,
+            "25fps playback froze at frame {shown} inside a 60Hz cook"
+        );
+        drop(tx);
     }
 
     #[test]

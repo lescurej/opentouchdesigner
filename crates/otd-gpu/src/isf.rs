@@ -362,10 +362,7 @@ fn number_array(value: Option<&serde_json::Value>, n: usize, fallback: [f64; 4])
 /// ISF shaders are written against a small set of globals and macros. Rather
 /// than rewriting the body — which would mean parsing GLSL — this declares
 /// them in terms of what the GLSL TOP already provides.
-fn preamble(
-    inputs: &[IsfInput],
-    image_count: usize,
-) -> Result<(String, Vec<String>), IsfError> {
+fn preamble(inputs: &[IsfInput], image_count: usize) -> Result<(String, Vec<String>), IsfError> {
     let mut out = String::from(
         // `__VERSION__` is defined because published ISF filters routinely
         // bracket their varyings in `#if __VERSION__ <= 120`, and naga leaves
@@ -792,7 +789,10 @@ void main() {}"#;
         }"#;
         let isf = import(src).unwrap();
         if let Err(e) = compiles(&isf) {
-            panic!("the modern branch should have been taken: {e}\n---\n{}", isf.source);
+            panic!(
+                "the modern branch should have been taken: {e}\n---\n{}",
+                isf.source
+            );
         }
     }
 
