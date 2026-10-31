@@ -1,0 +1,343 @@
+OpenTouchDesigner — codebase map for developers
+=================================================
+
+This file describes where code lives and how the pieces connect. For patch
+authoring and TD-like behavior, see GUIDE.md and MECHANISMS.md. For the product
+roadmap, see PLAN.md at the repo root.
+
+
+What the project is
+-------------------
+
+OpenTouchDesigner (OTD) is a node-based realtime visual system inspired by
+TouchDesigner. Patches are saved as `.otd` files (RON serialization in
+otd-core). Each frame, a pull-based cook evaluates operators wired in a graph;
+TOPs produce GPU textures via wgpu, CHOPs produce channels, DATs hold text and
+tables, SOPs hold mesh geometry, COMPs nest subgraphs.
+
+Two entry points run the same cook logic:
+
+  cargo run -p otd-app          GUI editor (egui + wgpu)
+  cargo run -p otd-cli -- …       Headless `otd` binary (run, render, demo, …)
+
+
+Workspace layout (repo root)
+----------------------------
+
+  Cargo.toml          Rust workspace: all crates, shared version, dev profiles
+  Cargo.lock          Pinned dependency versions
+  PLAN.md             Phases and design decisions (reference when unsure why)
+  README.md           User-facing overview; short crate list at the end
+
+  crates/             All Rust libraries and binaries (see below)
+  docs/               Human docs + generated OPERATORS.md
+  examples/           Shipped `.otd` patches and examples/media/
+  scripts/            Packaging, bundled Python fetch, icons, example media
+  .github/workflows/  CI and release automation
+  dist/               Local macOS app bundle output (not always present)
+  .claude/skills/     Agent skills for patch authoring (otd-patch, otd-glsl, …)
+
+
+Crate dependency graph (simplified)
+-----------------------------------
+
+                    otd-core  (graph, cook, project, params, expressions)
+                         |
+        +----------------+----------------+----------------+
+        |                |                |                |
+    otd-chop         otd-dat          otd-sop          otd-py
+        |                |                |           (also otd-dat)
+        |                |                |                |
+        +----------------+--------+-------+----------------+
+                                 |
+                             otd-gpu  (TOP / wgpu / 3D / video)
+                                 |
+                             otd-engine  (cross-family cook + registry)
+                          /                    \
+                    otd-app                  otd-cli
+                  (+ otd-ai)              (headless only)
+
+  otd-ai depends only on otd-core at runtime; it does not cook the GPU itself.
+  The editor wires AI suggestions into the graph through otd-app.
+
+
+Crates in detail
+----------------
+
+crates/otd-core
+  Role: Pure data and scheduling. No GPU, window, or Python in this crate.
+  Why it exists: Unit-testable cook engine; headless and future WASM targets.
+
+  Key modules (src/):
+    graph.rs, component.rs   Nodes, wires, families, OpDef / OpRegistry types
+    project.rs               Load/save `.otd`, settings
+    cook.rs                  Pull cook, cache, CookContext, CookEngine trait
+    param.rs, expr.rs        Parameters, expression evaluation (Rust subset)
+    crossing.rs              Which family can wire to which (converter ops)
+    edit.rs, history.rs      Undoable graph edits
+    callback.rs, script.rs   Queued edits from scripts (never mutate during cook)
+    bundle.rs                Portable project folders (used by CLI bundle)
+    media.rs                 External file references in projects
+    python_runtime.rs        Hooks for when PyO3 is needed (implemented in otd-py)
+    osc.rs, channel_pattern  OSC encoding, CHOP channel naming patterns
+    test_ops.rs              Minimal ops for core-only tests (cfg(test))
+
+  Tests: Inline in modules; integration tests are mostly in otd-engine.
+
+
+crates/otd-chop
+  Role: CHOP family — samples, channels, time slicing, audio/MIDI/OSC I/O.
+
+  Key modules:
+    engine.rs                ChopEngine
+    ops/                     CHOP operator table
+      mod.rs                 ChopCtx, OpState, ChopSpec, registry
+      helpers.rs             params!, no_params, with_rate, map_samples
+      operators.rs           params_* and cook_* per operator
+      table.rs               Registry entries (+ `io::specs()` appended)
+    io.rs                    Audio/MIDI/OSC/DMX device operators
+    clock.rs, anim.rs        Time and animation helpers
+    dmx.rs, wav.rs, data.rs  Domain-specific CHOP support
+    tracking.rs              Motion/tracking-related paths
+
+  Tests: crates/otd-chop/tests/
+
+
+crates/otd-dat
+  Role: DAT family — text, tables, network, callbacks.
+
+  Key modules:
+    ops/                     DAT operator table
+      mod.rs                 DatCtx, Watched, DatSpec, registry
+      helpers.rs             params!, no_params, glob, selection
+      constants.rs           Type names and default callback script bodies
+      operators.rs           params_* and cook_* per operator
+      table.rs               Registry entries
+    callbacks.rs             Execute / CHOP execute / parameter execute
+    webserver.rs, udp.rs, net HTTP/WebSocket helpers for DAT ops
+
+  Tests: crates/otd-dat/tests/, many DAT scenarios in otd-engine/tests/
+
+
+crates/otd-sop
+  Role: SOP family — mesh geometry (points, polygons, attributes).
+
+  Key modules:
+    lib.rs                   Geometry type shared with otd-gpu render path
+    ops/                     SOP operator table
+      mod.rs                 SopCtx, SopSpec, registry
+      helpers.rs             params!, no_params
+      operators.rs           params_* and cook_* per operator
+      table.rs               Registry entries
+
+  Tests: Inline in lib.rs; geometry used from otd-gpu and otd-engine tests.
+
+
+crates/otd-py
+  Role: Embedded CPython (PyO3) for multiline Script DATs and expression fallback.
+
+  Key files:
+    lib.rs                   PyEngine, TD-like `op` / `ch` / `me` bindings
+    lint.rs                  Python lint for the code editor
+    build.rs                 Links against bundled or system Python
+
+  Depends on otd-core and otd-dat. Pulled in only through otd-engine so the
+  app does not duplicate Python linkage logic.
+
+
+crates/otd-gpu
+  Role: TOP family on wgpu — 2D image ops, GLSL TOP, feedback, 3D render, video.
+
+  Key modules:
+    engine.rs, context.rs    TopEngine, GpuContext, texture pool
+    ops/                     TOP operator table (split by role, not one file per op)
+      mod.rs                 TopSpec, Sizing, registry(), public type constants
+      helpers.rs             Parameter eval helpers (`f`, `val`, `params!`, …)
+      definitions.rs         `params_*` / `pack_*` per operator
+      blend.rs               Named blend TOPs (shared composite.wgsl)
+      macros.rs              `filter_top!`, `blend_top!`
+      extra.rs               TD-style filter TOPs (macro table)
+      table.rs               Core TOP entries (generators, I/O, GLSL, …)
+    shader.rs, shaders/      WGSL (and GLSL path) shader sources
+    scene.rs, render3d.rs    Geometry COMP / camera / light rendering
+    isf.rs                   ISF import support
+    video.rs                 Platform video decode (e.g. macOS AVFoundation)
+    record.rs                Movie/file output paths
+    text.rs, texture.rs, math.rs
+
+  Depends on otd-sop for 3D geometry feeding the render pipeline.
+
+  Tests: crates/otd-gpu/tests/
+  Examples: crates/otd-gpu/examples/ (ISF corpus, samples)
+
+
+crates/otd-engine
+  Role: The only crate that joins all operator families in one cook.
+
+  Responsibilities:
+    - Implements otd_core::Cooker: for each node, dispatch to TOP/CHOP/DAT/SOP/COMP
+    - Owns ChannelStore so TOP params can read CHOP channels same frame
+    - Builds the full OpRegistry (all families + COMP + converters)
+    - Demo patch builders (demo.rs), operator docs text (docs.rs), lint (lint.rs)
+    - Panel COMP layout, replicators, info CHOP helpers
+
+  Key modules:
+    execute.rs               Execute DAT roots (always-cook nodes)
+    cook_roots.rs            Editor/perform cook roots (viewers, display, …)
+    comp.rs                  COMP internal cooking
+    panel*.rs                Panel UI COMP internals
+
+  Tests: crates/otd-engine/tests/ — primary integration suite for behavior
+         (converters, feedback, panels, python, frame phases, …)
+
+  Examples: render_png.rs, dump_demo.rs — headless cook without otd-app
+
+
+crates/otd-app
+  Role: Desktop editor — network canvas, viewers, parameters, perform/output windows.
+
+  Stack: eframe + egui + wgpu (same renderer family as otd-gpu).
+
+  Key modules:
+    app/                     OtdApp shell
+      mod.rs                 State, project I/O, selection, tests
+      cook.rs                cook_roots, cook_frame, thumbnails
+      ui.rs                  eframe loop, top bar, panels, perform, panel draw helpers
+    canvas/                  Node graph UI (wires, nodes, viewers on canvas)
+    inspector.rs, params.rs  Parameter panel, operator help text
+    code_editor.rs, code_lint.rs   Script DAT editing
+    textport.rs              Log + Python one-liner REPL
+    assistant.rs             AI assistant bar (uses otd-ai)
+    window_*.rs, container_view.rs   Perform / output / COMP navigation
+    create_dialog.rs, settings.rs, media.rs, watch.rs
+
+  Does not define operators; it edits the graph and displays cook results from
+  otd-engine + otd-gpu textures.
+
+
+crates/otd-cli
+  Role: Binary name `otd` — headless run, PNG render, stats, bundle, docs, demo.
+
+  src/main.rs              CLI parsing and subcommands
+  src/runtime.rs           Shared headless frame loop (no egui)
+
+  Use this for CI renders, regenerating examples, and operator reference:
+
+    cargo run -p otd-cli -- docs --out docs/OPERATORS.md
+    cargo run -p otd-cli -- demo tunnel --out examples/tunnel.otd
+
+
+crates/otd-ai
+  Role: LLM providers, API keys, patch recipes, vision for reference images.
+
+  Key modules:
+    provider.rs, keys.rs   HTTP providers, key storage
+    knowledge.rs, patch.rs Operator/context packaging for prompts
+    recipes.rs, recipes/   JSON starter patches for the assistant
+    vision.rs              Image shrink/encode for multimodal requests
+    cli.rs                 Subcommands when invoked from tooling
+
+  Kept free of otd-engine in Cargo.toml so the library stays lightweight; the
+  editor combines AI output with the real registry at integration time.
+
+  Examples: crates/otd-ai/examples/
+
+
+docs/ (documentation folder)
+------------------------------
+
+  CODEBASE.txt (this file)     Repository structure for developers
+  GUIDE.md                     Visual design recipes for patch authors
+  MECHANISMS.md                TD-like behavior (cook, params, viewers, …)
+  FRAME_PHASES.md              Order of work within a single frame
+  RUST_OPS.md                  How to add a Rust operator
+  MULTIPASS.md                 GPU multi-pass notes (feedback, ISF)
+  AI.md                        Assistant architecture
+  OPERATORS.md                 Generated operator reference (do not hand-edit)
+  INSTALL-macOS.txt            macOS install/quarantine notes
+  img/                         README screenshots and GIFs
+
+
+examples/
+---------
+
+  *.otd                        Patches opened from File → Examples in the app
+  media/                       Textures and assets referenced by examples
+
+  Committed examples are generated from `otd demo …` where possible; tests
+  fail if a demo drifts from the checked-in file (see README).
+
+
+scripts/
+--------
+
+  fetch-bundled-python.sh      Python standalone for PyO3 (macOS packaging)
+  package-macos.sh             Build .app / release artifacts
+  make-icon.sh, make-example-media.sh   Asset helpers
+
+
+Typical development flows
+-------------------------
+
+Run the editor:
+  cargo run -p otd-app
+  cargo run -p otd-app -- path/to/project.otd
+
+Run all tests (slow cook tests exist):
+  cargo test --workspace
+
+Work on one crate:
+  cargo test -p otd-gpu
+  cargo test -p otd-engine chop_time_slice
+
+Add a GPU TOP operator:
+  See docs/RUST_OPS.md — shader in otd-gpu/src/shaders/, register in ops.rs
+
+Add a CHOP/DAT/SOP operator:
+  Add OpDef + cook fn in that crate's ops.rs; register in otd-engine registry
+  (search for existing op name in otd-engine/src/lib.rs or palette)
+
+Change cook scheduling or cache:
+  otd-core/src/cook.rs + otd-engine cook_roots / execute
+
+Change parameter expressions:
+  otd-core/src/expr.rs (fast path) and otd-py (fallback)
+
+Change project file format:
+  otd-core/src/project.rs (mind backward compatibility for saved patches)
+
+Debug frame ordering:
+  docs/FRAME_PHASES.md and otd-engine/tests/frame_phases.rs
+
+
+Design rules worth remembering
+------------------------------
+
+1. otd-gpu and otd-chop never import each other. Cross-family reads go through
+   otd-engine (e.g. TOP parameter reading a CHOP channel).
+
+2. Graph mutations during cook are forbidden. Scripts and callbacks queue edits;
+   otd-core/script.rs flushes them between phases.
+
+3. Operator menus, parameter pages, OPERATORS.md, and in-editor help share one
+   registry — change the OpDef docs when you change behavior.
+
+4. Dev profile optimizes dependencies (Cargo.toml [profile.dev.package."*"])
+   because an unoptimized wgpu build is too slow for interactive work.
+
+5. Python: required for Script DATs and some expressions; build may need
+   bundled Python on macOS releases (scripts/fetch-bundled-python.sh).
+
+
+Where to look first (by task)
+-----------------------------
+
+  Bug in wire types / family mismatch     otd-core/crossing.rs, converter tests
+  Wrong cook / stale texture              otd-core/cook.rs, otd-engine/cook_roots.rs
+  Shader or TOP image wrong               otd-gpu/ops.rs + tests in otd-gpu/tests
+  Audio / MIDI / OSC CHOP                 otd-chop/
+  Execute DAT not firing                  otd-engine/execute.rs, otd-dat/callbacks.rs
+  Panel or COMP layout                    otd-engine/panel*.rs, otd-app/window_comp.rs
+  Editor UI / canvas interaction          otd-app/canvas/, otd-app/app/
+  Headless render mismatch vs editor      otd-cli/runtime.rs vs otd-app cook setup
+  AI assistant wrong patch                otd-ai/, otd-app/assistant.rs

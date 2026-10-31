@@ -9,9 +9,9 @@
 
 ## Cook and cache
 
-- Pull cook, per-node cache, `time_dependent` propagation.
-- **Cook** flag: always cook even when not displayed.
-- **Display**: tile preview; also a cook root when visible in the network.
+- Pull cook, per-node cache, `time_dependent` propagation (downstream recooks when fed by animated sources).
+- Cook roots: render/cook flags, Execute DATs, **Viewer** (not canvas visibility), Info/Parameter CHOPs, operators they watch, perform/window outputs, Display COMPs.
+- Orphan branches off-screen with no viewer and no watcher stay cached (TD-like cost).
 - Feedback TOP reads **last frame**; Select TOP reads **this frame** (see GPU tests in `otd-gpu`).
 
 ## Typed families and converters

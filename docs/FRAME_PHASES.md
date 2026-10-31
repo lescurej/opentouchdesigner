@@ -7,7 +7,7 @@ OpenTouchDesigner runs one **frame loop** per displayed tick. Order is fixed so 
 1. **Time** — Advance `CookContext` (`frame`, `time`, `abs_time`, `dt`). Scrub/loop handled in the app before cook.
 2. **Structural sync** — Replicator sync, clone sync from masters (may add nodes; no cook yet).
 3. **Apply queued edits** — Drain `ParamEdit` queue from the **previous** frame (`otd_core::edit::apply`). Includes Python `setpar` and parameter-execute requests.
-4. **Pull cook** — Roots: viewer, render/cook flags, visible display nodes, Execute DATs. Topological pull with cache; parameter expressions evaluate here (native Rust subset, optional PyO3 fallback).
+4. **Pull cook** — Roots: viewer/render/cook, info/param CHOPs and watched ops, perform/window (not canvas visibility). Topological pull with cache; parameter expressions evaluate here (native Rust subset, optional PyO3 fallback).
 5. **Callbacks** — CHOP Execute / Parameter Execute / frame DAT hooks run after values for this frame are known; they only **enqueue** edits for phase 3 next frame.
 6. **UI** — Inspector and canvas read cooked caches (may call `eval_param` with the same `CookContext`).
 

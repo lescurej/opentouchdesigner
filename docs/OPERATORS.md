@@ -2,9 +2,9 @@
 
 Generated from the operator registry — the same table the editor builds its menus and parameter pages from, so this cannot drift from what the operators actually do.
 
-174 operators.
+186 operators.
 
-**CHOP** (52)
+**CHOP** (53)
 
 - [analyzeCHOP](#analyze--analyzechop) — Reduce each channel to one number.
 - [animationCHOP](#animation--animationchop) — Keyframed curves over time.
@@ -26,6 +26,7 @@ Generated from the operator registry — the same table the editor builds its me
 - [filterCHOP](#filter--filterchop) — Low-pass or moving-average smoothing.
 - [holdCHOP](#hold--holdchop) — Freeze input 1's value until input 2 fires.
 - [inCHOP](#in--inchop) — A channel input on this component's node.
+- [infoCHOP](#info--infochop) — Another operator's info channels (TouchDesigner Info CHOP).
 - [keyboardinCHOP](#keyboard-in--keyboardinchop) — One channel per named key, 1 while held.
 - [lagCHOP](#lag--lagchop) — Smooth a channel, with separate rise and fall times.
 - [lfoCHOP](#lfo--lfochop) — A repeating waveform over time.
@@ -36,10 +37,10 @@ Generated from the operator registry — the same table the editor builds its me
 - [midiinCHOP](#midi-in--midiinchop) — Notes, velocity, pitch bend and the controls you have moved.
 - [midioutCHOP](#midi-out--midioutchop) — Sends `nNN` channels as notes and `ccNN` channels as controls.
 - [mouseinCHOP](#mouse-in--mouseinchop) — Cursor position and buttons.
-- [noiseCHOP](#noise--noisechop) — Smooth or random noise over time.
+- [noiseCHOP](#noise--noisechop) — Sparse convolution noise over time; channel count comes from Channel Names.
 - [nullCHOP](#null--nullchop) — Pass-through. A stable name to export from.
 - [oscinCHOP](#osc-in--oscinchop) — Incoming OSC messages, one channel per address argument.
-- [oscoutCHOP](#osc-out--oscoutchop) — Sends its channels as one OSC message per frame.
+- [oscoutCHOP](#osc-out--oscoutchop) — Sends each channel as an OSC message to the network address and port.
 - [outCHOP](#out--outchop) — This component's channel output.
 - [panelCHOP](#panel--panelchop) — Panel widget values as channels.
 - [parameterCHOP](#parameter--parameterchop) — Another operator's parameter values as channels (does not cook that operator).
@@ -59,19 +60,28 @@ Generated from the operator registry — the same table the editor builds its me
 - [trailCHOP](#trail--trailchop) — The last few seconds of each channel as one buffer, oldest sample first — draw a waveform, or lay out one instance per sample.
 - [triggerCHOP](#trigger--triggerchop) — An attack/decay/sustain/release envelope per channel.
 
-**COMP** (9)
+**COMP** (18)
 
-- [buttonCOMP](#button--buttoncomp) — A button on the output. Its state is the Value parameter.
+- [baseCOMP](#base--basecomp) — Sub-network; In and Out operators inside define inputs and outputs.
+- [buttonCOMP](#button--buttoncomp) — Toggle or momentary control; interior textCOMP + textTOP draws the label.
 - [cameraCOMP](#camera--cameracomp) — A viewpoint for a Render TOP.
-- [containerCOMP](#container--containercomp) — Groups panel COMPs (buttons, sliders, fields, nested containers) with layout and alignment.
-- [fieldCOMP](#field--fieldcomp) — An editable text field on the output.
+- [containerCOMP](#container--containercomp) — Parent panel for buttons, sliders, text, OP viewers, and nested containers; Children page drives align/layout.
+- [fieldCOMP](#field--fieldcomp) — Editable string parameter with textCOMP/textTOP interior.
 - [geometryCOMP](#geometry--geometrycomp) — Places a SOP in the scene, optionally instanced.
+- [glslCOMP](#glsl--glslcomp) — Panel region filled from an interior glslTOP network (layout only until cook hook lands).
 - [lightCOMP](#light--lightcomp) — A directional light, aimed from its position at the origin.
+- [listCOMP](#list--listcomp) — Scrollable list panel — parameters match TD; rendering uses interior TOPs.
+- [opviewerCOMP](#op-viewer--opviewercomp) — Shows another operator's cooked TOP inside this panel rect.
+- [parameterCOMP](#parameter--parametercomp) — Auto-layout of another operator's custom parameters (stub — build from par + TOP).
 - [replicatorCOMP](#replicator--replicatorcomp) — Keeps one clone of a master component per row of a table.
-- [sliderCOMP](#slider--slidercomp) — A fader on the output. Its position is the Value parameter.
-- [windowCOMP](#window--windowcomp) — Opens a separate OS window showing an operator (TouchDesigner Window COMP).
+- [selectCOMP](#select--selectcomp) — Displays another panel COMP by path (stub — use opviewer + container for now).
+- [sliderCOMP](#slider--slidercomp) — Fader control; Value parameter is the state the network reads.
+- [tableCOMP](#table--tablecomp) — Tabular panel tied to a tableDAT (stub — interior TOP/DAT wiring).
+- [textCOMP](#text--textcomp) — Static or expression-driven text via interior textTOP.
+- [widgetCOMP](#widget--widgetcomp) — Reusable panel asset hook (stub — same graph-in-COMP model as other panels).
+- [windowCOMP](#window--windowcomp) — Floating or external display for a cooked TOP (TouchDesigner Window COMP).
 
-**DAT** (20)
+**DAT** (22)
 
 - [chopexecuteDAT](#chop-execute--chopexecutedat) — Python callbacks when a watched channel changes or crosses a threshold.
 - [choptodatDAT](#chop-to-dat--choptodatdat) — Channels as a table of numbers.
@@ -91,8 +101,10 @@ Generated from the operator registry — the same table the editor builds its me
 - [tableDAT](#table--tabledat) — A table of text, stored in the project file.
 - [textDAT](#text--textdat) — A block of text.
 - [transposeDAT](#transpose--transposedat) — Swap rows and columns.
-- [udpinDAT](#udp-in--udpindat) — Datagrams received on a port, one message per row.
-- [udpoutDAT](#udp-out--udpoutdat) — Sends its input's text as a datagram when it changes.
+- [udpinDAT](#udp-in--udpindat) — Listens for datagrams; table columns address, port, message.
+- [udpoutDAT](#udp-out--udpoutdat) — Sends with send() / optional Send Input On Change; table shows incoming replies.
+- [webclientDAT](#web-client--webclientdat) — HTTP client: pulse Fetch to request in a background thread; response body is the DAT contents. WebSocket is not implemented yet.
+- [webserverDAT](#web-server--webserverdat) — HTTP server: onHTTPRequest and WebSocket callbacks in the Callbacks DAT; HTTP and WebSocket on the same port.
 
 **MAT** (5)
 
@@ -322,13 +334,39 @@ Largest connected bright region. Channels: present, count, x, y, area, width, he
 
 Wall-clock time, which keeps running when the timeline is paused.
 
-*No inputs — this is a generator.*
+**Inputs:** target, reference
 
 *Time dependent: cooks every frame, and everything downstream of it does too.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Sample Rate | `rate` | `60` | 1 … 48000 |
+| Output | `output` | `fractions` | `units` · `fractions` · `countdown` |
+| Hour Format | `hourformat` | `24` | `12` · `24` |
+| Hour Adjust | `houradjust` | `0` |  |
+| Start Reference | `startref` | `jan1` | `jan1` · `program` |
+| Millisecond | `msec` | `true` |  |
+| Second | `sec` | `true` |  |
+| Minute | `min` | `true` |  |
+| Hour | `hour` | `true` |  |
+| AM/PM | `ampm` | `true` |  |
+| Day of Week | `wday` | `true` |  |
+| Day of Month | `day` | `true` |  |
+| Day of Year | `yday` | `true` |  |
+| Week | `week` | `true` |  |
+| Month | `month` | `true` |  |
+| Year | `year` | `true` |  |
+| Latitude (deg) | `latitude1` | `43` |  |
+| Latitude (min) | `latitude2` | `39` |  |
+| N/S | `northsouth` | `north` | `north` · `south` |
+| Longitude (deg) | `longitude1` | `79` |  |
+| Longitude (min) | `longitude2` | `23` |  |
+| E/W | `eastwest` | `west` | `east` · `west` |
+| Moon Phase | `moonphase` | `false` |  |
+| Sun Phase | `sunphase` | `false` |  |
+| Sunrise | `sunrise` | `false` |  |
+| Sunset | `sunset` | `false` |  |
+| Declination | `declination` | `false` |  |
 
 ### Constant — `constantCHOP`
 
@@ -338,12 +376,135 @@ Fixed values as channels.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Channels | `channels` | `1` | 1 … 4 |
-| Name | `name` | `chan` |  |
-| Value 1 | `value0` | `0` |  |
-| Value 2 | `value1` | `0` |  |
-| Value 3 | `value2` | `0` |  |
-| Value 4 | `value3` | `0` |  |
+| Rows | `rows` | `1` | 1 … 64 |
+| Channel Name | `name0` | `chan1` |  |
+| Value | `value0` | `0` |  |
+| Channel Name | `name1` | `chan` |  |
+| Value | `value1` | `0` |  |
+| Channel Name | `name2` | `chan` |  |
+| Value | `value2` | `0` |  |
+| Channel Name | `name3` | `chan` |  |
+| Value | `value3` | `0` |  |
+| Channel Name | `name4` | `chan` |  |
+| Value | `value4` | `0` |  |
+| Channel Name | `name5` | `chan` |  |
+| Value | `value5` | `0` |  |
+| Channel Name | `name6` | `chan` |  |
+| Value | `value6` | `0` |  |
+| Channel Name | `name7` | `chan` |  |
+| Value | `value7` | `0` |  |
+| Channel Name | `name8` | `chan` |  |
+| Value | `value8` | `0` |  |
+| Channel Name | `name9` | `chan` |  |
+| Value | `value9` | `0` |  |
+| Channel Name | `name10` | `chan` |  |
+| Value | `value10` | `0` |  |
+| Channel Name | `name11` | `chan` |  |
+| Value | `value11` | `0` |  |
+| Channel Name | `name12` | `chan` |  |
+| Value | `value12` | `0` |  |
+| Channel Name | `name13` | `chan` |  |
+| Value | `value13` | `0` |  |
+| Channel Name | `name14` | `chan` |  |
+| Value | `value14` | `0` |  |
+| Channel Name | `name15` | `chan` |  |
+| Value | `value15` | `0` |  |
+| Channel Name | `name16` | `chan` |  |
+| Value | `value16` | `0` |  |
+| Channel Name | `name17` | `chan` |  |
+| Value | `value17` | `0` |  |
+| Channel Name | `name18` | `chan` |  |
+| Value | `value18` | `0` |  |
+| Channel Name | `name19` | `chan` |  |
+| Value | `value19` | `0` |  |
+| Channel Name | `name20` | `chan` |  |
+| Value | `value20` | `0` |  |
+| Channel Name | `name21` | `chan` |  |
+| Value | `value21` | `0` |  |
+| Channel Name | `name22` | `chan` |  |
+| Value | `value22` | `0` |  |
+| Channel Name | `name23` | `chan` |  |
+| Value | `value23` | `0` |  |
+| Channel Name | `name24` | `chan` |  |
+| Value | `value24` | `0` |  |
+| Channel Name | `name25` | `chan` |  |
+| Value | `value25` | `0` |  |
+| Channel Name | `name26` | `chan` |  |
+| Value | `value26` | `0` |  |
+| Channel Name | `name27` | `chan` |  |
+| Value | `value27` | `0` |  |
+| Channel Name | `name28` | `chan` |  |
+| Value | `value28` | `0` |  |
+| Channel Name | `name29` | `chan` |  |
+| Value | `value29` | `0` |  |
+| Channel Name | `name30` | `chan` |  |
+| Value | `value30` | `0` |  |
+| Channel Name | `name31` | `chan` |  |
+| Value | `value31` | `0` |  |
+| Channel Name | `name32` | `chan` |  |
+| Value | `value32` | `0` |  |
+| Channel Name | `name33` | `chan` |  |
+| Value | `value33` | `0` |  |
+| Channel Name | `name34` | `chan` |  |
+| Value | `value34` | `0` |  |
+| Channel Name | `name35` | `chan` |  |
+| Value | `value35` | `0` |  |
+| Channel Name | `name36` | `chan` |  |
+| Value | `value36` | `0` |  |
+| Channel Name | `name37` | `chan` |  |
+| Value | `value37` | `0` |  |
+| Channel Name | `name38` | `chan` |  |
+| Value | `value38` | `0` |  |
+| Channel Name | `name39` | `chan` |  |
+| Value | `value39` | `0` |  |
+| Channel Name | `name40` | `chan` |  |
+| Value | `value40` | `0` |  |
+| Channel Name | `name41` | `chan` |  |
+| Value | `value41` | `0` |  |
+| Channel Name | `name42` | `chan` |  |
+| Value | `value42` | `0` |  |
+| Channel Name | `name43` | `chan` |  |
+| Value | `value43` | `0` |  |
+| Channel Name | `name44` | `chan` |  |
+| Value | `value44` | `0` |  |
+| Channel Name | `name45` | `chan` |  |
+| Value | `value45` | `0` |  |
+| Channel Name | `name46` | `chan` |  |
+| Value | `value46` | `0` |  |
+| Channel Name | `name47` | `chan` |  |
+| Value | `value47` | `0` |  |
+| Channel Name | `name48` | `chan` |  |
+| Value | `value48` | `0` |  |
+| Channel Name | `name49` | `chan` |  |
+| Value | `value49` | `0` |  |
+| Channel Name | `name50` | `chan` |  |
+| Value | `value50` | `0` |  |
+| Channel Name | `name51` | `chan` |  |
+| Value | `value51` | `0` |  |
+| Channel Name | `name52` | `chan` |  |
+| Value | `value52` | `0` |  |
+| Channel Name | `name53` | `chan` |  |
+| Value | `value53` | `0` |  |
+| Channel Name | `name54` | `chan` |  |
+| Value | `value54` | `0` |  |
+| Channel Name | `name55` | `chan` |  |
+| Value | `value55` | `0` |  |
+| Channel Name | `name56` | `chan` |  |
+| Value | `value56` | `0` |  |
+| Channel Name | `name57` | `chan` |  |
+| Value | `value57` | `0` |  |
+| Channel Name | `name58` | `chan` |  |
+| Value | `value58` | `0` |  |
+| Channel Name | `name59` | `chan` |  |
+| Value | `value59` | `0` |  |
+| Channel Name | `name60` | `chan` |  |
+| Value | `value60` | `0` |  |
+| Channel Name | `name61` | `chan` |  |
+| Value | `value61` | `0` |  |
+| Channel Name | `name62` | `chan` |  |
+| Value | `value62` | `0` |  |
+| Channel Name | `name63` | `chan` |  |
+| Value | `value63` | `0` |  |
 | Sample Rate | `rate` | `60` | 1 … 48000 |
 
 ### Count — `countCHOP`
@@ -403,7 +564,7 @@ Play a channel back later, with optional feedback.
 
 Sends its channels as DMX over Art-Net or sACN.
 
-Sends each channel as a DMX slot over Art-Net or sACN (E1.31). Values are expected in 0..1 and are clamped rather than wrapped — a light jumping from full to black on an overshoot is much worse than one that saturates.
+Sends each channel as a DMX slot over Art-Net or sACN (E1.31). Channel values are 0..255 (TouchDesigner-style) and clamp rather than wrap.
 
 DMX is a state protocol, so each frame sends the current value of each channel, which is the last sample of the slice.
 
@@ -472,6 +633,18 @@ Freeze input 1's value until input 2 fires.
 A channel input on this component's node.
 
 *No inputs — this is a generator.*
+
+### Info — `infoCHOP`
+
+Another operator's info channels (TouchDesigner Info CHOP).
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Operator | `op` | `..` |  |
 
 ### Keyboard In — `keyboardinCHOP`
 
@@ -551,12 +724,24 @@ Combine and scale channels.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Combine Inputs | `combine` | `add` | `add` · `subtract` · `multiply` · `divide` · `maximum` · `minimum` · `average` |
-| Gain | `gain` | `1` | -4 … 4 |
-| Offset | `offset` | `0` | -4 … 4 |
+| Channel Pre OP | `preop` | `off` | `off` · `negate` · `pos` · `root` · `square` · `inverse` |
+| Combine Channels | `chanop` | `off` | `off` · `add` · `subtract` · `multiply` · `divide` · `average` · `minimum` · `maximum` · `length` |
+| Combine CHOPs | `combine` | `add` | `off` · `add` · `subtract` · `multiply` · `divide` · `average` · `minimum` · `maximum` · `length` |
+| Channel Post OP | `postop` | `off` | `off` · `negate` · `pos` · `root` · `square` · `inverse` |
+| Match By | `match` | `index` | `index` · `name` |
+| Align | `align` | `auto` | `auto` · `none` · `stretch` · `start` · `end` · `shift1` · `trim1` · `stretch1` · `trim` · `squash` |
+| Integer | `integer` | `off` | `off` · `ceiling` · `floor` · `round` |
+| Pre-Add | `preoff` | `0` | -4 … 4 |
+| Multiply | `gain` | `1` | -4 … 4 |
+| Post-Add | `offset` | `0` | -4 … 4 |
+| From Range Min | `fromrange1` | `0` | -10000 … 10000 |
+| From Range Max | `fromrange2` | `1` | -10000 … 10000 |
+| To Range Min | `torange1` | `0` | -10000 … 10000 |
+| To Range Max | `torange2` | `1` | -10000 … 10000 |
 | Clamp | `clamp` | `false` |  |
 | Clamp Min | `clampmin` | `0` |  |
 | Clamp Max | `clampmax` | `1` |  |
+| Scope | `scope` | `*` |  |
 
 ### Merge — `mergeCHOP`
 
@@ -605,7 +790,7 @@ Cursor position and buttons.
 
 ### Noise — `noiseCHOP`
 
-Smooth or random noise over time.
+Sparse convolution noise over time; channel count comes from Channel Names.
 
 *No inputs — this is a generator.*
 
@@ -613,12 +798,18 @@ Smooth or random noise over time.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Type | `type` | `smooth` | `smooth` · `random` |
-| Channels | `channels` | `1` | 1 … 8 |
-| Name | `name` | `noise` |  |
-| Length | `length` | `600` | 1 … 8192 |
+| Type | `type` | `sparse` | `sparse` · `hermite` · `harmonic` · `brownian` · `random` · `alligator` |
+| Channel Names | `channelname` | `chan1` |  |
+| Start | `start` | `0` |  |
+| Start Unit | `startunit` | `seconds` | `seconds` · `frames` · `samples` |
+| End | `end` | `10` |  |
+| End Unit | `endunit` | `seconds` | `seconds` · `frames` · `samples` |
 | Time Slice | `timeslice` | `false` |  |
-| Period | `period` | `1` | 0.01 … 10 |
+| Period | `period` | `1` | 0 … 10 |
+| Period Unit | `periodunit` | `seconds` | `seconds` · `frames` · `samples` |
+| Harmonics | `harmon` | `0` | 0 … 20 |
+| Harmonic Spread | `spread` | `2` | 1 … 4 |
+| Roughness | `rough` | `0.5` | 0 … 1 |
 | Amplitude | `amplitude` | `1` | 0 … 4 |
 | Offset | `offset` | `0` | -2 … 2 |
 | Seed | `seed` | `0` |  |
@@ -640,11 +831,18 @@ Incoming OSC messages, one channel per address argument.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Port | `port` | `9000` | 1 … 65535 |
+| Active | `active` | `true` |  |
+| Protocol | `protocol` | `msging` | `msging` · `multicastmsging` |
+| Network Address | `netaddress` | `239.255.0.1` |  |
+| Network Port | `port` | `7000` | 1 … 65535 |
+| Local Address | `localaddress` | *(empty)* |  |
+| OSC Address Scope | `oscaddressscope` | *(empty)* |  |
+| Use Global Rate | `useglobalrate` | `true` |  |
+| Default Sample Rate | `samplerate` | `60` | 1 … 48000 |
 
 ### OSC Out — `oscoutCHOP`
 
-Sends its channels as one OSC message per frame.
+Sends each channel as an OSC message to the network address and port.
 
 **Inputs:** in
 
@@ -652,10 +850,18 @@ Sends its channels as one OSC message per frame.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Address | `address` | `127.0.0.1` |  |
-| Port | `port` | `9001` | 1 … 65535 |
-| OSC Path | `path` | `/otd` |  |
 | Active | `active` | `true` |  |
+| Protocol | `protocol` | `msging` | `msging` · `multicastmsging` · `reliablemsging` |
+| Network Address | `netaddress` | `127.0.0.1` |  |
+| Network Port | `port` | `7001` | 1 … 65535 |
+| Local Address | `localaddress` | *(empty)* |  |
+| Max Queue Size | `maxsize` | `50` | 1 … 10000 |
+| Max Queue Size Unit | `maxsizeunit` | `samples` | `samples` · `frames` · `seconds` |
+| Cook Every Frame | `cookalways` | `false` |  |
+| Numeric Format | `numericformat` | `float` | `int` · `float` · `double` |
+| Data Format | `format` | `sample` | `sample` · `timeslice` · `transpose` · `transposename` |
+| Max Message Bytes | `maxbytes` | `8192` | 64 … 65536 |
+| Send Events Every Cook | `sendevents` | `true` |  |
 
 ### Out — `outCHOP`
 
@@ -888,22 +1094,63 @@ An attack/decay/sustain/release envelope per channel.
 
 ## COMP
 
+### Base — `baseCOMP`
+
+Sub-network; In and Out operators inside define inputs and outputs.
+
+A plain component: a network inside, with **In** and **Out** operators (TOP/CHOP/SOP/DAT) defining the node's connectors. No panel UI — use `containerCOMP` only when you need a control surface.
+
+Add `inTOP` / `outTOP` (or other family In/Out), wire internally, and the parent network sees one operator.
+
+*No inputs — this is a generator.*
+
 ### Button — `buttonCOMP`
 
-A button on the output. Its state is the Value parameter.
+Toggle or momentary control; interior textCOMP + textTOP draws the label.
 
 *No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| Label | `label` | `Button` |  |
 | Value | `value` | `0` | 0 … 1 |
-| Mode | `mode` | `toggle` | `toggle` · `momentary` |
-| X | `x` | `0.05` | 0 … 1 |
-| Y | `y` | `0.05` | 0 … 1 |
-| Width | `w` | `0.2` | 0 … 1 |
-| Height | `h` | `0.08` | 0 … 1 |
+| Button Type | `mode` | `toggle` | `toggle` · `momentary` |
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
 | Align Order | `alignorder` | `0` |  |
-| Label | `label` | *(empty)* |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
 
 ### Camera — `cameraCOMP`
 
@@ -924,7 +1171,7 @@ A viewpoint for a Render TOP.
 
 ### Container — `containerCOMP`
 
-Groups panel COMPs (buttons, sliders, fields, nested containers) with layout and alignment.
+Parent panel for buttons, sliders, text, OP viewers, and nested containers; Children page drives align/layout.
 
 Groups **panel** COMPs — Button, Slider, Field, and nested Containers — into a control surface on the perform output. **Layout** (x, y, width, height) is in fractions of the parent panel; **Children → Align** lays out child panels in a row, column, or grid with spacing and margins, like TouchDesigner's Container COMP.
 
@@ -938,37 +1185,103 @@ Still holds a normal operator network (Out TOP, effects, etc.); panel layout is 
 | Y | `y` | `0` | 0 … 1 |
 | Width | `w` | `1` | 0 … 1 |
 | Height | `h` | `1` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
 | Align Order | `alignorder` | `0` |  |
-| Label | `label` | *(empty)* |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
 | Display | `display` | `true` |  |
 | Enable | `enable` | `true` |  |
+| Label | `label` | *(empty)* |  |
+| Click Through | `clickthrough` | `false` |  |
 | Opacity | `opacity` | `1` | 0 … 1 |
-| Background R | `bgcolorr` | `0.08` | 0 … 1 |
-| Background G | `bgcolorg` | `0.09` | 0 … 1 |
-| Background B | `bgcolorb` | `0.11` | 0 … 1 |
-| Background Alpha | `bgalpha` | `0.85` | 0 … 1 |
-| Align | `align` | `none` | `none` · `horizlr` · `horizrl` · `verttb` · `vertbt` · `gridrows` · `gridcols` |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+| View Width | `vieww` | `400` | 64 … 16384 |
+| View Height | `viewh` | `300` | 64 … 16384 |
+| Align | `align` | `none` | `none` · `horizlr` · `horizrl` · `verttb` · `vertbt` · `gridrows` · `gridcols` · `nodes` |
 | Spacing | `spacing` | `0.02` | 0 … 0.5 |
+| Max per Line | `alignmax` | `0` | 0 … 64 |
 | Margin L | `marginl` | `0.02` | 0 … 0.5 |
 | Margin R | `marginr` | `0.02` | 0 … 0.5 |
 | Margin T | `margint` | `0.02` | 0 … 0.5 |
 | Margin B | `marginb` | `0.02` | 0 … 0.5 |
+| Justify Method | `justifymethod` | `individual` | `individual` · `group` |
+| Justify Horizontal | `justifyh` | `off` | `off` · `left` · `center` · `right` |
+| Justify Vertical | `justifyv` | `off` | `off` · `top` · `center` · `bottom` |
+| Fit | `fit` | `off` | `off` · `horizontal` · `vertical` · `best` |
+| Scale X | `scalex` | `1` | 0 … 8 |
+| Scale Y | `scaley` | `1` | 0 … 8 |
+| Offset X | `offsetx` | `0` |  |
+| Offset Y | `offsety` | `0` |  |
+| Crop | `crop` | `off` | `off` · `on` · `never` |
 
 ### Field — `fieldCOMP`
 
-An editable text field on the output.
+Editable string parameter with textCOMP/textTOP interior.
 
 *No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Text | `text` | *(empty)* |  |
-| X | `x` | `0.05` | 0 … 1 |
-| Y | `y` | `0.05` | 0 … 1 |
-| Width | `w` | `0.2` | 0 … 1 |
-| Height | `h` | `0.08` | 0 … 1 |
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
 | Align Order | `alignorder` | `0` |  |
-| Label | `label` | *(empty)* |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
 
 ### Geometry — `geometryCOMP`
 
@@ -1002,6 +1315,51 @@ Places a SOP in the scene, optionally instanced.
 | Blue Channel | `cb` | *(empty)* |  |
 | Alpha Channel | `ca` | *(empty)* |  |
 
+### GLSL — `glslCOMP`
+
+Panel region filled from an interior glslTOP network (layout only until cook hook lands).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
 ### Light — `lightCOMP`
 
 A directional light, aimed from its position at the origin.
@@ -1013,6 +1371,142 @@ A directional light, aimed from its position at the origin.
 | Translate | `translate` | `[3.0, 5.0, 4.0]` |  |
 | Color | `color` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Intensity | `intensity` | `1` | 0 … 8 |
+
+### List — `listCOMP`
+
+Scrollable list panel — parameters match TD; rendering uses interior TOPs.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### OP Viewer — `opviewerCOMP`
+
+Shows another operator's cooked TOP inside this panel rect.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Operator | `op` | *(empty)* |  |
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### Parameter — `parameterCOMP`
+
+Auto-layout of another operator's custom parameters (stub — build from par + TOP).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
 
 ### Replicator — `replicatorCOMP`
 
@@ -1030,32 +1524,245 @@ Replicants are ordinary clones: they follow the master's network as it is edited
 | Template DAT (one replicant per row) | `template` | *(empty)* |  |
 | First Row/Column Are Names | `byname` | `true` |  |
 
-### Slider — `sliderCOMP`
+### Select — `selectCOMP`
 
-A fader on the output. Its position is the Value parameter.
+Displays another panel COMP by path (stub — use opviewer + container for now).
 
 *No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Value | `value` | `0` |  |
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### Slider — `sliderCOMP`
+
+Fader control; Value parameter is the state the network reads.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Label | `label` | `Slider` |  |
+| Value | `value` | `0.5` |  |
 | Minimum | `min` | `0` |  |
 | Maximum | `max` | `1` |  |
 | Orientation | `orientation` | `horizontal` | `horizontal` · `vertical` |
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### Table — `tableCOMP`
+
+Tabular panel tied to a tableDAT (stub — interior TOP/DAT wiring).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### Text — `textCOMP`
+
+Static or expression-driven text via interior textTOP.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Text | `text` | *(empty)* |  |
+| Font Size | `fontsize` | `0.5` | 0.05 … 2 |
 | X | `x` | `0.05` | 0 … 1 |
 | Y | `y` | `0.05` | 0 … 1 |
 | Width | `w` | `0.2` | 0 … 1 |
 | Height | `h` | `0.08` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
 | Align Order | `alignorder` | `0` |  |
-| Label | `label` | *(empty)* |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
+### Widget — `widgetCOMP`
+
+Reusable panel asset hook (stub — same graph-in-COMP model as other panels).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| X | `x` | `0.02` | 0 … 1 |
+| Y | `y` | `0.02` | 0 … 1 |
+| Width | `w` | `0.44` | 0 … 1 |
+| Height | `h` | `0.12` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
 
 ### Window — `windowCOMP`
 
-Opens a separate OS window showing an operator (TouchDesigner Window COMP).
+Floating or external display for a cooked TOP (TouchDesigner Window COMP).
 
-Turn **Open** on to show **Operator** (`winop`) in its own window — a TOP directly, or a COMP via its Out TOP. Leave **Operator** blank to use this component's own Out TOP.
+Shows a **cooked TOP** on a floating OS window or projector output — nothing else. Set **Operator** (`winop`) to a TOP, or a COMP (resolved to its view / Out TOP). Leave **Operator** blank to use this node's wired Out TOP.
 
-**Performance** sets the perform output to the COMP that owns what you are showing and switches the main window into perform mode, like TouchDesigner's perform window pulse.
+Panel UI lives in **containerCOMP** + Perform (F1), not here. **Performance** marks this window as the project's default **output** windowCOMP (TOP path for the Output window), not the Perform UI.
 
 *No inputs — this is a generator.*
 
@@ -1063,11 +1770,25 @@ Turn **Open** on to show **Operator** (`winop`) in its own window — a TOP dire
 |---|---|---|---|
 | Operator | `winop` | *(empty)* |  |
 | Title | `title` | `Window` |  |
+| Justify and Offset To | `justifyoffsetto` | `primarydisplay` | `primarydisplay` · `specifydisplay` · `alldisplays` |
+| Display | `display` | `0` | 0 … 16 |
+| Justify Horizontal | `justifyh` | `center` | `left` · `center` · `right` · `mouse` |
+| Justify Vertical | `justifyv` | `center` | `top` · `center` · `bottom` · `mouse` |
+| Offset X | `winoffsetx` | `0` | -8192 … 8192 |
+| Offset Y | `winoffsety` | `0` | -8192 … 8192 |
+| Opening Size | `openingsize` | `custom` | `automatic` · `fill` · `custom` · `exclusive` |
 | Width | `winw` | `1280` | 64 … 16384 |
 | Height | `winh` | `720` | 64 … 16384 |
 | Borders | `borders` | `true` |  |
+| Always on Top | `alwaysontop` | `false` |  |
+| Stretch | `stretch` | `fit` | `fit` · `fill` · `stretch` · `native` |
+| Cursor Visible | `cursorvisible` | `true` |  |
+| Allow Minimize | `allowminimize` | `true` |  |
+| V-Sync Mode | `vsyncmode` | `enabled` | `disabled` · `enabled` · `halfmonitorrate` |
 | Open | `open` | `false` |  |
-| Performance | `performance` | `false` |  |
+| Open as Perform Window | `performance` | `false` |  |
+| Close on Escape | `closeescape` | `true` |  |
+| Prevent Display Sleep | `blocksleep` | `false` |  |
 
 ---
 
@@ -1087,7 +1808,8 @@ Python callbacks when a watched channel changes or crosses a threshold.
 | Watch CHOP | `chop` | *(empty)* |  |
 | Channels | `channels` | `*` |  |
 | On Threshold | `threshold` | `0.5` | -10 … 10 |
-| Callbacks | `source` | *(multi-line)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 
 ### CHOP to DAT — `choptodatDAT`
 
@@ -1123,7 +1845,8 @@ Python callbacks at the start and end of a frame.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Active | `active` | `true` |  |
-| Callbacks | `source` | *(multi-line)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 
 ### In — `inDAT`
 
@@ -1181,7 +1904,8 @@ Python callbacks when a panel value changes.
 | Value Change | `valuechange` | `true` |  |
 | While On | `whileon` | `false` |  |
 | While Off | `whileoff` | `false` |  |
-| Callbacks | `source` | *(multi-line)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 
 ### Parameter Execute — `parameterexecuteDAT`
 
@@ -1197,7 +1921,8 @@ Python callbacks when a watched parameter changes.
 | OPs | `op` | *(empty)* |  |
 | Parameters | `parameters` | `*` |  |
 | Value Change | `valuechange` | `true` |  |
-| Callbacks | `source` | *(multi-line)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 
 ### Script — `scriptDAT`
 
@@ -1276,7 +2001,7 @@ Swap rows and columns.
 
 ### UDP In — `udpinDAT`
 
-Datagrams received on a port, one message per row.
+Listens for datagrams; table columns address, port, message.
 
 *No inputs — this is a generator.*
 
@@ -1284,20 +2009,70 @@ Datagrams received on a port, one message per row.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| Active | `active` | `true` |  |
+| Local Address | `localaddress` | *(empty)* |  |
+| Row Format | `format` | `permessage` | `permessage` · `perline` · `perbyte` |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+| Bytes Column | `bytes` | `false` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 | Port | `port` | `7000` | 1 … 65535 |
-| Rows Kept | `keep` | `20` | 1 … 1000 |
 
 ### UDP Out — `udpoutDAT`
 
-Sends its input's text as a datagram when it changes.
+Sends with send() / optional Send Input On Change; table shows incoming replies.
 
 **Inputs:** in
 
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Address | `address` | `127.0.0.1` |  |
-| Port | `port` | `7001` | 1 … 65535 |
 | Active | `active` | `true` |  |
+| Local Address | `localaddress` | *(empty)* |  |
+| Row Format | `format` | `permessage` | `permessage` · `perline` · `perbyte` |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+| Bytes Column | `bytes` | `false` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+| Network Address | `address` | `127.0.0.1` |  |
+| Port | `port` | `7001` | 1 … 65535 |
+| Send Input On Change | `sendonchange` | `false` |  |
+
+### Web Client — `webclientDAT`
+
+HTTP client: pulse Fetch to request in a background thread; response body is the DAT contents. WebSocket is not implemented yet.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Method | `method` | `GET` | `GET` · `POST` · `PUT` · `DELETE` |
+| URL | `url` | `https://httpbin.org/get` |  |
+| Headers | `headers` | *(empty)* |  |
+| Request Body | `body` | *(empty)* |  |
+| Fetch | `fetch` | `false` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+
+### Web Server — `webserverDAT`
+
+HTTP server: onHTTPRequest and WebSocket callbacks in the Callbacks DAT; HTTP and WebSocket on the same port.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Port | `port` | `9980` | 1 … 65535 |
+| Local Address | `localaddress` | *(empty)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
 
 ---
 
@@ -2116,11 +2891,72 @@ The picture's own size wins: `Fallback W`/`H` is only what to show before the fi
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| File | `file` | *(empty)* |  |
-| Play Mode | `play` | `loop` | `loop` · `once` · `hold` |
-| Speed | `speed` | `1` | -4 … 4 |
+| File | `file` | `apple.png` |  |
+| Reload | `reload` | `false` |  |
+| Play Mode | `playmode` | `sequential` | `locked` · `specify` · `sequential` · `timecodeop` |
+| Play | `play` | `true` |  |
+| Speed | `speed` | `1` | -10 … 10 |
+| Cue | `cue` | `false` |  |
+| Cue Pulse | `cuepulse` | `false` |  |
+| Cue Point | `cuepoint` | `0` |  |
+| Cue Point Unit | `cuepointunit` | `indices` | `indices` · `frames` · `seconds` · `fraction` |
+| Cue Behavior | `cuebehavior` | `repeat` | `repeat` · `play` |
+| Index | `index` | `0` |  |
+| Index Unit | `indexunit` | `indices` | `indices` · `frames` · `seconds` · `fraction` |
+| Loop Crossfade | `loopcrossfade` | `0` | 0 … 60 |
+| Loop Crossfade Unit | `loopcrossfadeunit` | `seconds` | `indices` · `frames` · `seconds` · `fraction` |
+| Step Size | `stepsize` | `1` | 1 … 1000 |
+| Audio Loop | `audioloop` | `silence` | `silence` · `fade` · `match` |
+| Image Sequence Indexing | `imageindexing` | `zero` | `zero` · `filename` |
+| Timecode Mode | `timecodemode` | `absolute` | `absolute` · `usefiletimecode` |
+| Timecode Object/CHOP/DAT | `timecodeop` | *(empty)* |  |
+| Active | `active` | `true` |  |
+| Interpolate Frames | `interp` | `false` |  |
+| Deinterlace | `deinterlace` | `off` | `off` · `even` · `odd` · `bob` |
+| Field Precedence | `precedence` | `even` | `even` · `odd` |
+| Bottom Half is Alpha (AAA) | `bottomhalfalpha` | `false` |  |
+| Pre-Multiply RGB by Alpha | `premultrgbbyalpha` | `automatic` | `off` · `on` · `automatic` |
+| Input Color Space | `inputcolorspace` | `automatic` | `automatic` · `srgb` · `srgblinear` · `rec601ntsc` · `rec709` · `rec2020` · `rec2020st2084pq` · `rec2020hlg` · `dcip3` · `dcip3d60` · `displayp3d65` · `displayp3d65linear` · `aces2065-1` · `acescg` · `acesproxy` · `passthrough` · `rec709gamma24` |
+| Input Reference White | `inputreferencewhite` | `default` | `default` · `sdr` · `hdr` · `ui` |
+| HLG Peak Nits | `hlgpeaknits` | `1000` | 100 … 10000 |
+| Colored Bottom Right Square | `coloredbottomright` | `true` |  |
+| Decode Pixel Format | `decodepixelformat` | `fastest` | `fastest` · `best` |
 | Fallback W | `resw` | `1280` | 1 … 16384 |
 | Fallback H | `resh` | `720` | 1 … 16384 |
+| Trim | `trim` | `false` |  |
+| Trim Start | `tstart` | `0` |  |
+| Trim Start Unit | `tstartunit` | `indices` | `indices` · `frames` · `seconds` · `fraction` |
+| Trim End | `tend` | `1` |  |
+| Trim End Unit | `tendunit` | `fraction` | `indices` · `frames` · `seconds` · `fraction` |
+| Extend Left | `extendleft` | `hold` | `hold` · `cycle` · `mirror` · `black` · `zero` |
+| Extend Right | `extendright` | `cycle` | `hold` · `cycle` · `mirror` · `black` · `zero` |
+| Override Sample Rate | `overridesample` | `false` |  |
+| Sample Rate | `samplerate` | `30` | 1 … 240 |
+| Pre-Read Frames | `prereadframes` | `16` | 0 … 120 |
+| Frame Read Timeout (ms) | `frametimeout` | `5000` | 0 … 60000 |
+| Frame Timeout Strategy | `frametimeoutstrat` | `playback` | `keep` · `playback` · `seeking` |
+| Always Load Initial Frame | `alwaysloadinitial` | `true` |  |
+| File Open Timeout (ms) | `opentimeout` | `10000` | 0 … 60000 |
+| Pre-Download HTTP Addresses | `predownloadhttp` | `false` |  |
+| Update Image | `updateimage` | `true` |  |
+| Max Decode CPUs (0=all) | `maxdecodecpus` | `0` | 0 … 64 |
+| High Performance Read | `highperfread` | `false` |  |
+| High Performance Read Factor | `highperfreadfactor` | `1` | 1 … 8 |
+| Hardware Decode | `hwdecode` | `true` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Movie File Out — `moviefileoutTOP`
 
@@ -2132,11 +2968,26 @@ Records its input to a movie file. Passes the picture through.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| Type | `type` | `movie` | `movie` · `image` · `imagesequence` · `stopframemovie` |
+| Video Codec | `codec` | `h264` | `h264` · `h265` · `prores` |
+| Image File Type | `imagefiletype` | `png` | `png` · `jpeg` · `tiff` · `bmp` |
+| Unique Suffix | `uniquesuff` | `false` |  |
+| N | `n` | `1` | 0 … 1000000 |
+| Leading Zeros Digits | `leadingzerosdigits` | `4` | 1 … 12 |
 | File | `file` | `out.mp4` |  |
-| Record | `record` | `false` |  |
-| Frame Rate | `fps` | `60` | 1 … 240 |
-| Codec | `codec` | `h264` | `h264` · `h265` · `prores` |
+| Movie FPS | `fps` | `60` | 1 … 240 |
 | Quality | `quality` | `75` | 0 … 100 |
+| Limit Length | `limitlength` | `false` |  |
+| Length | `length` | `600` | 0 … 1000000 |
+| Length Unit | `lengthunit` | `frames` | `indices` · `frames` · `seconds` |
+| Record | `record` | `false` |  |
+| Pause | `pause` | `false` |  |
+| Add Frame | `addframe` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
 
 ### Multiply — `multiplyTOP`
 
