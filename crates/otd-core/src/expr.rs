@@ -112,6 +112,26 @@ pub trait ChannelSource {
     ) -> Option<Result<crate::value::Value, String>> {
         None
     }
+
+    /// Text contents of a DAT at `op_path`, like TouchDesigner `op('x').text`.
+    fn dat_text(&self, _op_path: &str) -> Option<String> {
+        None
+    }
+
+    /// Table contents as rows of cell strings (empty cells are `""`).
+    fn dat_rows(&self, _op_path: &str) -> Option<Vec<Vec<String>>> {
+        None
+    }
+
+    /// Parameter name holding editable DAT body (`text` or `source` on Script DAT).
+    fn dat_content_param(&self, _op_path: &str) -> Option<&'static str> {
+        None
+    }
+
+    /// Operator type name at `op_path` (e.g. `webserverDAT`).
+    fn op_type(&self, _op_path: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Everything a parameter is allowed to see. Deliberately narrow: parameters

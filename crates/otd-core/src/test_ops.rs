@@ -88,9 +88,9 @@ pub struct CountingCooker {
 }
 
 impl Cooker for CountingCooker {
-    fn cook(&mut self, graph: &Graph, id: NodeId, _ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(&mut self, graph: &Graph, id: NodeId, _ctx: &CookContext) -> Result<crate::cook::CookOutput, CookError> {
         self.log.push(graph.path(id));
-        Ok(())
+        Ok(crate::cook::CookOutput::Updated)
     }
 
     fn extra_inputs(&self, _graph: &Graph, id: NodeId) -> Vec<NodeId> {

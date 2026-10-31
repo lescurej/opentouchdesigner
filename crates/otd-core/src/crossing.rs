@@ -44,6 +44,10 @@ pub enum Crossing {
         height: u32,
         rgba: Vec<f32>,
     },
+    /// Operator info channels (Info CHOP), same names as TouchDesigner.
+    Info {
+        channels: Vec<(String, f32)>,
+    },
 }
 
 impl Crossing {
@@ -74,6 +78,13 @@ impl Crossing {
     }
 
     /// Where an attribute starts within a point, and how wide it is.
+    pub fn as_info(&self) -> Option<&[(String, f32)]> {
+        match self {
+            Crossing::Info { channels } => Some(channels),
+            _ => None,
+        }
+    }
+
     pub fn attr(&self, name: &str) -> Option<(usize, usize)> {
         let Crossing::Points { attrs, .. } = self else {
             return None;

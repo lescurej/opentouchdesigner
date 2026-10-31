@@ -107,6 +107,9 @@ pub struct NodeFlags {
     pub cook: bool,
     /// Edits, wiring and moves are blocked (TouchDesigner lock).
     pub lock: bool,
+    /// Do not overwrite this operator when its clone master re-syncs.
+    #[serde(default)]
+    pub clone_immune: bool,
 }
 
 impl Default for NodeFlags {
@@ -119,6 +122,7 @@ impl Default for NodeFlags {
             render: false,
             cook: false,
             lock: false,
+            clone_immune: false,
         }
     }
 }
@@ -162,6 +166,8 @@ pub struct Node {
     /// it last cooked at — a revision counter rather than a dirty bit, so a
     /// node edited twice between cooks still only cooks once (PLAN.md §3).
     revision: u64,
+    /// When this node is a Callbacks DAT text node, the operator that owns it.
+    pub callback_owner: Option<NodeId>,
 }
 
 impl Node {
@@ -323,6 +329,7 @@ impl Graph {
             clone_of: None,
             clone_synced_at: 0,
             revision: 0,
+            callback_owner: None,
         });
         Graph {
             nodes,
@@ -403,6 +410,18 @@ impl Graph {
         &self.nodes[id].children
     }
 
+    pub fn owned_callback_dat(&self, owner: NodeId) -> Option<NodeId> {
+        self.nodes.iter().find_map(|(id, n)| {
+            (n.callback_owner == Some(owner)).then_some(id)
+        })
+    }
+
+    pub fn callback_dat_links(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
+        self.nodes.iter().filter_map(|(id, n)| {
+            n.callback_owner.map(|owner| (owner, id))
+        })
+    }
+
     // ------------------------------------------------------------- creation
 
     pub fn create(
@@ -450,6 +469,7 @@ impl Graph {
             clone_of: None,
             clone_synced_at: 0,
             revision: 1,
+            callback_owner: None,
         };
         let id = self.nodes.insert(node);
         self.nodes[parent].children.push(id);
@@ -745,6 +765,58 @@ impl Graph {
         format!("/{}", parts.join("/"))
     }
 
+    pub fn relative_op_path(&self, referencer: NodeId, target: NodeId) -> Option<String> {
+        if referencer == target {
+            return None;
+        }
+        let anchor = self.node(referencer).parent.unwrap_or(self.root);
+        if self.is_descendant_of(anchor, target) {
+            return Some(self.path_from_ancestor(anchor, target));
+        }
+        let mut ups = 0u32;
+        let mut cur = anchor;
+        loop {
+            if self.is_descendant_of(cur, target) {
+                let down = self.path_from_ancestor(cur, target);
+                let prefix = (0..ups).map(|_| "..").collect::<Vec<_>>().join("/");
+                return Some(if prefix.is_empty() {
+                    down
+                } else if down.is_empty() {
+                    prefix
+                } else {
+                    format!("{prefix}/{down}")
+                });
+            }
+            if cur == self.root {
+                return Some(self.path(target));
+            }
+            cur = self.node(cur).parent.unwrap_or(self.root);
+            ups += 1;
+        }
+    }
+
+    fn is_descendant_of(&self, ancestor: NodeId, node: NodeId) -> bool {
+        let mut cur = Some(node);
+        while let Some(c) = cur {
+            if c == ancestor {
+                return true;
+            }
+            cur = self.node(c).parent;
+        }
+        false
+    }
+
+    fn path_from_ancestor(&self, ancestor: NodeId, node: NodeId) -> String {
+        let mut names = Vec::new();
+        let mut cur = node;
+        while cur != ancestor {
+            names.push(self.node(cur).name.clone());
+            cur = self.node(cur).parent.expect("ancestor chain");
+        }
+        names.reverse();
+        names.join("/")
+    }
+
     pub fn local_clock_at(&self, node: NodeId, global: &crate::cook::CookContext) -> (f64, f64, i64) {
         let mut time = global.time;
         let mut abs_time = global.abs_time;
@@ -996,6 +1068,14 @@ impl Graph {
         out
     }
 
+    /// Every operator in the project — cook roots that do not depend on UI visibility.
+    pub fn all_operator_roots(&self) -> Vec<NodeId> {
+        self.walk()
+            .into_iter()
+            .filter(|id| *id != self.root())
+            .collect()
+    }
+
     /// Build a `SecondaryMap` sized for this graph. Used by the cook engine
     /// and by the GPU crate to hang per-node state off node ids.
     pub fn secondary<T>(&self) -> SecondaryMap<NodeId, T> {
@@ -1127,5 +1207,12 @@ mod tests {
         let before = g.node(a).revision();
         g.set_param(a, TEST_PASS, Value::Float(2.0)).unwrap();
         assert!(g.node(a).revision() > before);
+    }
+
+    #[test]
+    fn relative_op_path_between_siblings() {
+        let (g, a, b) = two_chain();
+        assert_eq!(g.relative_op_path(b, a).as_deref(), Some("pass1"));
+        assert_eq!(g.relative_op_path(a, b).as_deref(), Some("pass2"));
     }
 }

@@ -78,6 +78,8 @@ pub struct NodeEntry {
     /// This component tracks another one in the same project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_owner: Option<String>,
 }
 
 fn is_origin(p: &(f32, f32)) -> bool {
@@ -234,6 +236,11 @@ impl Project {
                         reason: e.to_string(),
                     })?;
             }
+            if let Some(owner_path) = &entry.callback_owner {
+                if let Some(&owner_id) = by_path.get(owner_path) {
+                    graph.node_mut(id).callback_owner = Some(owner_id);
+                }
+            }
             by_path.insert(entry.path.clone(), id);
         }
 
@@ -343,6 +350,9 @@ pub(crate) fn node_entry(graph: &Graph, id: NodeId, registry: &OpRegistry) -> No
         flags: node.flags,
         external: node.external.clone(),
         clone: node.clone_of.clone(),
+        callback_owner: node
+            .callback_owner
+            .map(|owner| graph.path(owner)),
     }
 }
 

@@ -44,8 +44,21 @@ impl History {
         History {
             past: Vec::new(),
             future: Vec::new(),
-            limit: limit.max(1),
+            limit,
             last_tag: None,
+        }
+    }
+
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        if limit == 0 {
+            self.past.clear();
+            self.future.clear();
+            self.last_tag = None;
+            return;
+        }
+        while self.past.len() > limit {
+            self.past.remove(0);
         }
     }
 
@@ -56,6 +69,9 @@ impl History {
     /// entry, so a drag undoes as the gesture it was rather than as the sixty
     /// frames it took.
     pub fn checkpoint(&mut self, graph: &Graph, tag: &str) {
+        if self.limit == 0 {
+            return;
+        }
         if self.last_tag.as_deref() == Some(tag) && !self.past.is_empty() {
             // Mid-gesture: the entry already holds the state before it began,
             // which is exactly where undo should land.
@@ -275,6 +291,16 @@ mod tests {
         assert!(!h.can_undo());
         assert!(h.undo(&g).is_none());
         assert!(h.redo(&g).is_none());
+    }
+
+    #[test]
+    fn zero_limit_disables_undo() {
+        let (mut g, _reg, a, _) = patch();
+        let mut h = History::new(0);
+        h.checkpoint(&g, "param:/a/gain");
+        g.set_param(a, "gain", Value::Float(2.0)).unwrap();
+        assert!(!h.can_undo());
+        assert!(h.undo(&g).is_none());
     }
 
     #[test]

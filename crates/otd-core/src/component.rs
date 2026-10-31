@@ -278,6 +278,9 @@ impl Graph {
 
         let mut synced = 0;
         for (id, master_path) in clones {
+            if self.get(id).is_some_and(|n| n.flags.clone_immune) {
+                continue;
+            }
             let Some(master) = self.find(&master_path) else {
                 continue;
             };

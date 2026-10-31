@@ -58,3 +58,16 @@ pub fn apply(graph: &mut crate::graph::Graph, edits: &[ParamEdit]) -> (usize, Ve
     }
     (applied, problems)
 }
+
+/// Ask the host to cook an operator on the next frame (`OP.run()` in callbacks).
+pub fn apply_recooks(graph: &mut crate::graph::Graph, paths: &[String]) -> usize {
+    let mut n = 0;
+    for path in paths {
+        let Some(id) = graph.find(path) else {
+            continue;
+        };
+        graph.node_mut(id).flags.cook = true;
+        n += 1;
+    }
+    n
+}

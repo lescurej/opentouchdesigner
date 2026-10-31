@@ -2,8 +2,8 @@
 //!
 //! PLAN.md §2.2 / §4. The rules, in one place:
 //!
-//!  * Cooking is **pulled from roots**, never pushed from edits. A root is a
-//!    visible viewer, an output window, or a node flagged `render`.
+//!  * Cooking is **pulled from roots**, never pushed from edits. The app uses
+//!    every operator as a root so nothing stops when it leaves the canvas.
 //!  * A node cooks iff (a) it changed since it last cooked, (b) one of its
 //!    inputs produced a new output, or (c) it is **time dependent**.
 //!  * Time dependence propagates downstream: a node fed by an animated node is
@@ -96,10 +96,10 @@ impl CookContext {
 
     /// Advance by one frame of wall time.
     pub fn advance(&mut self, dt: f64) {
-        self.frame += 1;
         self.time += dt;
         self.abs_time += dt;
         self.dt = dt;
+        self.frame = (self.time * self.fps).round() as i64;
     }
 }
 
@@ -120,11 +120,18 @@ impl CookError {
     }
 }
 
+/// Whether a cook produced new output for downstream nodes to react to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CookOutput {
+    Updated,
+    Unchanged,
+}
+
 /// Implemented by whatever actually produces operator output.
 pub trait Cooker {
     /// Cook one node. Its inputs are guaranteed to have been cooked already
     /// this frame.
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError>;
+    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<CookOutput, CookError>;
 
     /// Called when a node is skipped because its cached output is still
     /// valid. Default: nothing.
@@ -326,7 +333,8 @@ impl CookEngine {
         st.visiting = false;
         let inputs_changed = st.input_versions != input_versions;
         let edited = st.revision != node.revision();
-        let needs_cook = !st.has_cooked || edited || inputs_changed || time_dependent;
+        let needs_cook =
+            !st.has_cooked || edited || inputs_changed || self_time_dependent;
 
         st.time_dependent = time_dependent;
         st.input_versions = input_versions;
@@ -352,11 +360,15 @@ impl CookEngine {
         }
 
         let started = Instant::now();
-        cooker.cook(graph, id, ctx)?;
+        let output = cooker.cook(graph, id, ctx)?;
         let elapsed = started.elapsed().as_micros() as u64;
 
         let st = &mut self.state[id];
-        st.output_version += 1;
+        if output == CookOutput::Updated {
+            st.output_version += 1;
+        } else {
+            self.stats.cached += 1;
+        }
         st.cook_count += 1;
         st.last_cook_us = elapsed;
         // Weighted toward history: the point is to be readable and rankable,
@@ -681,8 +693,8 @@ mod perf_tests {
 
     struct Nothing;
     impl Cooker for Nothing {
-        fn cook(&mut self, _: &Graph, _: NodeId, _: &CookContext) -> Result<(), CookError> {
-            Ok(())
+        fn cook(&mut self, _: &Graph, _: NodeId, _: &CookContext) -> Result<CookOutput, CookError> {
+            Ok(CookOutput::Updated)
         }
     }
 
