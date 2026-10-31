@@ -167,13 +167,13 @@ fn perform_ui_row(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
             {
                 app.perform_edit = false;
                 app.perform = false;
-                app.enter(id);
+                app.queue_enter_network(id);
                 app.select_only(id);
             }
             if ui.button("→").on_hover_text("Open this network").clicked() {
                 app.perform_edit = false;
                 app.perform = false;
-                app.enter(id);
+                app.queue_enter_network(id);
                 app.select_only(id);
             }
         });

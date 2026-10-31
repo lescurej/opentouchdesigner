@@ -234,9 +234,7 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
             connect_from,
             wire_drop,
         };
-        if let Some(new_id) = app.create_node(&type_name, world_pos) {
-            app.connect_created_node(new_id, &pending);
-        }
+        app.queue_create_operator(type_name, pending);
         app.create_dialog = None;
         app.create_dialog_rect = None;
     } else if !open {

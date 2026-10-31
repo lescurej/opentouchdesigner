@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 eframe = { version = "0.35.0", features = ["wgpu"] }
 egui = "0.35.0"
+egui_extras = { version = "0.35.0", default-features = false, features = ["syntect"] }
 env_logger = "0.11.11"
 log = "0.4.33"
 otd-chop = { version = "0.1.0", path = "../otd-chop" }

@@ -147,14 +147,14 @@ impl Textport {
                         .hint_text("Python — Enter to run")
                         .desired_width(f32::INFINITY),
                 );
-                if response.has_focus() {
-                    let enter = ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
-                    });
-                    if enter {
-                        run_console_line(app);
-                        response.request_focus();
-                    } else if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                let enter = ui.input(|i| {
+                    i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
+                });
+                if enter && response.lost_focus() {
+                    run_console_line(app);
+                    response.request_focus();
+                } else if response.has_focus() {
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                         app.textport.history_up();
                     } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                         app.textport.history_down();

@@ -1,8 +1,11 @@
 //! OpenTouchDesigner — the editor shell.
 
+mod settings;
 mod app;
 mod assistant;
 mod canvas;
+mod code_editor;
+mod code_lint;
 mod create_dialog;
 mod media;
 mod inspector;
@@ -11,6 +14,7 @@ mod textport;
 mod watch;
 mod container_view;
 mod window_comp;
+mod window_layout;
 mod window_placement;
 
 fn main() -> eframe::Result<()> {
@@ -37,6 +41,8 @@ fn main() -> eframe::Result<()> {
             let mut app = app::OtdApp::new(cc)?;
             if let Some(path) = project {
                 app.open(Some(path));
+            } else {
+                app.apply_startup();
             }
             Ok(Box::new(app))
         }),

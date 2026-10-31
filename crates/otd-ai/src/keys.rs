@@ -182,7 +182,7 @@ pub fn config_path() -> PathBuf {
     config_dir().join("keys.conf")
 }
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if cfg!(target_os = "macos") {
         if let Some(home) = home {

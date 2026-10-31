@@ -119,7 +119,7 @@ pub fn handle_drops(app: &mut OtdApp, ctx: &egui::Context) {
     if crate::assistant::claim_drop(app, &dropped, at) {
         return;
     }
-    accept(app, &dropped, at);
+    app.queue_media_drop(dropped, at);
 }
 
 /// The translucent "let go and you get this" overlay, drawn while files are
@@ -297,7 +297,7 @@ pub fn add_operator_menu(
                 .show(ui, |ui| {
                     for (type_name, label, summary) in ops {
                         if ui.button(*label).on_hover_text(*summary).clicked() {
-                            add_effect(app, type_name);
+                            app.queue_add_effect(type_name);
                             ui.close();
                         }
                     }
@@ -373,7 +373,7 @@ pub fn replace_file(app: &mut OtdApp, id: NodeId) {
 
 /// Add an operator downstream of whatever is selected and view the result:
 /// the "do something to it" half of dropping a clip in.
-pub fn add_effect(app: &mut OtdApp, type_name: &str) {
+pub fn apply_add_effect(app: &mut OtdApp, type_name: &str) {
     let Some(src) = app.selected.filter(|s| app.graph.contains(*s)) else {
         app.status = "select an operator first — the effect goes after it".into();
         return;
@@ -486,6 +486,13 @@ pub fn accept(app: &mut OtdApp, paths: &[PathBuf], at: Option<egui::Pos2>) {
     }
 }
 
+fn tune_dropped_movie(app: &mut OtdApp, id: NodeId) {
+    let _ = app.graph.set_param(id, "playmode", Value::Str("sequential".into()));
+    let _ = app.graph.set_param(id, "play", Value::Bool(true));
+    let _ = app.graph.set_param(id, "prereadframes", Value::Int(24));
+    let _ = app.graph.set_param(id, "hwdecode", Value::Bool(true));
+}
+
 /// One file, one operator, at a known place. `None` means the file was not
 /// something we know what to do with.
 fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
@@ -500,6 +507,9 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
         DropKind::Image | DropKind::Movie => {
             let id = create_named(app, otd_gpu::ops::MOVIE_IN, pos, &stem)?;
             let _ = app.graph.set_param(id, "file", Value::Str(stored));
+            if kind == DropKind::Movie {
+                tune_dropped_movie(app, id);
+            }
             // Show it. Somebody who just dropped a clip wants to see the clip,
             // not to be told which node to double-click.
             app.graph.node_mut(id).flags.viewer = true;
@@ -534,7 +544,7 @@ fn add_one(app: &mut OtdApp, path: &Path, pos: egui::Vec2) -> Option<NodeId> {
         }
         DropKind::Component => {
             let id = app.import_component_at(path)?;
-            app.graph.node_mut_quiet(id).pos = [pos.x, pos.y];
+            app.graph.node_mut_quiet(id).pos = app.snap_world_pos([pos.x, pos.y]);
             app.set_perform_ui(id);
             Some(id)
         }
@@ -610,6 +620,9 @@ fn retarget(app: &mut OtdApp, target: NodeId, path: &Path) -> bool {
         app.edit("set file");
         app.history.end_gesture();
         let _ = app.graph.set_param(target, "file", Value::Str(stored));
+        if op_type == otd_gpu::ops::MOVIE_IN && kind == DropKind::Movie {
+            tune_dropped_movie(app, target);
+        }
         app.graph.node_mut(target).flags.viewer = true;
         app.selected = Some(target);
         app.status = format!(

@@ -62,26 +62,8 @@ impl Runtime {
         })
     }
 
-    /// The nodes worth cooking when nobody is looking at a viewer.
-    ///
-    /// In the editor, what you can *see* is a cook root: the viewer, and any
-    /// node whose display flag is on and which is currently on screen. None of
-    /// that exists here, and the display flag is on by default, so using it
-    /// would mean cooking every node in the project including the branches
-    /// nobody wired to anything.
-    ///
-    /// So headless the roots are the render flag alone — the one flag that
-    /// already means "cook this whether or not anything downstream wants it".
     pub fn roots(&self) -> Vec<NodeId> {
-        self.graph
-            .walk()
-            .into_iter()
-            .filter(|id| {
-                *id != self.graph.root()
-                    && (self.graph.node(*id).flags.render
-                        || otd_engine::execute::is_execute(&self.graph.node(*id).op_type))
-            })
-            .collect()
+        otd_engine::editor_cook_roots(&self.graph, None)
     }
 
     /// Resolve a node path like `/out1`, for `--node`.
@@ -99,9 +81,12 @@ impl Runtime {
         self.graph.sync_clones(&self.registry);
 
         self.engines.begin_frame();
-        let result =
-            self.cook
-                .cook_frame(&self.graph, roots, &self.time.clone(), &mut self.engines);
+        let result = self.engines.run_cook_frame(
+            &mut self.cook,
+            &self.graph,
+            roots,
+            &self.time.clone(),
+        );
         self.engines.end_frame();
         // Callbacks' parameter changes land here, between frames — the same
         // phase that syncs clones and replicators above.
@@ -109,6 +94,11 @@ impl Runtime {
         if !edits.is_empty() {
             otd_core::edit::apply(&mut self.graph, &edits);
         }
+        let recooks = self.engines.take_recook_requests();
+        if !recooks.is_empty() {
+            otd_core::edit::apply_recooks(&mut self.graph, &recooks);
+        }
+        let _ = self.engines.apply_script_udp_sends(&self.graph);
         result.map_err(|e| e.to_string())?;
 
         Ok(FrameTiming {

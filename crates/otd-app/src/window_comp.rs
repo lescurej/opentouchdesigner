@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use otd_core::{Connector, EvalContext, Family, Graph, NodeId, Value};
 use otd_gpu::ops::WINDOW;
 
-use crate::app::{draw_panel_texture, letterbox, OtdApp};
+use crate::app::{draw_texture_stretch, OtdApp};
 use crate::canvas::comp_display;
+use crate::window_layout;
 
 pub fn is_window_comp(graph: &Graph, id: NodeId) -> bool {
     graph.contains(id) && graph.node(id).op_type == WINDOW
@@ -232,6 +233,9 @@ impl OtdApp {
     pub fn window_comp_viewports(&mut self, ctx: &egui::Context) {
         self.sync_window_comp_performance();
 
+        let root_monitor = ctx.input(|i| i.viewport().monitor_size);
+        let pointer = ctx.input(|i| i.pointer.interact_pos());
+
         let windows: Vec<NodeId> = self
             .graph
             .walk()
@@ -248,43 +252,50 @@ impl OtdApp {
                 self.edit("window close");
                 self.history.end_gesture();
                 let _ = self.graph.set_param(id, "open", Value::Bool(false));
+                self.window_was_open.insert(id, false);
                 continue;
             }
 
-            let title = param_eval(&self.graph, id, "title")
-                .map(|v| v.as_str().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "OpenTouchDesigner — Window".into());
-            let w = param_eval(&self.graph, id, "winw")
-                .map(|v| v.as_f64())
-                .unwrap_or(1280.0)
-                .clamp(64.0, 16384.0) as f32;
-            let h = param_eval(&self.graph, id, "winh")
-                .map(|v| v.as_f64())
-                .unwrap_or(720.0)
-                .clamp(64.0, 16384.0) as f32;
-            let borders = param_eval(&self.graph, id, "borders")
-                .map(|v| v.as_bool())
-                .unwrap_or(true);
+            let open_now = is_open(&self.graph, id);
+            let was_open = self.window_was_open.get(&id).copied().unwrap_or(false);
+            if open_now && !was_open {
+                if let Some(p) = pointer {
+                    self.window_open_anchors.insert(id, p);
+                }
+            }
+            self.window_was_open.insert(id, open_now);
 
-            let tex = display_top(&self.graph, id).and_then(|top| self.thumbnail(top));
+            let cfg = window_layout::window_comp_config(&self.graph, id);
+            let anchor = self.window_open_anchors.get(&id).copied().or(pointer);
+            let tex_top = display_top(&self.graph, id);
+            let tex = tex_top.and_then(|top| self.thumbnail(top));
+            let tex_size = tex.as_ref().map(|(_, s)| *s);
+            let builder = window_layout::build_viewport_builder(
+                &cfg,
+                tex_size,
+                anchor,
+                root_monitor,
+            );
             let closed_flag = self.window_comp_closed(id);
-
-            let builder = egui::ViewportBuilder::default()
-                .with_title(title)
-                .with_inner_size([w, h])
-                .with_decorations(borders);
+            let stretch = cfg.stretch;
+            let hide_cursor = !cfg.cursor_visible;
+            let close_escape = cfg.close_on_escape;
 
             ctx.show_viewport_deferred(
                 egui::ViewportId::from_hash_of(("otd-window-comp", id)),
                 builder,
                 move |ui, _class| {
+                    if hide_cursor {
+                        ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
+                    }
+                    if close_escape && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+                        closed_flag.store(true, Ordering::Relaxed);
+                    }
                     egui::CentralPanel::no_frame()
                         .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
                         .show(ui, |ui| {
                             if let Some((tid, size)) = tex {
-                                let lb = letterbox(ui, tid, size);
-                                draw_panel_texture(ui.painter(), lb, tid, size);
+                                draw_texture_stretch(ui, tid, size, stretch);
                             }
                         });
                     if ui.ctx().input(|i| i.viewport().close_requested()) {
