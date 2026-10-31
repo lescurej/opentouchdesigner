@@ -239,9 +239,9 @@ impl ChopHost {
 }
 
 impl Cooker for ChopHost {
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<(), CookError> {
+    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<otd_core::CookOutput, CookError> {
         if graph.get(id).map(|n| n.family) != Some(Family::Chop) {
-            return Ok(());
+            return Ok(otd_core::CookOutput::Updated);
         }
         let ChopHost { engine, channels } = self;
         let data = {
@@ -254,6 +254,6 @@ impl Cooker for ChopHost {
             engine.cook_node(graph, id, ctx, &eval, channels, Crossings::new())?
         };
         channels.insert(id, data);
-        Ok(())
+        Ok(otd_core::CookOutput::Updated)
     }
 }

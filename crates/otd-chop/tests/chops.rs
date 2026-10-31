@@ -82,15 +82,50 @@ fn noise_defaults_to_six_hundred_samples_off_timeslice() {
     let d = p.data(n);
     assert!(!d.time_sliced);
     assert_eq!(d.channels[0].samples.len(), 600);
+    assert_eq!(d.channels[0].name, "chan1");
+}
+
+#[test]
+fn noise_channel_names_expand_like_touchdesigner() {
+    let mut p = Patch::new();
+    let n = p.add("noiseCHOP", "noise1");
+    p.set(n, "channelname", Value::Str("chan[1-4]".into()));
+    p.run(n, 1);
+    let d = p.data(n);
+    assert_eq!(d.num_channels(), 4);
+    assert_eq!(d.channels[0].name, "chan1");
+    assert_eq!(d.channels[3].name, "chan4");
 }
 
 #[test]
 fn noise_length_is_adjustable() {
     let mut p = Patch::new();
     let n = p.add("noiseCHOP", "noise1");
-    p.set(n, "length", Value::Int(128));
+    p.set(n, "end", Value::Float(128.0));
+    p.set(n, "endunit", Value::Str("samples".into()));
     p.run(n, 1);
     assert_eq!(p.data(n).channels[0].samples.len(), 128);
+}
+
+#[test]
+fn noise_sparse_harmonics_change_the_waveform() {
+    let mut p = Patch::new();
+    let n = p.add("noiseCHOP", "noise1");
+    p.set(n, "type", Value::Str("sparse".into()));
+    p.set(n, "end", Value::Float(64.0));
+    p.set(n, "endunit", Value::Str("samples".into()));
+    p.set(n, "harmon", Value::Int(0));
+    p.run(n, 1);
+    let flat = p.data(n).channels[0].samples[32];
+    p.set(n, "harmon", Value::Int(4));
+    p.set(n, "rough", Value::Float(0.3));
+    p.set(n, "spread", Value::Float(2.5));
+    p.run(n, 1);
+    let layered = p.data(n).channels[0].samples[32];
+    assert!(
+        (flat - layered).abs() > 1e-4,
+        "harmonics/spread/rough should affect sparse noise"
+    );
 }
 
 #[test]
@@ -948,6 +983,28 @@ fn rename_from_matches_numbered_pattern() {
 }
 
 #[test]
+fn constant_expands_t_xyz_component_pattern() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "const1");
+    p.set(c, "rows", Value::Int(1));
+    p.set(c, "name0", Value::Str("t[xyz]".into()));
+    p.set(c, "value0", Value::Float(1.0));
+    p.run(c, 1);
+    assert_eq!(p.data(c).names(), vec!["tx", "ty", "tz"]);
+}
+
+#[test]
+fn constant_name_field_treats_space_as_a_second_channel() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "const1");
+    p.set(c, "rows", Value::Int(1));
+    p.set(c, "name0", Value::Str("left right".into()));
+    p.set(c, "value0", Value::Float(1.0));
+    p.run(c, 1);
+    assert_eq!(p.data(c).names(), vec!["left", "right"]);
+}
+
+#[test]
 fn pattern_channel_name_expands_bracket_syntax() {
     let mut p = Patch::new();
     let pat = p.add("patternCHOP", "pat1");
@@ -1096,6 +1153,21 @@ fn a_half_typed_expression_holds_the_input_rather_than_emptying_it() {
     p.run(e, 1);
 
     assert_eq!(p.value(e, "chan1"), 0.75);
+}
+
+#[test]
+fn clock_chop_uses_touchdesigner_channel_names_in_units_mode() {
+    let mut p = Patch::new();
+    let clock = p.add("clockCHOP", "clock1");
+    p.set(clock, "output", Value::Str("units".into()));
+    p.run(clock, 1);
+    let names = p.data(clock).names();
+    for ch in ["msec", "sec", "min", "hour", "ampm", "wday", "day", "yday", "week", "month", "year"]
+    {
+        assert!(names.iter().any(|n| n == ch), "missing channel `{ch}`");
+    }
+    assert!((0.0..24.0).contains(&p.value(clock, "hour")));
+    assert!((0.0..=6.0).contains(&p.value(clock, "wday")));
 }
 
 #[test]

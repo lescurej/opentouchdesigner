@@ -9,7 +9,7 @@
 //! failed cook — losing an interface mid-show must not stop the render.
 
 use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -952,7 +952,7 @@ fn cook_midi_in(c: &mut ChopCtx) -> ChopData {
 struct OscIn {
     values: Arc<Mutex<Vec<(String, f32)>>>,
     stop: Arc<AtomicBool>,
-    port: u16,
+    key: String,
 }
 
 impl Drop for OscIn {
@@ -961,18 +961,56 @@ impl Drop for OscIn {
     }
 }
 
+fn osc_listener_key(port: u16, local: &str, multicast: bool, net: &str) -> String {
+    format!("{}\0{port}\0{multicast}\0{net}", local.trim())
+}
+
+fn bind_udp(port: u16, local: &str) -> Result<UdpSocket, String> {
+    let addr = if local.trim().is_empty() {
+        SocketAddr::from(([0, 0, 0, 0], port))
+    } else {
+        format!("{}:{port}", local.trim())
+            .parse()
+            .map_err(|_| format!("bad local address `{local}:{port}`"))?
+    };
+    let socket = UdpSocket::bind(addr).map_err(|e| format!("OSC bind {addr}: {e}"))?;
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+        .map_err(|e| e.to_string())?;
+    Ok(socket)
+}
+
 impl OscIn {
-    fn open(port: u16) -> Result<OscIn, String> {
-        let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port)))
-            .map_err(|e| format!("OSC port {port}: {e}"))?;
-        socket
-            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
-            .map_err(|e| e.to_string())?;
+    fn open(
+        port: u16,
+        local: &str,
+        multicast: bool,
+        net: &str,
+    ) -> Result<OscIn, String> {
+        let socket = bind_udp(port, local)?;
+        if multicast {
+            let group: Ipv4Addr = net
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad multicast address `{net}`"))?;
+            let iface = if local.trim().is_empty() {
+                Ipv4Addr::UNSPECIFIED
+            } else {
+                local
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad local address `{local}`"))?
+            };
+            socket
+                .join_multicast_v4(&group, &iface)
+                .map_err(|e| format!("OSC multicast join {group}: {e}"))?;
+        }
 
         let values: Arc<Mutex<Vec<(String, f32)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = values.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
+        let key = osc_listener_key(port, local, multicast, net);
 
         std::thread::Builder::new()
             .name(format!("otd-osc-in-{port}"))
@@ -991,12 +1029,13 @@ impl OscIn {
             })
             .map_err(|e| e.to_string())?;
 
-        Ok(OscIn { values, stop, port })
+        Ok(OscIn { values, stop, key })
     }
 }
 
-/// Flatten a packet into `(channel name, value)` pairs. An address with
-/// several arguments becomes `addr_1`, `addr_2`, ...
+/// Flatten a packet into `(channel name, value)` pairs. The leading `/` is
+/// dropped; `/` in the path becomes `_` in the channel name.
+/// Several arguments become `path_1`, `path_2`, ...
 fn collect_osc(packet: &rosc::OscPacket, out: &mut Vec<(String, f32)>) {
     match packet {
         rosc::OscPacket::Bundle(b) => {
@@ -1022,7 +1061,7 @@ fn collect_osc(packet: &rosc::OscPacket, out: &mut Vec<(String, f32)>) {
                     _ => continue,
                 };
                 let name = if m.args.len() == 1 {
-                    base.clone()
+                    base.to_string()
                 } else {
                     format!("{base}_{}", i + 1)
                 };
@@ -1035,34 +1074,97 @@ fn collect_osc(packet: &rosc::OscPacket, out: &mut Vec<(String, f32)>) {
     }
 }
 
+fn channel_passes_osc_scope(scope: &str, name: &str) -> bool {
+    let scope = scope.trim();
+    if scope.is_empty() {
+        return true;
+    }
+    let mut include_any = false;
+    let mut has_include_rule = false;
+    for pat in scope.split_whitespace() {
+        if let Some(exclude) = pat.strip_prefix('^') {
+            if otd_core::pattern_matches_channel(exclude, name) {
+                return false;
+            }
+        } else {
+            has_include_rule = true;
+            if otd_core::pattern_matches_channel(pat, name) {
+                include_any = true;
+            }
+        }
+    }
+    !has_include_rule || include_any
+}
+
 fn params_osc_in() -> IndexMap<String, Param> {
     let mut m = IndexMap::new();
+    m.insert("active".into(), Param::bool(true).with_label("Active"));
+    m.insert(
+        "protocol".into(),
+        Param::menu("msging", &["msging", "multicastmsging"]).with_label("Protocol"),
+    );
+    m.insert(
+        "netaddress".into(),
+        Param::str("239.255.0.1").with_label("Network Address"),
+    );
     m.insert(
         "port".into(),
-        Param::int(9000).with_label("Port").with_range(1.0, 65535.0),
+        Param::int(7000)
+            .with_label("Network Port")
+            .with_range(1.0, 65535.0),
+    );
+    m.insert(
+        "localaddress".into(),
+        Param::str("").with_label("Local Address"),
+    );
+    m.insert(
+        "oscaddressscope".into(),
+        Param::str("").with_label("OSC Address Scope"),
+    );
+    m.insert(
+        "useglobalrate".into(),
+        Param::bool(true).with_label("Use Global Rate"),
+    );
+    m.insert(
+        "samplerate".into(),
+        Param::float(CONTROL_RATE)
+            .with_label("Default Sample Rate")
+            .with_range(1.0, 48000.0),
     );
     m
 }
 
 fn cook_osc_in(c: &mut ChopCtx) -> ChopData {
-    let port = c
-        .node
-        .param("port")
-        .map(|p| p.eval(c.eval).as_i64())
-        .unwrap_or(9000)
-        .clamp(1, 65535) as u16;
+    let rate = if c.b("useglobalrate") {
+        c.eval.fps
+    } else {
+        c.f("samplerate") as f64
+    }
+    .max(1.0);
+    let n = slice_len(rate, c.time);
+    let scope = c.s("oscaddressscope");
     let path = c.path.to_string();
-    let n = slice_len(CONTROL_RATE, c.time);
 
-    let needs_open =
-        c.io.osc_in
-            .get(&path)
-            .map(|o| o.port != port)
-            .unwrap_or(true);
-    if needs_open {
-        // Drop the old listener before binding the new port.
+    if !c.b("active") {
         c.io.osc_in.remove(&path);
-        match OscIn::open(port) {
+        return ChopData::new(vec![Channel::constant("chan1", 0.0, n)], rate, true);
+    }
+
+    let port = c.i("port").clamp(1, 65535) as u16;
+    let local = c.s("localaddress");
+    let multicast = c.menu("protocol") == 1;
+    let net = c.s("netaddress");
+    let key = osc_listener_key(port, &local, multicast, &net);
+
+    let needs_open = c
+        .io
+        .osc_in
+        .get(&path)
+        .map(|o| o.key != key)
+        .unwrap_or(true);
+    if needs_open {
+        c.io.osc_in.remove(&path);
+        match OscIn::open(port, &local, multicast, &net) {
             Ok(o) => {
                 c.io.clear_note(&path);
                 c.io.osc_in.insert(path.clone(), o);
@@ -1075,14 +1177,16 @@ fn cook_osc_in(c: &mut ChopCtx) -> ChopData {
     if let Some(osc) = c.io.osc_in.get(&path) {
         if let Ok(values) = osc.values.lock() {
             for (name, value) in values.iter() {
-                channels.push(Channel::constant(name.clone(), *value, n));
+                if channel_passes_osc_scope(&scope, name) {
+                    channels.push(Channel::constant(name.clone(), *value, n));
+                }
             }
         }
     }
     if channels.is_empty() {
         channels.push(Channel::constant("chan1", 0.0, n));
     }
-    ChopData::new(channels, CONTROL_RATE, true)
+    ChopData::new(channels, rate, true)
 }
 
 // --------------------------------------------------------------- OSC out
@@ -1090,78 +1194,259 @@ fn cook_osc_in(c: &mut ChopCtx) -> ChopData {
 struct OscOut {
     socket: UdpSocket,
     target: SocketAddr,
+    local: String,
+    sent: HashMap<String, f32>,
+}
+
+fn osc_address_from_channel(name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        return "/".into();
+    }
+    if name.starts_with('/') {
+        name.to_string()
+    } else {
+        format!("/{}", name.replace('_', "/"))
+    }
+}
+
+fn osc_arg(value: f32, numericformat: usize) -> rosc::OscType {
+    match numericformat {
+        0 => rosc::OscType::Int(value.round() as i32),
+        2 => rosc::OscType::Double(value as f64),
+        _ => rosc::OscType::Float(value),
+    }
+}
+
+fn osc_out_socket(local: &str) -> Result<UdpSocket, String> {
+    let addr = if local.trim().is_empty() {
+        SocketAddr::from(([0, 0, 0, 0], 0))
+    } else {
+        format!("{}:0", local.trim())
+            .parse()
+            .map_err(|_| format!("bad local address `{local}`"))?
+    };
+    UdpSocket::bind(addr).map_err(|e| format!("OSC out bind: {e}"))
 }
 
 fn params_osc_out() -> IndexMap<String, Param> {
     let mut m = IndexMap::new();
+    m.insert("active".into(), Param::bool(true).with_label("Active"));
     m.insert(
-        "address".into(),
-        Param::str("127.0.0.1").with_label("Address"),
+        "protocol".into(),
+        Param::menu(
+            "msging",
+            &["msging", "multicastmsging", "reliablemsging"],
+        )
+        .with_label("Protocol"),
+    );
+    m.insert(
+        "netaddress".into(),
+        Param::str("127.0.0.1").with_label("Network Address"),
     );
     m.insert(
         "port".into(),
-        Param::int(9001).with_label("Port").with_range(1.0, 65535.0),
+        Param::int(7001)
+            .with_label("Network Port")
+            .with_range(1.0, 65535.0),
     );
-    m.insert("path".into(), Param::str("/otd").with_label("OSC Path"));
-    m.insert("active".into(), Param::bool(true).with_label("Active"));
+    m.insert(
+        "localaddress".into(),
+        Param::str("").with_label("Local Address"),
+    );
+    m.insert(
+        "maxsize".into(),
+        Param::int(50)
+            .with_label("Max Queue Size")
+            .with_range(1.0, 10000.0),
+    );
+    m.insert(
+        "maxsizeunit".into(),
+        Param::menu("samples", &["samples", "frames", "seconds"]).with_label("Max Queue Size Unit"),
+    );
+    m.insert(
+        "cookalways".into(),
+        Param::bool(false).with_label("Cook Every Frame"),
+    );
+    m.insert(
+        "numericformat".into(),
+        Param::menu("float", &["int", "float", "double"]).with_label("Numeric Format"),
+    );
+    m.insert(
+        "format".into(),
+        Param::menu(
+            "sample",
+            &["sample", "timeslice", "transpose", "transposename"],
+        )
+        .with_label("Data Format"),
+    );
+    m.insert(
+        "maxbytes".into(),
+        Param::int(8192)
+            .with_label("Max Message Bytes")
+            .with_range(64.0, 65536.0),
+    );
+    m.insert(
+        "sendevents".into(),
+        Param::bool(true).with_label("Send Events Every Cook"),
+    );
     m
+}
+
+fn osc_out_target(host: &str, port: u16, protocol: usize, net: &str) -> Result<SocketAddr, String> {
+    if protocol == 1 {
+        let group: Ipv4Addr = net
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad multicast address `{net}`"))?;
+        return Ok(SocketAddr::from((group, port)));
+    }
+    let host = host.trim();
+    let host = if host.eq_ignore_ascii_case("localhost") {
+        "127.0.0.1"
+    } else {
+        host
+    };
+    format!("{host}:{port}")
+        .parse()
+        .map_err(|_| format!("bad OSC address `{host}:{port}`"))
+}
+
+fn osc_send(
+    out: &mut OscOut,
+    addr: &str,
+    args: Vec<rosc::OscType>,
+    sendevents: bool,
+    sent_key: &str,
+    fingerprint: f32,
+) {
+    if !sendevents {
+        if out.sent.get(sent_key).copied() == Some(fingerprint) {
+            return;
+        }
+        out.sent.insert(sent_key.to_string(), fingerprint);
+    }
+    let message = rosc::OscPacket::Message(rosc::OscMessage {
+        addr: addr.to_string(),
+        args,
+    });
+    if let Ok(bytes) = rosc::encoder::encode(&message) {
+        let _ = out.socket.send_to(&bytes, out.target);
+    }
 }
 
 fn cook_osc_out(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
-    let get = |k: &str| c.node.param(k).map(|p| p.eval(c.eval));
-    let host = get("address").map(|v| v.as_str()).unwrap_or_default();
-    let port = get("port")
-        .map(|v| v.as_i64())
-        .unwrap_or(9001)
-        .clamp(1, 65535) as u16;
-    let osc_path = get("path").map(|v| v.as_str()).unwrap_or_default();
-    let active = get("active").map(|v| v.as_bool()).unwrap_or(true);
     let path = c.path.to_string();
 
-    if !active || input.num_channels() == 0 {
+    if !c.b("active") || input.num_channels() == 0 {
+        c.io.osc_out.remove(&path);
         return input;
     }
-    let Ok(target) = format!("{}:{}", host.trim(), port).parse::<SocketAddr>() else {
-        c.io.note(&path, format!("bad OSC address `{host}:{port}`"));
+
+    let protocol = c.menu("protocol");
+    if protocol == 2 {
+        c.io.note(&path, "reliablemsging (UDT) is not supported; use msging or multicastmsging");
+        return input;
+    }
+
+    let net = c.s("netaddress");
+    let port = c.i("port").clamp(1, 65535) as u16;
+    let local = c.s("localaddress");
+    let sendevents = c.b("sendevents");
+    let numericformat = c.menu("numericformat");
+    let format = c.menu("format");
+
+    let target = match osc_out_target(&net, port, protocol, &net) {
+        Ok(t) => t,
+        Err(e) => {
+            c.io.note(&path, e);
+            return input;
+        }
+    };
+
+    let needs_open = c
+        .io
+        .osc_out
+        .get(&path)
+        .map(|o| o.target != target || o.local != local)
+        .unwrap_or(true);
+    if needs_open {
+        match osc_out_socket(&local) {
+            Ok(socket) => {
+                c.io.clear_note(&path);
+                c.io.osc_out.insert(
+                    path.clone(),
+                    OscOut {
+                        socket,
+                        target,
+                        local: local.clone(),
+                        sent: HashMap::new(),
+                    },
+                );
+            }
+            Err(e) => c.io.note(&path, e),
+        }
+    }
+
+    let Some(out) = c.io.osc_out.get_mut(&path) else {
         return input;
     };
 
-    let needs_open =
-        c.io.osc_out
-            .get(&path)
-            .map(|o| o.target != target)
-            .unwrap_or(true);
-    if needs_open {
-        match UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))) {
-            Ok(socket) => {
-                c.io.clear_note(&path);
-                c.io.osc_out.insert(path.clone(), OscOut { socket, target });
+    match format {
+        1 => {
+            for ch in &input.channels {
+                let addr = osc_address_from_channel(&ch.name);
+                let args: Vec<rosc::OscType> = ch
+                    .samples
+                    .iter()
+                    .map(|v| osc_arg(*v, numericformat))
+                    .collect();
+                let fp = ch.last();
+                osc_send(out, &addr, args, sendevents, &ch.name, fp);
             }
-            Err(e) => c.io.note(&path, e.to_string()),
+        }
+        2 => {
+            let args: Vec<rosc::OscType> = input
+                .channels
+                .iter()
+                .map(|ch| osc_arg(ch.last(), numericformat))
+                .collect();
+            let fp = args.len() as f32;
+            osc_send(out, "/", args, sendevents, "__transpose__", fp);
+        }
+        3 => {
+            use std::collections::BTreeMap;
+            let mut groups: BTreeMap<String, Vec<f32>> = BTreeMap::new();
+            for ch in &input.channels {
+                let root = ch
+                    .name
+                    .split('/')
+                    .next()
+                    .unwrap_or(ch.name.as_str())
+                    .to_string();
+                groups.entry(root).or_default().push(ch.last());
+            }
+            for (root, values) in groups {
+                let addr = osc_address_from_channel(&root);
+                let args: Vec<rosc::OscType> = values
+                    .iter()
+                    .map(|v| osc_arg(*v, numericformat))
+                    .collect();
+                let fp = values.last().copied().unwrap_or(0.0);
+                osc_send(out, &addr, args, sendevents, &root, fp);
+            }
+        }
+        _ => {
+            for ch in &input.channels {
+                let addr = osc_address_from_channel(&ch.name);
+                let value = ch.last();
+                let args = vec![osc_arg(value, numericformat)];
+                osc_send(out, &addr, args, sendevents, &ch.name, value);
+            }
         }
     }
 
-    if let Some(out) = c.io.osc_out.get(&path) {
-        // One message per frame carrying every channel's current value —
-        // sending each sample would flood the socket to no benefit.
-        let args: Vec<rosc::OscType> = input
-            .channels
-            .iter()
-            .map(|ch| rosc::OscType::Float(ch.last()))
-            .collect();
-        let message = rosc::OscPacket::Message(rosc::OscMessage {
-            addr: if osc_path.starts_with('/') {
-                osc_path.clone()
-            } else {
-                format!("/{osc_path}")
-            },
-            args,
-        });
-        if let Ok(bytes) = rosc::encoder::encode(&message) {
-            let _ = out.socket.send_to(&bytes, out.target);
-        }
-    }
     input
 }
 
@@ -1432,7 +1717,7 @@ pub(crate) fn specs() -> Vec<ChopSpec> {
             OSC_OUT,
             "OSC Out",
             &["in"],
-            "Sends its channels as one OSC message per frame.",
+            "Sends each channel as an OSC message to the network address and port.",
             params_osc_out,
             cook_osc_out,
         ),
