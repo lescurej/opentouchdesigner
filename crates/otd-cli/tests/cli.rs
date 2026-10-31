@@ -266,6 +266,7 @@ fn bundling_a_project_whose_component_is_gone_fails_here_not_at_the_show() {
         flags: Default::default(),
         external: Some("/nowhere/gone.otdc".into()),
         clone: None,
+        callback_owner: None,
     });
     p.nodes.sort_by(|a, b| a.path.cmp(&b.path));
     p.save(&project).unwrap();

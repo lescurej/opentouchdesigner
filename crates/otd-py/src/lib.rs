@@ -1238,6 +1238,7 @@ impl Default for PyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use otd_core::ChannelSource;
 
     struct FakeNet;
     impl ChannelSource for FakeNet {
