@@ -84,17 +84,27 @@ pub fn comp_out_top(graph: &Graph, comp: NodeId) -> Option<NodeId> {
             graph
                 .connector_ops(comp, otd_core::graph::Connector::Out)
                 .into_iter()
-                .next()
+                .find_map(|out| graph.resolve_output(out))
+        })
+        .or_else(|| {
+            graph
+                .children(comp)
+                .iter()
+                .find(|&&id| graph.node(id).family == Family::Top)
+                .copied()
         })
 }
 
-pub fn background_display_comps(graph: &Graph, network: NodeId) -> Vec<NodeId> {
+pub fn background_display_nodes(graph: &Graph, network: NodeId) -> Vec<NodeId> {
+    if !graph.contains(network) {
+        return Vec::new();
+    }
     let mut ids: Vec<NodeId> = graph
         .children(network)
         .iter()
         .copied()
         .filter(|id| {
-            graph.node(*id).family == Family::Comp && graph.node(*id).flags.bg_display
+            super::flags::display_flag_allowed(graph.node(*id).family) && graph.node(*id).flags.bg_display
         })
         .collect();
     ids.sort_by_key(|id| graph.path(*id));
@@ -107,8 +117,13 @@ pub fn append_network_display_roots(
     visible: &[NodeId],
     roots: &mut Vec<NodeId>,
 ) {
-    for id in background_display_comps(graph, network) {
-        push_out_chain(graph, id, roots);
+    if !graph.contains(network) {
+        return;
+    }
+    for id in background_display_nodes(graph, network) {
+        if !roots.contains(&id) {
+            roots.push(id);
+        }
     }
     for &id in graph.children(network) {
         if graph.node(id).family != Family::Comp || !graph.node(id).flags.viewer {
@@ -117,7 +132,7 @@ pub fn append_network_display_roots(
         if !visible.contains(&id) {
             continue;
         }
-        push_out_chain(graph, id, roots);
+        append_panel_comp_cook_roots(graph, id, roots);
     }
 }
 
@@ -140,10 +155,6 @@ pub fn append_panel_comp_cook_roots(graph: &Graph, comp: NodeId, roots: &mut Vec
             }
         }
     }
-}
-
-fn push_out_chain(graph: &Graph, comp: NodeId, roots: &mut Vec<NodeId>) {
-    append_panel_comp_cook_roots(graph, comp, roots);
 }
 
 pub fn is_descendant_of(graph: &Graph, ancestor: NodeId, id: NodeId) -> bool {

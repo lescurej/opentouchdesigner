@@ -4,8 +4,7 @@ pub(crate) fn output_port_count(graph: &Graph, id: NodeId) -> usize {
     if graph.node(id).family != Family::Comp {
         return 1;
     }
-    let n = graph.comp_out_connectors(id).len();
-    if n == 0 { 1 } else { n }
+    graph.comp_out_connectors(id).len()
 }
 
 pub(crate) fn output_port_family(graph: &Graph, id: NodeId, index: usize) -> Family {

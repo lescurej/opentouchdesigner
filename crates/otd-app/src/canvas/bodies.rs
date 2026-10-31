@@ -50,24 +50,37 @@ pub(crate) fn draw_sop_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect,
     }
 }
 
-pub(crate) fn draw_dat_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32) {
+pub(crate) fn draw_dat_body(
+    app: &OtdApp,
+    ui: &egui::Ui,
+    id: NodeId,
+    body: Rect,
+    zoom: f32,
+    scroll: Vec2,
+) {
     let Some(data) = app.engines.dat_data(id) else {
         return;
     };
     if zoom < 0.45 || data.rows.is_empty() {
         return;
     }
-    let painter = ui.painter_at(body);
+    let painter = ui.painter().with_clip_rect(body);
 
     if data.is_text {
-        let line = 10.0 * zoom;
+        let line_h = 10.0 * zoom;
         let font = FontId::monospace(8.5 * zoom);
         let text = data.as_text();
-        let max_lines = ((body.height() / line) as usize).max(1);
-        for (i, line_text) in text.lines().take(max_lines).enumerate() {
-            let shown: String = line_text.chars().take(40).collect();
+        for (i, line_text) in text.lines().enumerate() {
+            let y = body.min.y + 2.0 + i as f32 * line_h - scroll.y;
+            if y + line_h < body.min.y {
+                continue;
+            }
+            if y > body.max.y {
+                break;
+            }
+            let shown: String = line_text.chars().take(80).collect();
             painter.text(
-                body.left_top() + Vec2::new(4.0, 2.0 + i as f32 * line),
+                Pos2::new(body.min.x + 4.0 - scroll.x, y),
                 Align2::LEFT_TOP,
                 shown,
                 font.clone(),
@@ -81,18 +94,27 @@ pub(crate) fn draw_dat_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect,
     let col_w = body.width() / cols as f32;
     let line = 11.0 * zoom;
     let font = FontId::monospace(8.5 * zoom);
-    let max_rows = ((body.height() / line) as usize).max(1);
 
-    for c in 0..=cols {
-        let x = body.min.x + c as f32 * col_w;
+    let x0 = body.min.x - scroll.x.rem_euclid(col_w);
+    for c in 0..=cols.saturating_add(1) {
+        let x = x0 + c as f32 * col_w;
+        if x < body.min.x - 1.0 || x > body.max.x + 1.0 {
+            continue;
+        }
         painter.line_segment(
             [Pos2::new(x, body.min.y), Pos2::new(x, body.max.y)],
             Stroke::new(1.0, Color32::from_rgb(42, 44, 50)),
         );
     }
 
-    for (r, row) in data.rows.iter().take(max_rows).enumerate() {
-        let y = body.min.y + r as f32 * line;
+    for (r, row) in data.rows.iter().enumerate() {
+        let y = body.min.y + r as f32 * line - scroll.y;
+        if y + line < body.min.y {
+            continue;
+        }
+        if y > body.max.y {
+            break;
+        }
         painter.line_segment(
             [Pos2::new(body.min.x, y), Pos2::new(body.max.x, y)],
             Stroke::new(1.0, Color32::from_rgb(42, 44, 50)),
@@ -102,10 +124,17 @@ pub(crate) fn draw_dat_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect,
         } else {
             Color32::from_rgb(150, 152, 162)
         };
-        for (c, cell) in row.iter().enumerate().take(cols) {
+        for (c, cell) in row.iter().enumerate() {
+            let x = body.min.x + c as f32 * col_w + 3.0 - scroll.x;
+            if x + col_w < body.min.x {
+                continue;
+            }
+            if x > body.max.x {
+                break;
+            }
             let shown: String = cell.chars().take(12).collect();
             painter.text(
-                Pos2::new(body.min.x + c as f32 * col_w + 3.0, y + 1.0),
+                Pos2::new(x, y + 1.0),
                 Align2::LEFT_TOP,
                 shown,
                 font.clone(),
@@ -113,11 +142,15 @@ pub(crate) fn draw_dat_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect,
             );
         }
     }
-    if data.num_rows() > max_rows {
+    let total_h = data.num_rows() as f32 * line;
+    if scroll.y + body.height() < total_h {
         painter.text(
             body.right_bottom() - Vec2::new(4.0, 2.0),
             Align2::RIGHT_BOTTOM,
-            format!("+{} rows", data.num_rows() - max_rows),
+            format!(
+                "+{} rows",
+                ((total_h - scroll.y - body.height()).max(0.0) / line).ceil() as usize
+            ),
             FontId::proportional(8.5 * zoom),
             Color32::from_rgb(110, 112, 122),
         );

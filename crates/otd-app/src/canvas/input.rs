@@ -3,7 +3,8 @@ use otd_core::NodeId;
 
 use crate::app::OtdApp;
 
-use super::types::{CanvasView, DragState, NODE_H, NODE_W};
+use super::chop::node_world_size;
+use super::types::{CanvasView, DragState};
 
 pub(crate) fn frame_all_nodes(app: &mut OtdApp) {
     let canvas = app.canvas_rect;
@@ -11,6 +12,9 @@ pub(crate) fn frame_all_nodes(app: &mut OtdApp) {
         return;
     }
     let origin = canvas.min;
+    if !app.graph.contains(app.current) {
+        return;
+    }
     let ids: Vec<NodeId> = app.graph.children(app.current).to_vec();
     if ids.is_empty() {
         app.view = CanvasView::default();
@@ -22,8 +26,9 @@ pub(crate) fn frame_all_nodes(app: &mut OtdApp) {
         let p = app.graph.node(id).pos;
         min.x = min.x.min(p[0]);
         min.y = min.y.min(p[1]);
-        max.x = max.x.max(p[0] + NODE_W);
-        max.y = max.y.max(p[1] + NODE_H);
+        let size = node_world_size(app, id);
+        max.x = max.x.max(p[0] + size.x);
+        max.y = max.y.max(p[1] + size.y);
     }
     app.view = CanvasView::fit_world_bounds(origin, canvas, min, max);
 }
@@ -32,7 +37,6 @@ pub(crate) fn handle_view_input(
     app: &mut OtdApp,
     ui: &egui::Ui,
     response: &egui::Response,
-    origin: Pos2,
     _rect: Rect,
 ) {
     let shift = ui.input(|i| i.modifiers.shift);
@@ -50,11 +54,23 @@ pub(crate) fn handle_view_input(
     if response.dragged() && app.drag.is_none() {
         app.view.pan += response.drag_delta() / app.view.zoom;
     }
+}
+
+pub(crate) fn finish_background_click(
+    app: &mut OtdApp,
+    ui: &egui::Ui,
+    response: &egui::Response,
+    origin: Pos2,
+) {
     if response.clicked() && app.drag.is_none() {
-        release_param_focus(ui.ctx());
-        app.clear_selection();
+        if app.skip_canvas_deselect_once {
+            app.skip_canvas_deselect_once = false;
+        } else {
+            release_param_focus(ui.ctx());
+            app.clear_selection();
+        }
     }
-    if response.double_clicked() {
+    if response.double_clicked() && app.drag.is_none() {
         if let Some(pointer) = ui.ctx().pointer_interact_pos() {
             ui.ctx()
                 .memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
@@ -108,6 +124,8 @@ pub(crate) fn finish_marquee(app: &mut OtdApp, ui: &egui::Ui, node_rects: &[(Nod
         return;
     }
     release_param_focus(ui.ctx());
+    app.selected_wire = None;
+    app.skip_canvas_deselect_once = true;
     if additive {
         for id in &hits {
             app.selection.insert(*id);
@@ -168,6 +186,9 @@ pub(crate) fn sample_input(ui: &egui::Ui, rect: Rect) -> otd_chop::InputState {
     })
 }
 
+/// Clears focused text fields. Must not run inside [`egui::Context::input_mut`],
+/// [`egui::Context::data_mut`], or [`egui::Context::memory_mut`] closures — those
+/// already hold a write lock and nesting panics in debug builds.
 pub(crate) fn release_param_focus(ctx: &egui::Context) {
     ctx.memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
 }
@@ -181,10 +202,13 @@ pub(crate) fn operator_clipboard_keys(app: &mut OtdApp, ctx: &egui::Context) {
             app.selection.insert(id);
         }
     }
+    let text_focus = ctx.text_edit_focused();
+    if text_focus {
+        return;
+    }
     let has_selection = !app.selection.is_empty() || app.selected.is_some();
     let mut can_paste = app.has_operator_clipboard();
-    let text_focus = ctx.text_edit_focused();
-    if !has_selection && !can_paste && !text_focus {
+    if !has_selection && !can_paste {
         return;
     }
     let mut do_copy = false;
@@ -252,51 +276,64 @@ pub(crate) fn operator_clipboard_keys(app: &mut OtdApp, ctx: &egui::Context) {
         } else {
             egui::vec2(120.0, 120.0)
         };
-        app.paste_clipboard([world.x, world.y]);
+        app.queue_paste_clipboard([world.x, world.y]);
     }
 }
 
 pub(crate) fn handle_keys(app: &mut OtdApp, ui: &egui::Ui, _origin: Pos2, _rect: Rect) {
     operator_clipboard_keys(app, ui.ctx());
 
+    let ctx = ui.ctx();
+    if !ctx.text_edit_focused() {
+        let mut select_all = false;
+        let mut delete = false;
+        ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::A) {
+                select_all = true;
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+            {
+                delete = true;
+            }
+        });
+        if select_all {
+            release_param_focus(ctx);
+            app.select_all();
+        } else if delete {
+            release_param_focus(ctx);
+            app.queue_delete_selection();
+        }
+    }
+
     if ui.ctx().input(|i| i.pointer.any_released()) {
-        if matches!(app.drag, Some(DragState::Node { .. })) {
+        if let Some(DragState::Node { id, .. }) = app.drag {
+            let ids = super::node::node_drag_group(app, id);
+            for nid in ids {
+                if app.graph.contains(nid) && !app.graph.node(nid).flags.lock {
+                    let p = app.graph.node(nid).pos;
+                    app.graph.node_mut_quiet(nid).pos = app.snap_world_pos(p);
+                }
+            }
+            app.node_drag_start = None;
             app.drag = None;
             app.history.end_gesture();
         }
     }
 
-    ui.ctx().input(|i| {
-        if i.key_pressed(egui::Key::H) && !i.modifiers.any() {
-            frame_all_nodes(app);
-        }
-    });
-
-    if ui.ctx().text_edit_focused() {
-        return;
-    }
-
-    ui.ctx().input(|i| {
-        if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
-            app.delete_selected();
-        }
-        if i.key_pressed(egui::Key::Space) {
-            app.playing = !app.playing;
-        }
-        if i.key_pressed(egui::Key::U) {
-            app.leave();
-        }
-        if i.key_pressed(egui::Key::I) {
-            if let Some(sel) = app.selected {
-                app.enter(sel);
+    if !ui.ctx().text_edit_focused() {
+        ui.ctx().input_mut(|i| {
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::H) {
+                frame_all_nodes(app);
             }
-        }
-    });
+        });
+    }
 }
 
 pub(crate) enum SelectionFlag {
     Viewer,
     Display,
+    CloneImmune,
+    ViewerActive,
     Lock,
     Bypass,
 }
@@ -330,10 +367,16 @@ pub(crate) fn toggle_flag_at(app: &mut OtdApp, flag: SelectionFlag, anchor: Node
     if !app.graph.contains(anchor) {
         return;
     }
-    if matches!(flag, SelectionFlag::Display) && app.graph.node(anchor).family != otd_core::Family::Comp
-    {
-        app.status = "Display (container) is only for COMP operators".into();
-        return;
+    if matches!(flag, SelectionFlag::Display) {
+        let fam = app.graph.node(anchor).family;
+        if !super::flags::display_flag_allowed(fam) {
+            app.status = if fam == otd_core::Family::Comp {
+                "Display (D) is not used on COMP — use Viewer (V)".into()
+            } else {
+                "Display (D) is not used on MAT".into()
+            };
+            return;
+        }
     }
     let ids = if app.is_selected(anchor) && app.selection.len() > 1 {
         selection_targets(app)
@@ -352,19 +395,24 @@ pub(crate) fn toggle_flag_at(app: &mut OtdApp, flag: SelectionFlag, anchor: Node
     let next = match flag {
         SelectionFlag::Viewer => !node.flags.viewer,
         SelectionFlag::Display => !node.flags.bg_display,
+        SelectionFlag::CloneImmune => !node.flags.clone_immune,
+        SelectionFlag::ViewerActive => !node.flags.viewer_active,
         SelectionFlag::Lock => !node.flags.lock,
         SelectionFlag::Bypass => !node.flags.bypass,
     };
     let tag = match flag {
         SelectionFlag::Viewer => "viewer flag",
         SelectionFlag::Display => "bg display",
+        SelectionFlag::CloneImmune => "clone immune",
+        SelectionFlag::ViewerActive => "viewer active",
         SelectionFlag::Lock => "lock",
         SelectionFlag::Bypass => "bypass",
     };
     app.edit(tag);
+    let mut toggled = 0usize;
     for id in ids {
         if matches!(flag, SelectionFlag::Display)
-            && app.graph.node(id).family != otd_core::Family::Comp
+            && !super::flags::display_flag_allowed(app.graph.node(id).family)
         {
             continue;
         }
@@ -375,9 +423,26 @@ pub(crate) fn toggle_flag_at(app: &mut OtdApp, flag: SelectionFlag, anchor: Node
         match flag {
             SelectionFlag::Viewer => f.viewer = next,
             SelectionFlag::Display => f.bg_display = next,
+            SelectionFlag::CloneImmune => f.clone_immune = next,
+            SelectionFlag::ViewerActive => {
+                f.viewer_active = next;
+                if next && !f.viewer {
+                    f.viewer = true;
+                }
+            }
             SelectionFlag::Lock => f.lock = next,
             SelectionFlag::Bypass => f.bypass = next,
         }
+        toggled += 1;
     }
     app.history.end_gesture();
+    if toggled > 0 && matches!(flag, SelectionFlag::Display) {
+        let state = if next { "on" } else { "off" };
+        app.status = format!("Display {state} on {toggled} operator(s)");
+    } else if toggled == 0 && matches!(flag, SelectionFlag::Display) {
+        app.status = "Display (D) is not available on COMP or MAT".into();
+    } else if toggled > 0 && matches!(flag, SelectionFlag::ViewerActive) {
+        let state = if next { "on" } else { "off" };
+        app.status = format!("Viewer Active {state} on {toggled} operator(s)");
+    }
 }

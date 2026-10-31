@@ -9,17 +9,8 @@ use otd_core::{ParamMode, Value};
 use crate::app::OtdApp;
 
 pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
+    ui.set_min_width(ui.available_width().max(480.0));
     let Some(id) = app.selected.filter(|s| app.graph.contains(*s)) else {
-        ui.label(RichText::new("No operator selected").weak());
-        ui.add_space(8.0);
-        ui.label(RichText::new("Tab / double-click network  add operator").weak().small());
-        ui.label(RichText::new("Viewer flag on node  network preview").weak().small());
-        ui.label(
-            RichText::new("V D L B  flags on selection    Space  play/pause")
-                .weak()
-                .small(),
-        );
-        ui.label(RichText::new("H  reset view    Del  delete").weak().small());
         return;
     };
 
@@ -35,11 +26,11 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                 .small()
                 .color(Color32::from_rgb(220, 180, 100)),
         );
-    } else if let Some(status) = app.engines.node_status(&app.graph, id) {
+    } else if let Some(msg) = app.engines.node_message(&app.graph, id) {
         ui.label(
-            RichText::new(status)
+            RichText::new(&msg.text)
                 .small()
-                .color(Color32::from_rgb(230, 170, 110)),
+                .color(crate::canvas::node_message::text_color(msg.level)),
         );
     }
 
@@ -62,20 +53,6 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                     ui.add_space(2.0);
                 }
             });
-        }
-        let mut channel_sources: Vec<(otd_core::NodeId, &str)> = Vec::new();
-        if app.graph.node(id).family == otd_core::Family::Chop {
-            channel_sources.push((id, "Selected operator"));
-        }
-        if let Some(vid) = app.perform_ui() {
-            if app.graph.node(vid).family == otd_core::Family::Chop
-                && Some(vid) != app.selected
-            {
-                channel_sources.push((vid, "Perform UI"));
-            }
-        }
-        for (src, title) in channel_sources {
-            channel_list(app, ui, src, title);
         }
         component_links(app, ui, id);
         custom_param_editor(app, ui, id);
@@ -115,6 +92,14 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
             continue;
         }
         if key == "source" {
+            if otd_dat::callbacks::uses_external_callbacks_dat(&app.graph, id) {
+                ui.label(
+                    RichText::new("Python callbacks are edited in the linked Callbacks DAT.")
+                        .weak()
+                        .small(),
+                );
+                continue;
+            }
             if crate::inspector::is_python_source(app, id) {
                 script_editor(app, ui, id);
             } else if crate::inspector::is_shader_source(app, id) {
@@ -274,6 +259,17 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                             (Value::Float(_) | Value::Int(_), Some(_)) => {
                                 crate::inspector::td_slider_field(ui, &key, &mut value, range)
                             }
+                            _ if op_type == "selectCHOP" && key == "channels" => {
+                                {
+                                    let names = wired_input_chop_channel_names(app, id);
+                                    chop_input_channel_picker(
+                                        ui,
+                                        &format!("{id:?}:channels"),
+                                        &mut value,
+                                        &names,
+                                    )
+                                }
+                            }
                             _ => crate::inspector::value_widget_basic(
                                 ui,
                                 &key,
@@ -345,6 +341,10 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                     p.recompile();
                 }
             }
+            if key == otd_dat::callbacks::PARAM_CALLBACKS {
+                otd_dat::callbacks::sync_owner_callback_source(&mut app.graph, id);
+                otd_dat::callbacks::reconcile_callback_links(&mut app.graph);
+            }
         }
     }
     });
@@ -404,50 +404,86 @@ fn constant_chop_row_count(app: &OtdApp, id: otd_core::NodeId) -> usize {
         .clamp(1, otd_chop::ops::CONSTANT_MAX_ROWS) as usize
 }
 
-fn constant_chop_read_rows(app: &OtdApp, id: otd_core::NodeId, rows: usize) -> (Vec<String>, Vec<f32>) {
-    let mut names = Vec::with_capacity(rows);
-    let mut values = Vec::with_capacity(rows);
-    for i in 0..rows {
-        let name = app
-            .graph
-            .node(id)
-            .param(&format!("name{i}"))
-            .map(|p| p.value.as_str())
-            .unwrap_or_else(|| "chan".to_string());
-        let val = app
-            .graph
-            .node(id)
-            .param(&format!("value{i}"))
-            .map(|p| p.value.as_f32())
-            .unwrap_or(0.0);
-        names.push(name);
-        values.push(val);
-    }
-    (names, values)
+struct ConstantChopRow {
+    name: String,
+    value: f32,
+    mode: ParamMode,
+    expression: String,
+    preview: Option<Result<Value, String>>,
+}
+
+fn constant_chop_read_rows(app: &OtdApp, id: otd_core::NodeId, rows: usize) -> Vec<ConstantChopRow> {
+    (0..rows)
+        .map(|i| {
+            let name = app
+                .graph
+                .node(id)
+                .param(&format!("name{i}"))
+                .map(|p| p.value.as_str())
+                .unwrap_or_else(|| "chan".to_string());
+            let key = format!("value{i}");
+            let (value, mode, expression) = app
+                .graph
+                .node(id)
+                .param(&key)
+                .map(|p| {
+                    let mode = match p.mode {
+                        ParamMode::Constant | ParamMode::Expression => p.mode,
+                        _ => ParamMode::Expression,
+                    };
+                    (p.value.as_f32(), mode, p.expression.clone())
+                })
+                .unwrap_or((0.0, ParamMode::Constant, String::new()));
+            let preview = if mode == ParamMode::Expression {
+                Some(
+                    app.engines
+                        .eval_param_checked(&app.graph, id, &key, &app.time),
+                )
+            } else {
+                None
+            };
+            ConstantChopRow {
+                name,
+                value,
+                mode,
+                expression,
+                preview,
+            }
+        })
+        .collect()
 }
 
 fn constant_chop_write_rows(
     app: &mut OtdApp,
     id: otd_core::NodeId,
-    rows: usize,
-    names: &[String],
-    values: &[f32],
+    rows: &[ConstantChopRow],
+    discrete: bool,
 ) {
+    if discrete {
+        app.history.end_gesture();
+    }
     app.edit(&format!("constant rows:{}", app.graph.path(id)));
     let _ = app
         .graph
-        .set_param(id, "rows", Value::Int(rows as i64));
-    for i in 0..rows {
+        .set_param(id, "rows", Value::Int(rows.len() as i64));
+    for (i, row) in rows.iter().enumerate() {
         let _ = app.graph.set_param(
             id,
             &format!("name{i}"),
-            Value::Str(names[i].clone()),
+            Value::Str(row.name.clone()),
         );
-        let _ = app
-            .graph
-            .set_param(id, &format!("value{i}"), Value::Float(values[i] as f64));
+        let key = format!("value{i}");
+        if row.mode == ParamMode::Expression {
+            let _ = app.graph.set_expression(id, &key, &row.expression);
+        } else {
+            let _ = app
+                .graph
+                .set_param(id, &key, Value::Float(row.value as f64));
+        }
     }
-    app.history.end_gesture();
+    if discrete {
+        app.history.end_gesture();
+    }
 }
 
 fn constant_chop_rows(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
@@ -469,16 +505,18 @@ fn constant_chop_rows(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId)
             .small(),
     );
 
-    let (mut names, mut values) = constant_chop_read_rows(app, id, rows);
+    let mut row_data = constant_chop_read_rows(app, id, rows);
 
-    for i in 0..rows {
+    for i in 0..row_data.len() {
+        let mut changed = false;
+        let mut dropped = None;
         ui.horizontal(|ui| {
-            if rows > 1 {
+            if row_data.len() > 1 {
                 ui.vertical(|ui| {
                     if i > 0 && ui.small_button("↑").clicked() {
                         move_row = Some((i, i - 1));
                     }
-                    if i + 1 < rows && ui.small_button("↓").clicked() {
+                    if i + 1 < row_data.len() && ui.small_button("↓").clicked() {
                         move_row = Some((i, i + 1));
                     }
                 });
@@ -487,40 +525,121 @@ fn constant_chop_rows(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId)
                 }
             }
             ui.label(RichText::new("Name").small().weak());
-            let name_changed = ui
+            changed |= ui
                 .add(
-                    egui::TextEdit::singleline(&mut names[i])
+                    egui::TextEdit::singleline(&mut row_data[i].name)
                         .desired_width(120.0),
                 )
                 .changed();
             ui.label(RichText::new("Value").small().weak());
-            let val_changed = ui
-                .add(
-                    egui::DragValue::new(&mut values[i])
-                        .speed(0.01)
-                        .fixed_decimals(4),
-                )
-                .changed();
-            if name_changed || val_changed {
-                constant_chop_write_rows(app, id, rows, &names, &values);
-            }
+            let (_, payload) = ui.dnd_drop_zone::<ChannelDrag, _>(egui::Frame::NONE, |ui| {
+                ui.horizontal(|ui| {
+                    let ui_mode = row_data[i].mode;
+                    let (glyph, tint) = match ui_mode {
+                        ParamMode::Expression => ("ƒ", Color32::from_rgb(150, 200, 255)),
+                        _ => ("=", Color32::from_rgb(140, 142, 150)),
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(glyph).color(tint))
+                                .min_size([20.0, 18.0].into()),
+                        )
+                        .on_hover_text("Constant / Expression")
+                        .clicked()
+                    {
+                        row_data[i].mode = match ui_mode {
+                            ParamMode::Expression => ParamMode::Constant,
+                            _ => ParamMode::Expression,
+                        };
+                        changed = true;
+                    }
+                    match ui_mode {
+                        ParamMode::Expression => {
+                            if !app.channel_expr_clipboard.is_empty()
+                                && ui
+                                    .small_button("Apply")
+                                    .on_hover_text("Use copied channel expression")
+                                    .clicked()
+                            {
+                                row_data[i].expression = app.channel_expr_clipboard.clone();
+                                row_data[i].mode = ParamMode::Expression;
+                                changed = true;
+                            }
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut row_data[i].expression)
+                                        .desired_width(180.0)
+                                        .hint_text("absTime, ch('/op', 'chan')"),
+                                )
+                                .changed()
+                            {
+                                row_data[i].mode = ParamMode::Expression;
+                                changed = true;
+                            }
+                        }
+                        _ => {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut row_data[i].value)
+                                        .speed(0.01)
+                                        .fixed_decimals(4),
+                                )
+                                .changed();
+                        }
+                    }
+                });
+            });
+            dropped = payload;
         });
+        if row_data[i].mode == ParamMode::Expression {
+            if let Some(preview) = &row_data[i].preview {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    match preview {
+                        Ok(v) => {
+                            ui.label(
+                                RichText::new(format!("= {}", format_value(v)))
+                                    .weak()
+                                    .small(),
+                            );
+                        }
+                        Err(e) => {
+                            ui.colored_label(
+                                Color32::from_rgb(230, 120, 120),
+                                RichText::new(e).small(),
+                            );
+                        }
+                    }
+                });
+            }
+        }
+        if let Some(drag) = dropped {
+            app.edit(&format!("constant rows:{}", app.graph.path(id)));
+            app.history.end_gesture();
+            let expr = channel_expr_snippet(&drag.op_path, &drag.channel);
+            app.channel_expr_clipboard = expr.clone();
+            let _ = app.graph.set_expression(id, &format!("value{i}"), &expr);
+            app.status = format!("value{i} <- {expr}");
+        } else if changed {
+            constant_chop_write_rows(app, id, &row_data, false);
+        }
     }
 
     if add_row {
-        let mut names = names;
-        let mut values = values;
-        names.push("chan".into());
-        values.push(0.0);
-        constant_chop_write_rows(app, id, rows + 1, &names, &values);
+        row_data.push(ConstantChopRow {
+            name: "chan".into(),
+            value: 0.0,
+            mode: ParamMode::Constant,
+            expression: String::new(),
+            preview: None,
+        });
+        constant_chop_write_rows(app, id, &row_data, true);
     } else if let Some((from, to)) = move_row {
-        names.swap(from, to);
-        values.swap(from, to);
-        constant_chop_write_rows(app, id, rows, &names, &values);
+        row_data.swap(from, to);
+        constant_chop_write_rows(app, id, &row_data, true);
     } else if let Some(rm) = remove_row {
-        names.remove(rm);
-        values.remove(rm);
-        constant_chop_write_rows(app, id, rows - 1, &names, &values);
+        row_data.remove(rm);
+        constant_chop_write_rows(app, id, &row_data, true);
     }
 }
 
@@ -559,9 +678,7 @@ pub(crate) fn custom_param_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_c
                 });
             }
             if let Some(key) = remove {
-                app.edit("remove parameter");
-                app.history.end_gesture();
-                app.graph.remove_custom_param(id, &key);
+                app.queue_remove_custom_param(id, key);
             }
 
             ui.horizontal(|ui| {
@@ -607,9 +724,110 @@ pub(crate) fn custom_param_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_c
         });
 }
 
+/// Shared multiline DAT `text` field editor (parameter panel and node viewer).
+pub(crate) fn show_dat_text_editor(
+    app: &mut OtdApp,
+    ui: &mut egui::Ui,
+    id: otd_core::NodeId,
+    rows: usize,
+    text_area_id: egui::Id,
+    interactive: bool,
+) -> egui::Response {
+    let mut text = app.graph.node(id).params["text"].value.as_str();
+    let lint_id = crate::code_editor::dat_editor_id(id);
+    let me = crate::code_lint::me_path_for_node(&app.graph, id);
+    let label = format!("<{}>", app.graph.path(id));
+    let is_python = dat_text_editor_is_python(app, id);
+    let now = ui.input(|i| i.time);
+    if is_python {
+        app.code_lint.touch(lint_id, &text, now);
+        app.code_lint
+            .poll(lint_id, now, &app.engines, &app.graph, &me, &label);
+    }
+    let paths = crate::code_lint::operator_paths(&app.graph);
+    let issues_owned = app.code_lint.issues(lint_id).to_vec();
+    let language = if is_python { "python" } else { "text" };
+    let extras = is_python.then(|| crate::code_editor::CodeEditorExtras {
+        issues: &issues_owned,
+        op_paths: &paths,
+        me_path: &me,
+        graph: &app.graph,
+        engines: &app.engines,
+    });
+    let response = crate::code_editor::show(
+        ui,
+        &mut text,
+        crate::code_editor::CodeEditorConfig {
+            language,
+            rows,
+            id: text_area_id,
+            interactive,
+        },
+        extras,
+    );
+    if response.changed() && interactive {
+        app.edit(&format!("text:{id:?}"));
+        let _ = app.graph.set_param(id, "text", Value::Str(text));
+    }
+    response
+}
+
+pub(crate) fn dat_text_editor_is_python(app: &OtdApp, id: otd_core::NodeId) -> bool {
+    if crate::code_editor::is_callback_dat_text(app, id) {
+        return true;
+    }
+    app.graph
+        .node(id)
+        .params
+        .get("text")
+        .is_some_and(|p| p.is_script())
+}
+
+pub(crate) fn dat_uses_text_param_editor(app: &OtdApp, id: otd_core::NodeId) -> bool {
+    app.graph.node(id).params.contains_key("text")
+        && app
+            .engines
+            .dat_data(id)
+            .is_some_and(|d| d.is_text)
+}
+
+pub(crate) fn dat_node_viewer_editor(
+    app: &mut OtdApp,
+    ui: &mut egui::Ui,
+    id: otd_core::NodeId,
+    body: egui::Rect,
+    zoom: f32,
+    interactive: bool,
+) {
+    if zoom < 0.32 || body.width() < 48.0 || body.height() < 28.0 {
+        return;
+    }
+    let body = if app.canvas_rect.is_positive() {
+        body.intersect(app.canvas_rect)
+    } else {
+        body
+    };
+    if body.width() < 48.0 || body.height() < 28.0 {
+        return;
+    }
+    let row_h = (14.0 * zoom).clamp(11.0, 18.0);
+    let rows = ((body.height() / row_h).floor() as usize).clamp(4, 64);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+        ui.set_clip_rect(body);
+        ui.set_width(body.width());
+        show_dat_text_editor(
+            app,
+            ui,
+            id,
+            rows,
+            crate::code_editor::dat_node_viewer_editor_id(id),
+            interactive,
+        );
+    });
+}
+
 /// The multiline editor for a Table or Text DAT's contents.
 fn text_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
-    let mut text = app.graph.node(id).params["text"].value.as_str();
     let rows = app
         .engines
         .dat_data(id)
@@ -621,17 +839,24 @@ fn text_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
         ui.strong("Contents");
         ui.label(RichText::new(rows).weak().small());
     });
-    let response = ui.add(
-        egui::TextEdit::multiline(&mut text)
-            .code_editor()
-            .desired_rows(10)
-            .desired_width(f32::INFINITY),
+
+    let is_python = dat_text_editor_is_python(app, id);
+    let _ = show_dat_text_editor(
+        app,
+        ui,
+        id,
+        if is_python { 18 } else { 14 },
+        crate::code_editor::dat_editor_id(id),
+        true,
     );
-    if response.changed() {
-        // Typing coalesces into one entry per editing session; clicking away
-        // and coming back starts another.
-        app.edit(&format!("text:{id:?}"));
-        let _ = app.graph.set_param(id, "text", Value::Str(text));
+    if is_python {
+        ui.label(
+            RichText::new("Autocomplete in op('…') and ch('…', '…') as you type")
+                .weak()
+                .small(),
+        );
+        let editor_id = crate::code_editor::dat_editor_id(id);
+        crate::code_lint::show_issues(ui, app.code_lint.issues(editor_id));
     }
     ui.add_space(4.0);
 }
@@ -641,10 +866,64 @@ fn text_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
 pub struct ChannelDrag {
     pub op_path: String,
     pub channel: String,
+    pub color_index: usize,
+    pub preview_value: f32,
+    pub preview_peak: f32,
 }
 
 pub fn channel_expr_snippet(op_path: &str, channel: &str) -> String {
     format!("op('{op_path}')['{channel}']")
+}
+
+fn wired_input_chop_channel_names(app: &OtdApp, id: otd_core::NodeId) -> Vec<String> {
+    let Some(src) = app
+        .graph
+        .node(id)
+        .inputs
+        .first()
+        .and_then(|slot| *slot)
+    else {
+        return Vec::new();
+    };
+    app.engines
+        .chop_data(src)
+        .map(|data| data.channels.iter().map(|c| c.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn chop_input_channel_picker(
+    ui: &mut egui::Ui,
+    field_id: &str,
+    value: &mut Value,
+    names: &[String],
+) -> bool {
+    let Value::Str(text) = value else {
+        return false;
+    };
+    let mut changed = ui
+        .add(egui::TextEdit::singleline(text).id_salt(field_id))
+        .changed();
+    if names.is_empty() {
+        return changed;
+    }
+    let menu = ui.menu_button("▾", |ui| {
+        if ui.button("*  (all channels)").clicked() {
+            *text = "*".into();
+            changed = true;
+            ui.close();
+        }
+        ui.separator();
+        for name in names {
+            if ui.button(name).clicked() {
+                *text = name.clone();
+                changed = true;
+                ui.close();
+            }
+        }
+    });
+    menu.response
+        .on_hover_text("Pick a channel from the wired input CHOP");
+    changed
 }
 
 pub fn copy_channel_expression(app: &mut OtdApp, ctx: &egui::Context, snippet: String) {
@@ -668,92 +947,6 @@ fn migrate_legacy_modes(app: &mut OtdApp, id: otd_core::NodeId) {
                 let expr = format!("par('{op}', '{par}')");
                 app.graph.node_mut(id).params.get_mut(&key).unwrap().set_expression(&expr);
             }
-        }
-    }
-}
-
-/// The selected CHOP's channels, with their current values. Each row is a
-/// drag source: drop one on a parameter to export it, which is the gesture
-/// PLAN.md §5 calls for in Phase 2.
-fn channel_list(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId, section: &str) {
-    if app.graph.node(id).family != otd_core::Family::Chop {
-        return;
-    }
-    let path = app.graph.path(id);
-    let Some(data) = app.engines.chop_data(id) else {
-        return;
-    };
-    let rows: Vec<(usize, String, f32, usize)> = data
-        .channels
-        .iter()
-        .enumerate()
-        .map(|(i, ch)| (i, ch.name.clone(), ch.last(), ch.samples.len()))
-        .collect();
-    let rate = data.sample_rate;
-
-    ui.separator();
-    ui.horizontal(|ui| {
-        ui.strong("Channels");
-        ui.label(RichText::new(section).weak().small());
-        ui.label(
-            RichText::new(format!("{} @ {rate:.0} Hz", rows.len()))
-                .weak()
-                .small(),
-        );
-    });
-    if rows.is_empty() {
-        ui.label(RichText::new("none").weak().small());
-        return;
-    }
-    ui.label(
-        RichText::new("Copy · double-click row · drag onto a ƒ parameter (select target op first)")
-            .weak()
-            .small(),
-    );
-
-    for (i, name, value, samples) in rows {
-        let payload = ChannelDrag {
-            op_path: path.clone(),
-            channel: name.clone(),
-        };
-        let snippet = channel_expr_snippet(&path, &name);
-        let mut row_response = None;
-        ui.horizontal(|ui| {
-            let row = ui.dnd_drag_source(egui::Id::new(("chan", id, i)), payload, |ui| {
-                ui.horizontal(|ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                    ui.painter()
-                        .rect_filled(rect, 2.0, crate::canvas::channel_color(i));
-                    ui.add_sized(
-                        [110.0, 16.0],
-                        egui::Label::new(RichText::new(&name).monospace()).truncate(),
-                    );
-                    ui.label(RichText::new(format!("{value:+.4}")).monospace());
-                    if samples > 1 {
-                        ui.label(RichText::new(format!("×{samples}")).weak().small());
-                    }
-                });
-            });
-            row_response = Some(row.response);
-            if ui
-                .small_button("Copy")
-                .on_hover_text(&snippet)
-                .clicked()
-            {
-                copy_channel_expression(app, ui.ctx(), snippet.clone());
-            }
-        });
-        if let Some(r) = row_response {
-            if r.double_clicked() {
-                copy_channel_expression(app, ui.ctx(), snippet.clone());
-            }
-            r.context_menu(|ui| {
-                if ui.button("Copy expression").clicked() {
-                    copy_channel_expression(app, ui.ctx(), snippet.clone());
-                    ui.close();
-                }
-            });
         }
     }
 }
@@ -832,20 +1025,41 @@ fn script_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
                 .small(),
         );
     });
-    let response = ui.add(
-        egui::TextEdit::multiline(&mut source)
-            .code_editor()
-            .desired_rows(16)
-            .desired_width(f32::INFINITY),
+    let editor_id = ui.id().with(("script", id));
+    let me = app.graph.path(id);
+    let label = format!("<{}>", me);
+    let now = ui.input(|i| i.time);
+    app.code_lint.touch(editor_id, &source, now);
+    app.code_lint
+        .poll(editor_id, now, &app.engines, &app.graph, &me, &label);
+    let paths = crate::code_lint::operator_paths(&app.graph);
+    let issues = app.code_lint.issues(editor_id);
+    let response = crate::code_editor::show(
+        ui,
+        &mut source,
+        crate::code_editor::CodeEditorConfig {
+            language: "python",
+            rows: 16,
+            id: editor_id,
+            interactive: true,
+        },
+        Some(crate::code_editor::CodeEditorExtras {
+            issues,
+            op_paths: &paths,
+            me_path: &me,
+            graph: &app.graph,
+            engines: &app.engines,
+        }),
     );
     if response.changed() {
         app.edit(&format!("script:{id:?}"));
         let _ = app.graph.set_param(id, "source", Value::Str(source));
     }
-    if let Some(err) = app.engines.node_status(&app.graph, id) {
+    crate::code_lint::show_issues(ui, app.code_lint.issues(editor_id));
+    if let Some(msg) = app.engines.node_message(&app.graph, id) {
         ui.colored_label(
-            Color32::from_rgb(235, 120, 120),
-            RichText::new(err).small().monospace(),
+            crate::canvas::node_message::text_color(msg.level),
+            RichText::new(&msg.text).small().monospace(),
         );
     }
     ui.add_space(4.0);
@@ -886,11 +1100,18 @@ fn shader_editor(app: &mut OtdApp, ui: &mut egui::Ui, id: otd_core::NodeId) {
         });
     });
 
-    let response = ui.add(
-        egui::TextEdit::multiline(&mut source)
-            .code_editor()
-            .desired_rows(16)
-            .desired_width(f32::INFINITY),
+    let lang = if is_glsl { "glsl" } else { "rs" };
+    let editor_id = ui.id().with(("shader", id));
+    let response = crate::code_editor::show(
+        ui,
+        &mut source,
+        crate::code_editor::CodeEditorConfig {
+            language: lang,
+            rows: 16,
+            id: editor_id,
+            interactive: true,
+        },
+        None,
     );
     if response.changed() {
         app.edit(&format!("shader:{id:?}"));

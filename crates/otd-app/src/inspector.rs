@@ -116,11 +116,6 @@ pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
     let name_bg = base.gamma_multiply(0.52);
     let title = inspector_header_title(app, id);
     let mut name = app.graph.node(id).name.clone();
-    let parent = app
-        .graph
-        .node(id)
-        .parent
-        .unwrap_or_else(|| app.graph.root());
 
     egui::Frame::new()
         .fill(header_bg)
@@ -145,11 +140,7 @@ pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
                             )
                             .changed()
                         {
-                            let trimmed = name.trim().to_string();
-                            if !trimmed.is_empty() && !app.graph.name_taken(parent, &trimmed) {
-                                app.edit(&format!("rename:{id:?}"));
-                                app.graph.node_mut_quiet(id).name = trimmed;
-                            }
+                            app.try_set_node_name(id, &name);
                         }
                     });
             });
@@ -160,7 +151,7 @@ pub fn header_bar(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
 
 pub fn panel_common_tab(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
     ui.spacing_mut().item_spacing.y = 4.0;
-    let flags = [
+    let mut flags: Vec<(&str, bool, crate::canvas::input::SelectionFlag)> = vec![
         (
             "Bypass",
             app.graph.node(id).flags.bypass,
@@ -172,9 +163,14 @@ pub fn panel_common_tab(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
             crate::canvas::input::SelectionFlag::Viewer,
         ),
         (
-            "Display",
-            app.graph.node(id).flags.bg_display,
-            crate::canvas::input::SelectionFlag::Display,
+            "Clone Immune",
+            app.graph.node(id).flags.clone_immune,
+            crate::canvas::input::SelectionFlag::CloneImmune,
+        ),
+        (
+            "Viewer Active",
+            app.graph.node(id).flags.viewer_active,
+            crate::canvas::input::SelectionFlag::ViewerActive,
         ),
         (
             "Lock",
@@ -182,6 +178,16 @@ pub fn panel_common_tab(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
             crate::canvas::input::SelectionFlag::Lock,
         ),
     ];
+    if app.graph.node(id).family != Family::Comp && app.graph.node(id).family != Family::Mat {
+        flags.insert(
+            3,
+            (
+                "Display",
+                app.graph.node(id).flags.bg_display,
+                crate::canvas::input::SelectionFlag::Display,
+            ),
+        );
+    }
     for (label, on, flag) in flags {
         let mut v = on;
         ui.horizontal(|ui| {
@@ -437,6 +443,9 @@ pub fn op_display_label(app: &OtdApp, id: NodeId) -> String {
 }
 
 pub fn is_python_source(app: &OtdApp, id: NodeId) -> bool {
+    if otd_dat::callbacks::uses_external_callbacks_dat(&app.graph, id) {
+        return false;
+    }
     app.graph
         .node(id)
         .params

@@ -4,6 +4,7 @@ pub const NODE_W: f32 = 176.0;
 pub const BODY_H: f32 = 99.0;
 pub const FOOTER_H: f32 = 18.0;
 pub const NODE_H: f32 = BODY_H + FOOTER_H;
+pub const CALLBACK_FOLD_H: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CanvasView {
