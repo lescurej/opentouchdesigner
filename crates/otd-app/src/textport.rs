@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
-use egui::{Color32, FontId, RichText, ScrollArea};
 use crate::app::OtdApp;
+use egui::{Color32, FontId, RichText, ScrollArea};
 
 const MAX_LINES: usize = 2000;
 
@@ -98,7 +98,7 @@ impl Textport {
                     }
                     ui.toggle_value(&mut app.textport.scroll_to_bottom, "Auto-scroll");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if app.engines.python_error().is_some() {
+                        if app.engine_rt().engines.python_error().is_some() {
                             ui.colored_label(
                                 Color32::from_rgb(230, 140, 100),
                                 "Python unavailable",
@@ -131,11 +131,7 @@ impl Textport {
                                         .color(Color32::from_rgb(90, 92, 100)),
                                 );
                                 ui.label(RichText::new(prefix).monospace().color(color));
-                                ui.label(
-                                    RichText::new(&line.text)
-                                        .font(font.clone())
-                                        .color(color),
-                                );
+                                ui.label(RichText::new(&line.text).font(font.clone()).color(color));
                             });
                         }
                     });
@@ -147,9 +143,7 @@ impl Textport {
                         .hint_text("Python — Enter to run")
                         .desired_width(f32::INFINITY),
                 );
-                let enter = ui.input(|i| {
-                    i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
-                });
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
                 if enter && response.lost_focus() {
                     run_console_line(app);
                     response.request_focus();
@@ -212,7 +206,13 @@ fn run_console_line(app: &mut OtdApp) {
     app.textport.history_pos = app.textport.input_history.len();
     app.textport.input.clear();
 
-    match app.engines.exec_console(&app.graph, &app.time, &line) {
+    let console = {
+        let mut rt = app.engine.runtime.lock().expect("engine runtime");
+        rt.engines
+            .exec_console(&app.graph, &app.time, &line)
+            .map_err(|e| e.to_string())
+    };
+    match console {
         Ok(out) => {
             if !out.is_empty() {
                 app.textport.out(frame, out);
@@ -220,7 +220,14 @@ fn run_console_line(app: &mut OtdApp) {
         }
         Err(e) => app.textport.error(frame, e),
     }
-    for line in app.engines.take_script_log() {
+    for line in app
+        .engine
+        .runtime
+        .lock()
+        .expect("engine runtime")
+        .engines
+        .take_script_log()
+    {
         app.textport.info(frame, line);
     }
 }

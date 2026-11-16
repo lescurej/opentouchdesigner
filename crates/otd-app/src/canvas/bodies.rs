@@ -4,7 +4,8 @@ use otd_core::NodeId;
 use crate::app::OtdApp;
 
 pub(crate) fn draw_sop_body(app: &OtdApp, ui: &egui::Ui, id: NodeId, body: Rect, zoom: f32) {
-    let Some(geo) = app.engines.geometry_of(id) else {
+    let rt = app.engine_rt();
+    let Some(geo) = rt.engines.geometry_of(id) else {
         return;
     };
     if geo.points.is_empty() {
@@ -58,7 +59,8 @@ pub(crate) fn draw_dat_body(
     zoom: f32,
     scroll: Vec2,
 ) {
-    let Some(data) = app.engines.dat_data(id) else {
+    let rt = app.engine_rt();
+    let Some(data) = rt.engines.dat_data(id) else {
         return;
     };
     if zoom < 0.45 || data.rows.is_empty() {

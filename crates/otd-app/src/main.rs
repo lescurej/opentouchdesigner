@@ -1,18 +1,25 @@
 //! OpenTouchDesigner — the editor shell.
 
-mod settings;
 mod app;
 mod assistant;
 mod canvas;
 mod code_editor;
 mod code_lint;
-mod create_dialog;
-mod media;
-mod inspector;
-mod params;
-mod textport;
-mod watch;
 mod container_view;
+mod create_dialog;
+mod dat_external;
+mod engine_ui;
+mod inspector;
+mod macos_open;
+mod media;
+mod monitors;
+mod params;
+mod settings;
+mod shortcut_routing;
+mod td_import;
+mod textport;
+mod ui_palette;
+mod watch;
 mod window_comp;
 mod window_layout;
 mod window_placement;
@@ -29,21 +36,18 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    // A project named on the command line opens instead of the starter patch,
-    // so a `.otd` can be handed to the editor the way any other file is —
-    // from a shell, from a script, from a "reopen this and look at it".
     let project = std::env::args().nth(1).map(std::path::PathBuf::from);
 
     eframe::run_native(
         "OpenTouchDesigner",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             let mut app = app::OtdApp::new(cc)?;
-            if let Some(path) = project {
-                app.open(Some(path));
+            app.document.pending_launch = if let Some(path) = project {
+                app::PendingLaunch::Open(path)
             } else {
-                app.apply_startup();
-            }
+                app::PendingLaunch::Startup
+            };
             Ok(Box::new(app))
         }),
     )

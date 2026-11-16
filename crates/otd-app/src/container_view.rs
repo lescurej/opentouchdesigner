@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use egui::RichText;
 use otd_core::{Graph, NodeId, Value};
 
-use crate::app::{draw_panel_comp, OtdApp};
+use crate::app::{OtdApp, draw_panel_comp};
 use crate::canvas::comp_display;
 
 pub fn append_cook_roots(graph: &Graph, open: &BTreeSet<NodeId>, roots: &mut Vec<NodeId>) {
@@ -16,16 +16,16 @@ pub fn append_cook_roots(graph: &Graph, open: &BTreeSet<NodeId>, roots: &mut Vec
 
 pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
     let stale: Vec<NodeId> = app
-        .open_container_views
+        .canvas.open_container_views
         .iter()
         .copied()
         .filter(|id| !graph_contains_container(app, *id))
         .collect();
     for id in stale {
-        app.open_container_views.remove(&id);
+        app.canvas.open_container_views.remove(&id);
     }
 
-    let ids: Vec<NodeId> = app.open_container_views.iter().copied().collect();
+    let ids: Vec<NodeId> = app.canvas.open_container_views.iter().copied().collect();
     for id in ids {
         let (vw, vh) = otd_engine::panel::container_view_pixel_size(&app.graph, id);
         let path = app.graph.path(id);
@@ -49,13 +49,11 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
                         .small(),
                 );
                 let area = ui.available_rect_before_wrap();
-                panel_edits.extend(draw_panel_comp(
-                    ui, app, id, area, &widgets, true,
-                ));
+                panel_edits.extend(draw_panel_comp(ui, app, id, area, &widgets, true));
             });
 
         if !open {
-            app.open_container_views.remove(&id);
+            app.canvas.open_container_views.remove(&id);
         }
         for (wid, value) in panel_edits {
             app.edit("panel");
@@ -65,6 +63,5 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
 }
 
 fn graph_contains_container(app: &OtdApp, id: NodeId) -> bool {
-    app.graph.contains(id)
-        && app.graph.node(id).op_type == otd_engine::panel::CONTAINER
+    app.graph.contains(id) && app.graph.node(id).op_type == otd_engine::panel::CONTAINER
 }

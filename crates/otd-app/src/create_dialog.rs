@@ -143,29 +143,24 @@ pub fn show(app: &mut OtdApp, ui: &egui::Ui) {
                             ui.set_min_width(COLS as f32 * CELL_W);
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
                             for row in 0..rows {
-                                let row_bg = if row % 2 == 0 {
-                                    list_bg
-                                } else {
-                                    stripe_b
-                                };
+                                let row_bg = if row % 2 == 0 { list_bg } else { stripe_b };
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 0.0;
                                     for col in 0..COLS {
                                         let idx = row + col * rows;
-                                        let sense = entries
-                                            .get(idx)
-                                            .map(|(_, _, _, hit)| {
-                                                if *hit {
-                                                    Sense::click()
-                                                } else {
-                                                    Sense::hover()
-                                                }
-                                            })
-                                            .unwrap_or(Sense::hover());
-                                        let (rect, resp) = ui.allocate_exact_size(
-                                            Vec2::new(CELL_W, CELL_H),
-                                            sense,
-                                        );
+                                        let sense =
+                                            entries
+                                                .get(idx)
+                                                .map(|(_, _, _, hit)| {
+                                                    if *hit {
+                                                        Sense::click()
+                                                    } else {
+                                                        Sense::hover()
+                                                    }
+                                                })
+                                                .unwrap_or(Sense::hover());
+                                        let (rect, resp) = ui
+                                            .allocate_exact_size(Vec2::new(CELL_W, CELL_H), sense);
                                         let mut fill = row_bg;
                                         if let Some((_, _, _, hit)) = entries.get(idx) {
                                             if *hit && resp.hovered() {

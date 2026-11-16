@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use egui::Id;
@@ -96,7 +96,12 @@ pub fn operator_paths(graph: &Graph) -> Vec<String> {
         .collect()
 }
 
-pub fn channel_names_at(engines: &Engines, graph: &Graph, me_path: &str, op_ref: &str) -> Vec<String> {
+pub fn channel_names_at(
+    engines: &Engines,
+    graph: &Graph,
+    me_path: &str,
+    op_ref: &str,
+) -> Vec<String> {
     let resolved = otd_engine::lint::resolve_op_ref(me_path, op_ref);
     let Some(id) = graph.find(&resolved) else {
         return Vec::new();
@@ -107,6 +112,7 @@ pub fn channel_names_at(engines: &Engines, graph: &Graph, me_path: &str, op_ref:
     let net = otd_chop::Network {
         graph,
         chops: &engines.channels,
+        panel: None,
     };
     net.channel_names(&resolved)
 }

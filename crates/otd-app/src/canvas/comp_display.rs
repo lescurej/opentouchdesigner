@@ -24,9 +24,7 @@ pub fn comp_view_top(graph: &Graph, comp: NodeId) -> Option<NodeId> {
     }
     if matches!(
         op_type,
-        otd_engine::panel::BUTTON
-            | otd_engine::panel::SLIDER
-            | otd_engine::panel::FIELD
+        otd_engine::panel::BUTTON | otd_engine::panel::SLIDER | otd_engine::panel::FIELD
     ) {
         if let Some(view) = panel_view_top(graph, comp) {
             return Some(view);
@@ -104,7 +102,8 @@ pub fn background_display_nodes(graph: &Graph, network: NodeId) -> Vec<NodeId> {
         .iter()
         .copied()
         .filter(|id| {
-            super::flags::display_flag_allowed(graph.node(*id).family) && graph.node(*id).flags.bg_display
+            super::flags::display_flag_allowed(graph.node(*id).family)
+                && graph.node(*id).flags.bg_display
         })
         .collect();
     ids.sort_by_key(|id| graph.path(*id));
@@ -171,23 +170,21 @@ pub fn is_descendant_of(graph: &Graph, ancestor: NodeId, id: NodeId) -> bool {
     false
 }
 
-pub fn panel_widgets_under(
-    graph: &Graph,
-    comp: NodeId,
-) -> Vec<otd_engine::panel::Widget> {
+pub fn panel_widgets_under(graph: &Graph, comp: NodeId) -> Vec<otd_engine::panel::Widget> {
     otd_engine::panel::widgets(graph)
         .into_iter()
         .filter(|w| is_descendant_of(graph, comp, w.id))
         .collect()
 }
 
-pub fn append_perform_panel_cook_roots(graph: &Graph, perform_comp: NodeId, roots: &mut Vec<NodeId>) {
+pub fn append_perform_panel_cook_roots(
+    graph: &Graph,
+    perform_comp: NodeId,
+    roots: &mut Vec<NodeId>,
+) {
     append_panel_comp_cook_roots(graph, perform_comp, roots);
 }
 
-pub fn panel_widgets_local_to_comp(
-    graph: &Graph,
-    comp: NodeId,
-) -> Vec<otd_engine::panel::Widget> {
+pub fn panel_widgets_local_to_comp(graph: &Graph, comp: NodeId) -> Vec<otd_engine::panel::Widget> {
     otd_engine::panel::panel_direct_display_widgets(graph, comp)
 }

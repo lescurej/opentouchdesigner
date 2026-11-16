@@ -44,9 +44,21 @@ const SETTLE: Duration = Duration::from_millis(1500);
 const GAP: Duration = Duration::from_millis(500);
 
 pub enum Watch {
-    Camera { camera: NodeId, since: Instant, polled: Instant },
-    Asked { camera: NodeId, repaired: bool },
-    Settling { camera: NodeId, repaired: bool, since: Instant, early: Option<(Vec<u8>, Vec<u8>)> },
+    Camera {
+        camera: NodeId,
+        since: Instant,
+        polled: Instant,
+    },
+    Asked {
+        camera: NodeId,
+        repaired: bool,
+    },
+    Settling {
+        camera: NodeId,
+        repaired: bool,
+        since: Instant,
+        early: Option<(Vec<u8>, Vec<u8>)>,
+    },
 }
 
 impl Watch {
@@ -54,7 +66,9 @@ impl Watch {
     pub fn label(&self) -> &'static str {
         match self {
             Watch::Camera { .. } => "waiting for the camera…",
-            Watch::Asked { repaired: false, .. } => "looking at the camera…",
+            Watch::Asked {
+                repaired: false, ..
+            } => "looking at the camera…",
             Watch::Asked { repaired: true, .. } => "fixing what it saw…",
             Watch::Settling { .. } => "checking the result…",
         }
@@ -77,23 +91,31 @@ pub fn toggle(app: &mut OtdApp) {
         return;
     };
     let now = Instant::now();
-    app.assistant.watch = Some(Watch::Camera { camera, since: now, polled: now - POLL });
+    app.assistant.watch = Some(Watch::Camera {
+        camera,
+        since: now,
+        polled: now - POLL,
+    });
 }
 
 /// The selected camera, or the first one in the network being looked at.
 fn find_camera(app: &OtdApp) -> Option<NodeId> {
     let is_camera = |id: &NodeId| app.graph.node(*id).op_type == otd_gpu::ops::VIDEO_DEVICE_IN;
-    app.selected
+    app.canvas.selected
         .filter(|id| app.graph.contains(*id))
         .filter(is_camera)
-        .or_else(|| app.graph.children(app.current).iter().copied().find(is_camera))
+        .or_else(|| {
+            app.graph
+                .children(app.canvas.current)
+                .iter()
+                .copied()
+                .find(is_camera)
+        })
 }
 
 /// A node's current output as RGBA8. Stalls the GPU, so called sparingly.
 fn read(app: &OtdApp, id: NodeId) -> Option<(u32, u32, Vec<u8>)> {
-    let tex = app.engines.top.output(&app.graph, id)?.clone();
-    let gpu = otd_gpu::GpuContext::new(app.render_state.device.clone(), app.render_state.queue.clone());
-    otd_gpu::read_pixels_rgba8(&gpu, &tex).ok()
+    app.engine.read_top_rgba8(&app.graph, id).ok()
 }
 
 fn read_small(app: &OtdApp, id: NodeId) -> Option<Vec<u8>> {
@@ -129,18 +151,29 @@ pub fn tick(app: &mut OtdApp) {
 fn step(app: &mut OtdApp, state: Watch) -> Option<Watch> {
     let now = Instant::now();
     match state {
-        Watch::Camera { camera, since, polled } => {
+        Watch::Camera {
+            camera,
+            since,
+            polled,
+        } => {
             if !app.graph.contains(camera) {
                 app.assistant.error = Some("the camera was removed".into());
                 return None;
             }
             if now - polled < POLL {
-                return Some(Watch::Camera { camera, since, polled });
+                return Some(Watch::Camera {
+                    camera,
+                    since,
+                    polled,
+                });
             }
             let frame = read(app, camera).filter(|(_, _, p)| mean_luma(p) > 2.0);
             match frame {
                 Some(frame) => match ask_about(app, frame, Seen::Camera) {
-                    Ok(()) => Some(Watch::Asked { camera, repaired: false }),
+                    Ok(()) => Some(Watch::Asked {
+                        camera,
+                        repaired: false,
+                    }),
                     Err(_) => None,
                 },
                 None if now - since > CAMERA_PATIENCE => {
@@ -151,7 +184,11 @@ fn step(app: &mut OtdApp, state: Watch) -> Option<Watch> {
                     );
                     None
                 }
-                None => Some(Watch::Camera { camera, since, polled: now }),
+                None => Some(Watch::Camera {
+                    camera,
+                    since,
+                    polled: now,
+                }),
             }
         }
         Watch::Asked { camera, repaired } => {
@@ -162,22 +199,48 @@ fn step(app: &mut OtdApp, state: Watch) -> Option<Watch> {
             if app.assistant.error.is_some() || app.assistant.last.is_none() {
                 return None;
             }
-            Some(Watch::Settling { camera, repaired, since: now, early: None })
+            Some(Watch::Settling {
+                camera,
+                repaired,
+                since: now,
+                early: None,
+            })
         }
-        Watch::Settling { camera, repaired, since, early } => {
-            let viewer = app.viewer.filter(|id| app.graph.contains(*id))?;
+        Watch::Settling {
+            camera,
+            repaired,
+            since,
+            early,
+        } => {
+            let viewer = app.canvas.viewer.filter(|id| app.graph.contains(*id))?;
             let elapsed = now - since;
             if elapsed < SETTLE {
-                return Some(Watch::Settling { camera, repaired, since, early });
+                return Some(Watch::Settling {
+                    camera,
+                    repaired,
+                    since,
+                    early,
+                });
             }
             let Some(early) = early else {
                 let pair = read_small(app, viewer).zip(read_small(app, camera));
-                return pair.map(|pair| Watch::Settling { camera, repaired, since, early: Some(pair) });
+                return pair.map(|pair| Watch::Settling {
+                    camera,
+                    repaired,
+                    since,
+                    early: Some(pair),
+                });
             };
             if elapsed < SETTLE + GAP {
-                return Some(Watch::Settling { camera, repaired, since, early: Some(early) });
+                return Some(Watch::Settling {
+                    camera,
+                    repaired,
+                    since,
+                    early: Some(early),
+                });
             }
-            let (Some(late), Some(src_late)) = (read_small(app, viewer), read_small(app, camera)) else {
+            let (Some(late), Some(src_late)) = (read_small(app, viewer), read_small(app, camera))
+            else {
                 return None;
             };
             let measured = Measured::of(&early.0, &late, &early.1, &src_late);
@@ -199,7 +262,10 @@ fn step(app: &mut OtdApp, state: Watch) -> Option<Watch> {
             }
             let frame = read(app, viewer)?;
             match ask_about(app, frame, Seen::Result(faults)) {
-                Ok(()) => Some(Watch::Asked { camera, repaired: true }),
+                Ok(()) => Some(Watch::Asked {
+                    camera,
+                    repaired: true,
+                }),
                 Err(_) => None,
             }
         }

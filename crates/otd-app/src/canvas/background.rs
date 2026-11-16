@@ -12,14 +12,18 @@ pub(crate) fn draw_viewer_backdrops(app: &mut OtdApp, ui: &mut egui::Ui, canvas:
     if tiles.is_empty() {
         return;
     }
-    let zoom = app.view.zoom;
+    let theme = crate::ui_palette::network_for_appearance(
+        app.settings.ui_palette,
+        ui.style().visuals.dark_mode,
+    );
+    let zoom = app.canvas.view.zoom;
     let painter = ui.painter().with_clip_rect(canvas);
     for (id, tile, label) in tiles {
-        painter.rect_filled(tile, 4.0, Color32::from_rgb(18, 19, 22));
+        painter.rect_filled(tile, 4.0, theme.backdrop_fill);
         painter.rect_stroke(
             tile,
             4.0,
-            egui::Stroke::new(1.0, Color32::from_rgb(48, 52, 62)),
+            egui::Stroke::new(1.0, theme.backdrop_border),
             egui::StrokeKind::Inside,
         );
         let inner = tile.shrink(6.0);
@@ -29,22 +33,22 @@ pub(crate) fn draw_viewer_backdrops(app: &mut OtdApp, ui: &mut egui::Ui, canvas:
             egui::Align2::LEFT_TOP,
             label,
             egui::FontId::monospace(10.0),
-            Color32::from_rgb(200, 202, 212),
+            theme.backdrop_label,
         );
     }
 }
 
 fn mosaic_display_tiles(app: &OtdApp, canvas: Rect) -> Vec<(NodeId, Rect, String)> {
-    if !app.graph.contains(app.current) {
+    if !app.graph.contains(app.canvas.current) {
         return Vec::new();
     }
-    let ids = background_display_nodes(&app.graph, app.current);
+    let ids = background_display_nodes(&app.graph, app.canvas.current);
     if ids.is_empty() {
         return Vec::new();
     }
     let n = ids.len();
     let cols = ((n as f32).sqrt().ceil() as usize).max(1);
-    let rows = (n + cols - 1) / cols;
+    let rows = n.div_ceil(cols);
     let margin = 10.0;
     let gap = 8.0;
     let avail_w = (canvas.width() - margin * 2.0 - gap * (cols.saturating_sub(1) as f32)).max(1.0);

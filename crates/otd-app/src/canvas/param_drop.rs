@@ -22,12 +22,12 @@ pub(crate) fn try_assign_wire_to_node(
         return false;
     };
     let keys = assignable_params(app, target, source);
-    app.drag = None;
+    app.canvas.drag = None;
     if keys.len() == 1 {
         apply_param_reference(app, target, &keys[0], source);
         return true;
     }
-    app.pending_param_drop = Some(PendingParamDrop {
+    app.canvas.pending_param_drop = Some(PendingParamDrop {
         target,
         source,
         keys,
@@ -37,7 +37,7 @@ pub(crate) fn try_assign_wire_to_node(
 }
 
 pub(crate) fn finish_node_drop(app: &mut OtdApp, ui: &egui::Ui, node_rects: &[(NodeId, Rect)]) {
-    let Some(crate::canvas::DragState::Node { id: source, .. }) = app.drag else {
+    let Some(crate::canvas::DragState::Node { id: source, .. }) = app.canvas.drag else {
         return;
     };
     if !ui.ctx().input(|i| i.pointer.any_released()) {
@@ -55,13 +55,13 @@ pub(crate) fn finish_node_drop(app: &mut OtdApp, ui: &egui::Ui, node_rects: &[(N
     };
     let keys = assignable_params(app, target, source);
     restore_node_drag_positions(app);
-    app.drag = None;
-    app.history.end_gesture();
+    app.canvas.drag = None;
+    app.document.history.end_gesture();
     if keys.len() == 1 {
         apply_param_reference(app, target, &keys[0], source);
         return;
     }
-    app.pending_param_drop = Some(PendingParamDrop {
+    app.canvas.pending_param_drop = Some(PendingParamDrop {
         target,
         source,
         keys,
@@ -70,7 +70,7 @@ pub(crate) fn finish_node_drop(app: &mut OtdApp, ui: &egui::Ui, node_rects: &[(N
 }
 
 pub(crate) fn restore_node_drag_positions(app: &mut OtdApp) {
-    let Some(snap) = app.node_drag_start.take() else {
+    let Some(snap) = app.canvas.node_drag_start.take() else {
         return;
     };
     for (id, pos) in snap {
@@ -80,31 +80,31 @@ pub(crate) fn restore_node_drag_positions(app: &mut OtdApp) {
     }
 }
 
-pub(crate) fn draw_param_drop_highlight(
-    app: &OtdApp,
-    ui: &mut Ui,
-    node_rects: &[(NodeId, Rect)],
-) {
+pub(crate) fn draw_param_drop_highlight(app: &OtdApp, ui: &mut Ui, node_rects: &[(NodeId, Rect)]) {
     let Some(pointer) = ui.ctx().pointer_latest_pos() else {
         return;
     };
-    if !app.canvas_rect.contains(pointer) {
+    if !app.canvas.canvas_rect.contains(pointer) {
         return;
     }
-    let source = match app.drag {
+    let source = match app.canvas.drag {
         Some(DragState::Node { id, .. }) | Some(DragState::Wire { from: id, .. }) => id,
         _ => return,
     };
     let Some((_target, rect)) = param_drop_target_at(app, source, pointer, node_rects) else {
         return;
     };
-    let zoom = app.view.zoom;
+    let zoom = app.canvas.view.zoom;
     let pad = (4.0 * zoom).clamp(2.0, 8.0);
     let r = rect.expand(pad);
     let corner = (6.0 * zoom).clamp(4.0, 10.0);
     let accent = Color32::from_rgb(100, 190, 255);
     let painter = ui.painter();
-    painter.rect_filled(r, corner, Color32::from_rgba_unmultiplied(100, 190, 255, 45));
+    painter.rect_filled(
+        r,
+        corner,
+        Color32::from_rgba_unmultiplied(100, 190, 255, 45),
+    );
     painter.rect_stroke(
         r,
         corner,
@@ -114,7 +114,7 @@ pub(crate) fn draw_param_drop_highlight(
 }
 
 pub(crate) fn draw_param_drop_menu(app: &mut OtdApp, ctx: &egui::Context) {
-    let Some(pending) = app.pending_param_drop.take() else {
+    let Some(pending) = app.canvas.pending_param_drop.take() else {
         return;
     };
     let source_name = app.graph.node(pending.source).name.clone();
@@ -130,9 +130,7 @@ pub(crate) fn draw_param_drop_menu(app: &mut OtdApp, ctx: &egui::Context) {
             ui.label(format!("Drop {source_name} onto {target_name}"));
             ui.separator();
             for key in &pending.keys {
-                let label = app.graph.node(pending.target).params[key]
-                    .label
-                    .clone();
+                let label = app.graph.node(pending.target).params[key].label.clone();
                 let text = if label.is_empty() {
                     key.clone()
                 } else {
@@ -146,7 +144,7 @@ pub(crate) fn draw_param_drop_menu(app: &mut OtdApp, ctx: &egui::Context) {
     if let Some(key) = chosen {
         app.queue_assign_param_op_ref(pending.target, key, pending.source);
     } else if open {
-        app.pending_param_drop = Some(pending);
+        app.canvas.pending_param_drop = Some(pending);
     }
 }
 
@@ -170,7 +168,7 @@ fn param_drop_target_at(
 
 pub(crate) fn apply_param_reference(app: &mut OtdApp, target: NodeId, key: &str, source: NodeId) {
     let Some(path) = app.graph.relative_op_path(target, source) else {
-        app.status = "Could not build an operator path".into();
+        app.document.status = "Could not build an operator path".into();
         return;
     };
     app.edit("assign-op");
@@ -181,11 +179,11 @@ pub(crate) fn apply_param_reference(app: &mut OtdApp, target: NodeId, key: &str,
                 otd_dat::callbacks::sync_owner_callback_source(&mut app.graph, target);
             }
             app.select_only(target);
-            app.status = format!("Set {key} → {path}");
+            app.document.status = format!("Set {key} → {path}");
         }
-        Err(e) => app.status = e.to_string(),
+        Err(e) => app.document.status = e.to_string(),
     }
-    app.history.end_gesture();
+    app.document.history.end_gesture();
 }
 
 fn assignable_params(app: &OtdApp, target: NodeId, source: NodeId) -> Vec<String> {
@@ -213,20 +211,13 @@ fn is_op_reference_param(op_type: &str, key: &str, path_ref: bool) -> bool {
         || (op_type == "selectTOP" && key == "top")
 }
 
-fn param_accepts_source(
-    graph: &otd_core::Graph,
-    op_type: &str,
-    key: &str,
-    source: NodeId,
-) -> bool {
+fn param_accepts_source(graph: &otd_core::Graph, op_type: &str, key: &str, source: NodeId) -> bool {
     let fam = graph.node(source).family;
     let src_type = graph.node(source).op_type.as_str();
     match (op_type, key) {
         (_, "instancechop") => fam == Family::Chop,
         (_, "instancetop") => fam == Family::Top,
-        ("renderTOP", "geometry") => {
-            src_type == otd_gpu::scene::GEOMETRY || fam == Family::Sop
-        }
+        ("renderTOP", "geometry") => src_type == otd_gpu::scene::GEOMETRY || fam == Family::Sop,
         ("renderTOP", "camera") => src_type == otd_gpu::scene::CAMERA,
         ("renderTOP", "light") => src_type == otd_gpu::scene::LIGHT,
         ("geometryCOMP", "sop") => fam == Family::Sop,

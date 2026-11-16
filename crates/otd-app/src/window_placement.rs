@@ -1,26 +1,29 @@
 use egui::{RichText, Ui};
-use otd_core::NodeId;
+use otd_core::{NodeId, Value};
 
 use crate::app::OtdApp;
 use crate::window_comp::{is_open, list_perform_ui_containers, list_window_comps};
 
 pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
-    if !app.show_window_placement {
+    if !app.perform_shell.show_window_placement {
         return;
     }
-    let mut open = app.show_window_placement;
-    egui::Window::new("Window Placement")
+    app.monitors = crate::monitors::snapshot(ctx);
+    let mut open = app.perform_shell.show_window_placement;
+    let window = egui::Window::new("Window Placement")
         .open(&mut open)
         .default_width(720.0)
         .show(ctx, |ui| {
             ui.label(
-                RichText::new("Manage Window COMPs — same controls as each operator's Window page.")
-                    .weak()
-                    .small(),
+                RichText::new(
+                    "Manage Window COMPs — same controls as each operator's Window page.",
+                )
+                .weak()
+                .small(),
             );
             ui.separator();
 
-            ui.checkbox(&mut app.start_in_perform_mode, "Start in Perform Mode")
+            ui.checkbox(&mut app.perform_shell.start_in_perform_mode, "Start in Perform Mode")
                 .on_hover_text("Open the project in perform mode (F1) instead of the editor");
 
             ui.separator();
@@ -37,8 +40,10 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
                     let containers = list_perform_ui_containers(&app.graph);
                     if containers.is_empty() {
                         ui.label(
-                            RichText::new("No containerCOMP — add one and put button/slider COMPs inside.")
-                                .weak(),
+                            RichText::new(
+                                "No containerCOMP — add one and put button/slider COMPs inside.",
+                            )
+                            .weak(),
                         );
                     } else {
                         ui.horizontal(|ui| {
@@ -65,8 +70,10 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
                     let windows = list_window_comps(&app.graph);
                     if windows.is_empty() {
                         ui.label(
-                            RichText::new("No windowCOMP in this project — add one from Create → COMP.")
-                                .weak(),
+                            RichText::new(
+                                "No windowCOMP in this project — add one from Create → COMP.",
+                            )
+                            .weak(),
                         );
                     } else {
                         table_header(ui);
@@ -79,32 +86,32 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
             ui.separator();
             ui.strong("Designer window");
             ui.checkbox(
-                &mut app.designer_custom_position,
+                &mut app.perform_shell.designer_custom_position,
                 "Custom position and size",
             )
             .on_hover_text("Where the main editor window opens (designer mode)");
             ui.horizontal(|ui| {
                 ui.label("X");
                 ui.add(
-                    egui::DragValue::new(&mut app.designer_x)
+                    egui::DragValue::new(&mut app.perform_shell.designer_x)
                         .speed(1.0)
                         .range(-8192.0..=8192.0),
                 );
                 ui.label("Y");
                 ui.add(
-                    egui::DragValue::new(&mut app.designer_y)
+                    egui::DragValue::new(&mut app.perform_shell.designer_y)
                         .speed(1.0)
                         .range(-8192.0..=8192.0),
                 );
                 ui.label("W");
                 ui.add(
-                    egui::DragValue::new(&mut app.designer_w)
+                    egui::DragValue::new(&mut app.perform_shell.designer_w)
                         .speed(1.0)
                         .range(400.0..=8192.0),
                 );
                 ui.label("H");
                 ui.add(
-                    egui::DragValue::new(&mut app.designer_h)
+                    egui::DragValue::new(&mut app.perform_shell.designer_h)
                         .speed(1.0)
                         .range(300.0..=8192.0),
                 );
@@ -122,7 +129,8 @@ pub fn show(app: &mut OtdApp, ctx: &egui::Context) {
                 }
             });
         });
-    app.show_window_placement = open;
+    crate::shortcut_routing::note_floating_window(app, &window);
+    app.perform_shell.show_window_placement = open;
 }
 
 fn table_header(ui: &mut Ui) {
@@ -133,6 +141,7 @@ fn table_header(ui: &mut Ui) {
             |ui| ui.label(RichText::new("Path").strong()),
         );
         ui.label(RichText::new("Output window").strong());
+        ui.label(RichText::new("Display").strong());
         ui.label(RichText::new("Open").strong());
         ui.label(RichText::new("").strong());
     });
@@ -165,14 +174,14 @@ fn perform_ui_row(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
                 .on_hover_text("Edit parameters (opens container network)")
                 .clicked()
             {
-                app.perform_edit = false;
-                app.perform = false;
+                app.perform_shell.perform_edit = false;
+                app.perform_shell.perform = false;
                 app.queue_enter_network(id);
                 app.select_only(id);
             }
             if ui.button("→").on_hover_text("Open this network").clicked() {
-                app.perform_edit = false;
-                app.perform = false;
+                app.perform_shell.perform_edit = false;
+                app.perform_shell.perform = false;
                 app.queue_enter_network(id);
                 app.select_only(id);
             }
@@ -184,7 +193,7 @@ fn window_row(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
     let path = app.graph.path(id);
     let name = app.graph.node(id).name.clone();
     let open = is_open(&app.graph, id);
-    let main = app.main_perform_window == Some(id);
+    let main = app.perform_shell.main_perform_window == Some(id);
 
     ui.push_id(egui::Id::new(("wp_window_row", id)), |ui| {
         ui.horizontal(|ui| {
@@ -203,6 +212,28 @@ fn window_row(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
             });
             if radio.inner.clicked() && !main {
                 app.set_main_perform_window(id);
+            }
+
+            let cfg = crate::window_layout::window_comp_config(&app.graph, id);
+            let mut display = cfg.display_index as f64;
+            let max_display = app.monitors.len().saturating_sub(1).max(8) as f64;
+            let count = app.monitors.len().max(1);
+            let display_ui = ui
+                .add(
+                    egui::DragValue::new(&mut display)
+                        .range(0.0..=max_display)
+                        .speed(0.05)
+                        .fixed_decimals(0),
+                )
+                .on_hover_text(format!(
+                    "Display index {display:.0} of {count}. 0 is the first screen."
+                ));
+            if display_ui.changed() {
+                app.edit("display");
+                let _ = app
+                    .graph
+                    .set_param(id, "display", Value::Float(display.floor()));
+                app.document.history.end_gesture();
             }
 
             if open {
@@ -226,7 +257,7 @@ fn window_row(app: &mut OtdApp, ui: &mut Ui, id: NodeId) {
                 .clicked()
             {
                 if let Some(parent) = app.graph.node(id).parent {
-                    app.current = parent;
+                    app.canvas.current = parent;
                     app.select_only(id);
                 }
             }

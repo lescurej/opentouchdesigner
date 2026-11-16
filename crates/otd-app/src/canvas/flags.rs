@@ -17,10 +17,22 @@ pub(crate) struct NodeFlagsView {
 const LEFT_FLAG_LABELS: [&str; 4] = ["V", "C", "B", "L"];
 
 const LEFT_FLAG_COLORS: [(Color32, Color32); 4] = [
-    (Color32::from_rgb(70, 140, 220), Color32::from_rgb(180, 220, 255)),
-    (Color32::from_rgb(200, 160, 70), Color32::from_rgb(255, 220, 150)),
-    (Color32::from_rgb(196, 168, 88), Color32::from_rgb(230, 210, 150)),
-    (Color32::from_rgb(200, 160, 70), Color32::from_rgb(255, 220, 150)),
+    (
+        Color32::from_rgb(70, 140, 220),
+        Color32::from_rgb(180, 220, 255),
+    ),
+    (
+        Color32::from_rgb(200, 160, 70),
+        Color32::from_rgb(255, 220, 150),
+    ),
+    (
+        Color32::from_rgb(196, 168, 88),
+        Color32::from_rgb(230, 210, 150),
+    ),
+    (
+        Color32::from_rgb(200, 160, 70),
+        Color32::from_rgb(255, 220, 150),
+    ),
 ];
 
 const LEFT_FLAG_COUNT: usize = 4;
@@ -60,13 +72,13 @@ pub(crate) fn footer_status_rects(footer: Rect, zoom: f32) -> (Rect, Rect, Rect)
         Vec2::splat(cell),
     );
     let display = Rect::from_min_size(
-        Pos2::new(viewer_active.min.x - gap - cell, inner.center().y - cell * 0.5),
+        Pos2::new(
+            viewer_active.min.x - gap - cell,
+            inner.center().y - cell * 0.5,
+        ),
         Vec2::splat(cell),
     );
-    let name = Rect::from_min_max(
-        inner.min,
-        Pos2::new(display.min.x - gap, inner.max.y),
-    );
+    let name = Rect::from_min_max(inner.min, Pos2::new(display.min.x - gap, inner.max.y));
     (name, display, viewer_active)
 }
 
@@ -81,7 +93,15 @@ fn paint_letter_tile(
 ) {
     let off_bg = Color32::from_rgb(26, 28, 32);
     let off_border = Color32::from_rgb(52, 54, 62);
-    painter.rect_filled(rect, 1.0, if on { on_fill.gamma_multiply(0.35) } else { off_bg });
+    painter.rect_filled(
+        rect,
+        1.0,
+        if on {
+            on_fill.gamma_multiply(0.35)
+        } else {
+            off_bg
+        },
+    );
     painter.rect_stroke(
         rect,
         1.0,
@@ -117,12 +137,7 @@ pub(crate) fn draw_left_flag_strip(
     if zoom < 0.32 {
         return;
     }
-    let states = [
-        flags.viewer,
-        flags.clone_immune,
-        flags.bypass,
-        flags.lock,
-    ];
+    let states = [flags.viewer, flags.clone_immune, flags.bypass, flags.lock];
     for (i, label) in LEFT_FLAG_LABELS.iter().enumerate() {
         let (fill, text) = LEFT_FLAG_COLORS[i];
         paint_letter_tile(
@@ -188,7 +203,10 @@ pub(crate) fn draw_bypass_body_fx(painter: &egui::Painter, body: Rect, zoom: f32
     p.rect_stroke(
         body,
         0.0,
-        Stroke::new((1.25 * zoom).clamp(1.0, 1.5), Color32::from_rgb(190, 162, 82)),
+        Stroke::new(
+            (1.25 * zoom).clamp(1.0, 1.5),
+            Color32::from_rgb(190, 162, 82),
+        ),
         StrokeKind::Inside,
     );
 }
@@ -299,11 +317,7 @@ fn click_left_flag(ui: &mut Ui, id: NodeId, index: usize, rect: Rect, app: &mut 
         "Bypass (B) — pass input 0 straight through, do not run this op",
         "Lock (L) — block edits and wiring",
     ];
-    let resp = ui.interact(
-        rect,
-        egui::Id::new(("flag", id, index)),
-        Sense::click(),
-    );
+    let resp = ui.interact(rect, egui::Id::new(("flag", id, index)), Sense::click());
     if resp.clicked() {
         let flag = match index {
             0 => SelectionFlag::Viewer,

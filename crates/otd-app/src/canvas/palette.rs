@@ -1,20 +1,58 @@
+use std::cell::Cell;
+
 use egui::Color32;
 use otd_core::Family;
 
+use crate::ui_palette::{NetworkTheme, network};
+
+thread_local! {
+    static ACTIVE: Cell<NetworkTheme> = Cell::new(network(crate::settings::UiPalette::Classic));
+}
+
+pub(crate) fn set_active(theme: NetworkTheme) {
+    ACTIVE.set(theme);
+}
+
+fn active() -> NetworkTheme {
+    ACTIVE.with(|t| t.get())
+}
+
 pub fn channel_color(index: usize) -> Color32 {
-    const PALETTE: [[u8; 3]; 6] = [
-        [126, 190, 126],
-        [126, 170, 220],
-        [220, 180, 110],
-        [200, 130, 200],
-        [220, 130, 130],
-        [140, 210, 200],
-    ];
-    let c = PALETTE[index % PALETTE.len()];
-    Color32::from_rgb(c[0], c[1], c[2])
+    active().channel_color(index)
 }
 
 pub(crate) fn family_color(f: Family) -> Color32 {
-    let c = f.color();
-    Color32::from_rgb(c[0], c[1], c[2])
+    active().family_color(f)
+}
+
+pub(crate) fn canvas_bg() -> Color32 {
+    active().canvas_bg
+}
+
+pub(crate) fn grid_color() -> Color32 {
+    active().grid
+}
+
+pub(crate) fn grid_dots() -> bool {
+    active().grid_dots
+}
+
+pub(crate) fn node_fill(selected: bool) -> Color32 {
+    if selected {
+        active().node_fill_sel
+    } else {
+        active().node_fill
+    }
+}
+
+pub(crate) fn selection_color(primary: bool) -> Color32 {
+    if primary {
+        active().sel_primary
+    } else {
+        active().sel_secondary
+    }
+}
+
+pub(crate) fn node_corner() -> f32 {
+    active().node_corner
 }

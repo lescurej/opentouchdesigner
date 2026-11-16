@@ -30,12 +30,7 @@ impl CanvasView {
         (screen - origin) / self.zoom - self.pan
     }
 
-    pub(crate) fn fit_world_bounds(
-        origin: Pos2,
-        canvas: Rect,
-        min: Vec2,
-        max: Vec2,
-    ) -> Self {
+    pub(crate) fn fit_world_bounds(origin: Pos2, canvas: Rect, min: Vec2, max: Vec2) -> Self {
         if canvas.width() <= 1.0 || canvas.height() <= 1.0 {
             return Self::default();
         }
@@ -58,7 +53,10 @@ impl CanvasView {
 
 #[derive(Clone, Copy, Debug)]
 pub enum DragState {
-    Node { id: otd_core::NodeId, grab: Vec2 },
+    Node {
+        id: otd_core::NodeId,
+        grab: Vec2,
+    },
     Wire {
         from: otd_core::NodeId,
         output: usize,

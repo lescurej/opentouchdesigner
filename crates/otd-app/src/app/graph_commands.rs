@@ -8,7 +8,10 @@ use super::{CreateDialog, OtdApp};
 pub(crate) enum GraphCommand {
     DeleteSelection,
     PasteAt([f32; 2]),
-    Disconnect { dst: NodeId, input: usize },
+    Disconnect {
+        dst: NodeId,
+        input: usize,
+    },
     Connect {
         from: NodeId,
         output: usize,
@@ -21,8 +24,13 @@ pub(crate) enum GraphCommand {
         type_name: String,
         dialog: CreateDialog,
     },
-    AddEffect { type_name: String },
-    RemoveCustomParam { node: NodeId, key: String },
+    AddEffect {
+        type_name: String,
+    },
+    RemoveCustomParam {
+        node: NodeId,
+        key: String,
+    },
     AssignParamOpRef {
         target: NodeId,
         key: String,
@@ -36,7 +44,7 @@ impl OtdApp {
     }
 
     pub(crate) fn queue_paste_clipboard(&mut self, origin: [f32; 2]) {
-        if self.node_clipboard.nodes.is_empty() {
+        if self.document.node_clipboard.nodes.is_empty() {
             return;
         }
         self.push_graph_command(GraphCommand::PasteAt(origin));
@@ -64,10 +72,7 @@ impl OtdApp {
     }
 
     pub(crate) fn queue_create_operator(&mut self, type_name: String, dialog: CreateDialog) {
-        self.push_graph_command(GraphCommand::CreateOperator {
-            type_name,
-            dialog,
-        });
+        self.push_graph_command(GraphCommand::CreateOperator { type_name, dialog });
     }
 
     pub(crate) fn queue_add_effect(&mut self, type_name: &str) {
@@ -117,6 +122,7 @@ impl OtdApp {
             crate::media::accept(self, &paths, at);
         }
         let cmds = std::mem::take(&mut self.graph_commands);
+        let had_edits = !cmds.is_empty();
         for cmd in cmds {
             match cmd {
                 GraphCommand::DeleteSelection => self.delete_selected(),
@@ -141,7 +147,7 @@ impl OtdApp {
                 }
                 GraphCommand::RemoveCustomParam { node, key } => {
                     self.edit("remove parameter");
-                    self.history.end_gesture();
+                    self.document.history.end_gesture();
                     self.graph.remove_custom_param(node, &key);
                 }
                 GraphCommand::AssignParamOpRef {
@@ -150,6 +156,9 @@ impl OtdApp {
                     source,
                 } => crate::canvas::apply_param_reference(self, target, &key, source),
             }
+        }
+        if had_edits && self.transport.playing {
+            self.background_engine.publish(self);
         }
     }
 }

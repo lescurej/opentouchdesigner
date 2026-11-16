@@ -17,7 +17,7 @@ pub(crate) fn node_has_callback(app: &OtdApp, owner: NodeId) -> bool {
 }
 
 pub(crate) fn callback_embedded(app: &OtdApp, owner: NodeId) -> bool {
-    app.callback_embedded.contains(&owner)
+    app.canvas.callback_embedded.contains(&owner)
 }
 
 pub(crate) fn hide_callback_dat_on_canvas(app: &OtdApp, id: NodeId) -> bool {
@@ -42,8 +42,8 @@ pub(crate) fn callback_extra_height(app: &OtdApp, owner: NodeId) -> f32 {
 
 pub(crate) fn main_node_world_height(app: &OtdApp, id: NodeId) -> f32 {
     if app.graph.node(id).family == Family::Chop {
-        if let Some(data) = app.engines.chop_data(id) {
-            return super::chop::chop_node_world_height(&data);
+        if let Some(data) = app.snapshot_chop(id) {
+            return super::chop::chop_node_world_height(data);
         }
     }
     BODY_H + FOOTER_H
@@ -94,13 +94,17 @@ pub(crate) fn draw_fold_control(
         FontId::proportional((9.5 * zoom).clamp(8.0, 12.0)),
         text_c,
     );
-    let resp = ui.interact(strip, egui::Id::new(("callback_fold", owner)), Sense::click());
+    let resp = ui.interact(
+        strip,
+        egui::Id::new(("callback_fold", owner)),
+        Sense::click(),
+    );
     if resp.clicked() {
         release_param_focus(ui.ctx());
         if collapsed {
-            app.callback_embedded.remove(&owner);
+            app.canvas.callback_embedded.remove(&owner);
         } else {
-            app.callback_embedded.insert(owner);
+            app.canvas.callback_embedded.insert(owner);
         }
         return true;
     }

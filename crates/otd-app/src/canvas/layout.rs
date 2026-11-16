@@ -13,17 +13,18 @@ pub(crate) struct NodeLayout {
 pub(crate) fn node_layout(rect: Rect, zoom: f32) -> NodeLayout {
     let footer_h = FOOTER_H * zoom;
     let flag_w = FLAG_STRIP_W * zoom;
-    let footer = Rect::from_min_max(
-        Pos2::new(rect.min.x, rect.max.y - footer_h),
-        rect.max,
-    );
+    let footer = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - footer_h), rect.max);
     let content = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, footer.min.y));
     let flags = Rect::from_min_size(content.min, Vec2::new(flag_w, content.height()));
     let body = Rect::from_min_max(
         Pos2::new(content.min.x + flag_w, content.min.y),
         content.max,
     );
-    NodeLayout { flags, body, footer }
+    NodeLayout {
+        flags,
+        body,
+        footer,
+    }
 }
 
 pub(crate) fn input_port_pos(node_rect: Rect, index: usize, count: usize, zoom: f32) -> Pos2 {
@@ -39,10 +40,7 @@ pub(crate) fn output_port_pos(node_rect: Rect, index: usize, count: usize, zoom:
     let top = layout.body.min.y;
     let bottom = layout.body.max.y;
     let step = (bottom - top) / (count.max(1) + 1) as f32;
-    Pos2::new(
-        node_rect.max.x,
-        top + step * (index + 1) as f32,
-    )
+    Pos2::new(node_rect.max.x, top + step * (index + 1) as f32)
 }
 
 pub(crate) fn port_hit_size(zoom: f32) -> Vec2 {

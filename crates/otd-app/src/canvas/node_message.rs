@@ -25,7 +25,7 @@ pub fn paint_node_message(
     rect: Rect,
     zoom: f32,
 ) {
-    let Some(msg) = app.engines.node_message(&app.graph, id) else {
+    let Some(msg) = app.snapshot_node_message(id) else {
         return;
     };
     let color = stroke_color(msg.level);
@@ -53,5 +53,8 @@ fn truncate_status(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    s.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "…"
+    s.chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }

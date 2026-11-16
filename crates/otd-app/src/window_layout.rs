@@ -80,16 +80,8 @@ pub fn window_comp_config(graph: &Graph, id: NodeId) -> WindowCompConfig {
             .map(|p| p.eval(&ctx).as_str())
             .unwrap_or_default()
     };
-    let f = |key: &str, d: f64| {
-        node.param(key)
-            .map(|p| p.eval(&ctx).as_f64())
-            .unwrap_or(d)
-    };
-    let b = |key: &str, d: bool| {
-        node.param(key)
-            .map(|p| p.eval(&ctx).as_bool())
-            .unwrap_or(d)
-    };
+    let f = |key: &str, d: f64| node.param(key).map(|p| p.eval(&ctx).as_f64()).unwrap_or(d);
+    let b = |key: &str, d: bool| node.param(key).map(|p| p.eval(&ctx).as_bool()).unwrap_or(d);
 
     let justify_area = match s("justifyoffsetto").as_str() {
         "specifydisplay" => JustifyArea::SpecifyDisplay,
@@ -167,14 +159,11 @@ pub fn build_viewport_builder(
     cfg: &WindowCompConfig,
     tex_size: Option<[u32; 2]>,
     anchor: Option<Pos2>,
-    root_monitor_size: Option<Vec2>,
+    monitor: Option<crate::monitors::MonitorLayout>,
 ) -> ViewportBuilder {
     let mut builder = ViewportBuilder::default().with_title(cfg.title.clone());
 
-    let fullscreen_monitor = matches!(
-        cfg.opening_size,
-        OpeningSize::Fill | OpeningSize::Exclusive
-    );
+    let fullscreen_monitor = matches!(cfg.opening_size, OpeningSize::Fill | OpeningSize::Exclusive);
     if fullscreen_monitor {
         let idx = display_index_for_config(cfg);
         builder = builder
@@ -190,7 +179,7 @@ pub fn build_viewport_builder(
         if !cfg.allow_minimize {
             builder = builder.with_minimize_button(false);
         }
-        if let Some(pos) = window_outer_position(cfg, size, anchor, root_monitor_size) {
+        if let Some(pos) = window_outer_position(cfg, size, anchor, monitor) {
             builder = builder.with_position(pos);
         }
     }
@@ -206,23 +195,29 @@ fn window_outer_position(
     cfg: &WindowCompConfig,
     inner: Vec2,
     anchor: Option<Pos2>,
-    monitor: Option<Vec2>,
+    monitor: Option<crate::monitors::MonitorLayout>,
 ) -> Option<Pos2> {
-    let area = monitor.unwrap_or(Vec2::new(1920.0, 1080.0));
+    let layout = monitor.unwrap_or_else(crate::monitors::MonitorLayout::fallback);
+    let area = layout.size;
+    let origin = layout.origin;
     let frame = estimate_frame(cfg.borders);
     let outer = inner + frame;
 
     let ax = match cfg.justify_h {
-        JustifyAxis::Start => 0.0,
-        JustifyAxis::End => (area.x - outer.x).max(0.0),
-        JustifyAxis::Mouse => anchor.map(|p| p.x - outer.x * 0.5).unwrap_or(area.x * 0.5),
-        JustifyAxis::Center => (area.x - outer.x) * 0.5,
+        JustifyAxis::Start => origin.x,
+        JustifyAxis::End => origin.x + (area.x - outer.x).max(0.0),
+        JustifyAxis::Mouse => anchor
+            .map(|p| p.x - outer.x * 0.5)
+            .unwrap_or(origin.x + area.x * 0.5),
+        JustifyAxis::Center => origin.x + (area.x - outer.x) * 0.5,
     };
     let ay = match cfg.justify_v {
-        JustifyAxis::Start => 0.0,
-        JustifyAxis::End => (area.y - outer.y).max(0.0),
-        JustifyAxis::Mouse => anchor.map(|p| p.y - outer.y * 0.5).unwrap_or(area.y * 0.5),
-        JustifyAxis::Center => (area.y - outer.y) * 0.5,
+        JustifyAxis::Start => origin.y,
+        JustifyAxis::End => origin.y + (area.y - outer.y).max(0.0),
+        JustifyAxis::Mouse => anchor
+            .map(|p| p.y - outer.y * 0.5)
+            .unwrap_or(origin.y + area.y * 0.5),
+        JustifyAxis::Center => origin.y + (area.y - outer.y) * 0.5,
     };
     Some(Pos2::new(ax + cfg.offset.x, ay + cfg.offset.y))
 }
