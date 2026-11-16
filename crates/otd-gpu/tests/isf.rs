@@ -100,7 +100,7 @@ fn an_imported_shader_reads_the_values_the_engine_writes() {
 
     // And the bool, packed as a component of the same vector as the scalars.
     graph.set_param(node, "on", Value::Bool(false)).unwrap();
-    time.advance(1.0 / 60.0);
+    time.advance_nominal_frame();
     let p = run(&graph, &mut engine, &mut cook, &time);
     assert_eq!(
         [p[0], p[1], p[2]],

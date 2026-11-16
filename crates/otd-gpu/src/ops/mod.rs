@@ -1,17 +1,14 @@
 //! The TOP operator table.
 //!
-//! Adding an operator is: one `.wgsl` file, one `params_*` function, one
-//! `pack_*` function, one `TopSpec` entry. That ratio is deliberate — PLAN.md
+//! Adding an operator is: one `.wgsl` file, one `params` function, one `pack`
+//! function, one `TopSpec` entry in `ops/<slug>/mod.rs`. That ratio is deliberate — PLAN.md
 //! §6 names operator breadth as the main treadmill risk, so the per-operator
 //! cost has to stay near zero.
 //!
 //! Layout:
 //! - `helpers` — parameter evaluation helpers
-//! - `definitions` — `params_*` / `pack_*` for each operator
 //! - `blend` — named blend operators (shared composite shader)
-//! - `macros` — `filter_top!` / `blend_top!`
-//! - `extra` — TD-style filter TOPs registered via macros
-//! - `table` — core TOP table entries
+//! - `ops/<slug>/mod.rs` — `build.rs` registry
 
 use std::sync::OnceLock;
 
@@ -19,18 +16,37 @@ use otd_core::{Connector, EvalContext, Family, Node, OpDef, OpRegistry};
 
 #[macro_use]
 mod helpers;
-#[macro_use]
-mod macros;
-mod definitions;
 mod blend;
-mod extra;
-mod table;
+mod io;
+mod video_source;
+mod window;
+include!(concat!(env!("OUT_DIR"), "/registry_generated.rs"));
 
-pub use definitions::{
-    CACHE, CHOP_TO_TOP, FEEDBACK, GLSL, IN, MOVIE_IN, MOVIE_OUT, NULL, OUT, RENDER, SELECT, TEXT,
-    VIDEO_DEVICE_IN, movie_out_length_limit_frames, nothing_to_open, shader_source,
+pub use cache::CACHE;
+pub use chop_to_top::CHOP_TO_TOP;
+pub use glsl::{GLSL, shader_source};
+pub use in_top::IN;
+pub use io::{
+    SCREEN_GRAB, VIDEO_STREAM_IN, VIDEO_STREAM_OUT, io_stub_status, is_spout_top, is_syphon_top,
 };
-pub use helpers::{generator_size, movie_fit_mode, movie_output_dimensions, movie_sampler_nearest};
+pub use out_top::OUT;
+pub use spout_in::SPOUT_IN;
+pub use spout_out::SPOUT_OUT;
+pub use syphon_in::SYPHON_IN;
+pub use syphon_out::SYPHON_OUT;
+pub use movie_out::{length_limit_frames as movie_out_length_limit_frames, MOVIE_OUT};
+pub use select::SELECT;
+pub use text::TEXT;
+pub use video_device_in::VIDEO_DEVICE_IN;
+pub use feedback::FEEDBACK;
+pub use movie_in::MOVIE_IN;
+pub use null::NULL;
+pub use render::RENDER;
+pub use video_source::nothing_to_open;
+pub use helpers::{
+    filter_output_dimensions, generator_size, movie_fit_mode, movie_output_dimensions,
+    movie_sampler_nearest,
+};
 
 pub const COMMON_WGSL: &str = include_str!("../shaders/common.wgsl");
 
@@ -56,6 +72,23 @@ pub enum Sizing {
     Referenced,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopCook {
+    Shader,
+    Feedback,
+    MovieIn,
+    Render,
+    VideoIn,
+    MovieOut,
+    Ramp,
+    Text,
+    Analyze,
+    ChopToTop,
+    Select,
+    Cache,
+    IoStub,
+}
+
 pub struct TopSpec {
     pub def: OpDef,
     pub shader: &'static str,
@@ -63,12 +96,15 @@ pub struct TopSpec {
     pub two_pass: bool,
     pub dynamic_shader: bool,
     pub pack: fn(&Node, &EvalContext) -> PackedParams,
+    pub cook: TopCook,
 }
 
 impl TopSpec {
     pub fn pack_params(&self, node: &Node, ctx: &EvalContext) -> WideParams {
         if self.def.type_name == GLSL {
-            definitions::pack_glsl_wide(node, ctx)
+            glsl::pack_wide(node, ctx)
+        } else if self.def.type_name == "rampTOP" {
+            ramp::pack_wide(node, ctx)
         } else {
             widen((self.pack)(node, ctx))
         }
@@ -77,11 +113,7 @@ impl TopSpec {
 
 fn specs() -> &'static Vec<TopSpec> {
     static SPECS: OnceLock<Vec<TopSpec>> = OnceLock::new();
-    SPECS.get_or_init(|| {
-        let mut v = table::core_specs();
-        v.extend(extra::extra_specs());
-        v
-    })
+    SPECS.get_or_init(folder_specs)
 }
 
 pub fn spec(type_name: &str) -> Option<&'static TopSpec> {
@@ -102,86 +134,28 @@ pub const WINDOW_COMP: OpDef = OpDef {
     inputs: &[],
     summary: "Floating or external display for a cooked TOP (TouchDesigner Window COMP).",
     time_dependent: false,
-    params: definitions::params_window_comp,
+    params: window::params_window_comp,
     connector: Connector::None,
 };
+
+pub fn register_all(registry: &mut OpRegistry) {
+    for s in specs() {
+        registry.register(s.def.clone());
+    }
+    registry.register(WINDOW_COMP);
+}
 
 /// Every operator this build knows about.
 pub fn registry() -> OpRegistry {
     let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
-    r.register(WINDOW_COMP);
+    register_all(&mut r);
     r
 }
 
 #[cfg(test)]
-mod video_source_tests {
-    use super::nothing_to_open;
-
-    #[test]
-    fn a_blank_device_means_the_default_camera_not_nothing() {
-        // The regression this pins: a Video Device In is created with `device`
-        // blank, because its label says blank is the default. Reading that as
-        // "no source" made the node the user had just added the one node that
-        // could never produce a picture — black, silent, and with no ffmpeg
-        // started, so nothing downstream of it and nothing in any log said why.
-        assert!(!nothing_to_open(true, ""), "blank device = default camera");
-        assert!(!nothing_to_open(true, "   "));
-        assert!(!nothing_to_open(true, "1"), "a named device, obviously");
-
-        // A movie with no file really is nothing to open.
-        assert!(nothing_to_open(false, ""));
-        assert!(nothing_to_open(false, "  \t "));
-        assert!(!nothing_to_open(false, "/clips/a.mov"));
-    }
-}
+#[path = "../tests/ops_mod__video_source_tests.rs"]
+mod video_source_tests;
 
 #[cfg(test)]
-mod blend_alias_tests {
-    use super::*;
-    use crate::ops::definitions::params_composite;
-
-    /// Every named blend operator has to pin the Composite TOP operation of
-    /// the same name.
-    ///
-    /// They all share `composite.wgsl` and differ only in the index their
-    /// `pack` puts in `p0.x`, so a transposed pair here is a Subtract TOP that
-    /// silently screens — no crash, no failing shader, just a wrong picture.
-    /// This reads the index back out of the Composite TOP's own menu, so the
-    /// menu and the aliases cannot drift apart either.
-    #[test]
-    fn each_named_blend_pins_the_composite_operation_it_is_named_after() {
-        let menu = params_composite()["operation"].menu.clone().unwrap();
-        let ctx = EvalContext::default();
-        let registry = registry();
-        let mut graph = otd_core::Graph::new();
-        let root = graph.root();
-
-        for (type_name, operation) in [
-            ("overTOP", "over"),
-            ("underTOP", "under"),
-            ("addTOP", "add"),
-            ("subtractTOP", "subtract"),
-            ("multiplyTOP", "multiply"),
-            ("screenTOP", "screen"),
-            ("differenceTOP", "difference"),
-            ("insideTOP", "inside"),
-            ("outsideTOP", "outside"),
-            ("crossTOP", "cross"),
-        ] {
-            let spec = spec(type_name).expect("registered");
-            let id = graph
-                .create(root, registry.get(type_name).unwrap(), None)
-                .unwrap();
-            let node = graph.node(id);
-            let expected = menu.iter().position(|m| m == operation).expect("in menu");
-            assert_eq!(
-                (spec.pack)(node, &ctx)[0][0] as usize,
-                expected,
-                "{type_name} should composite with `{operation}`"
-            );
-        }
-    }
-}
+#[path = "../tests/ops_mod__blend_alias_tests.rs"]
+mod blend_alias_tests;

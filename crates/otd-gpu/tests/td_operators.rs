@@ -661,6 +661,52 @@ fn luma_blur_blurs_where_the_second_input_is_bright_and_not_where_it_is_dark() {
     );
 }
 
+#[test]
+fn ramp_vertical_runs_bottom_to_top_like_touchdesigner() {
+    let ctx = gpu_or_skip!();
+    let reg = ops::registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let n = graph
+        .create(root, reg.get("rampTOP").unwrap(), None)
+        .unwrap();
+    graph
+        .set_param(n, "type", Value::Str("vertical".into()))
+        .unwrap();
+    graph.set_param(n, "resw", Value::Int(8)).unwrap();
+    graph.set_param(n, "resh", Value::Int(8)).unwrap();
+    graph
+        .set_param(n, "color1", Value::Vec4([0.0, 0.0, 0.0, 1.0]))
+        .unwrap();
+    graph
+        .set_param(n, "color2", Value::Vec4([1.0, 1.0, 1.0, 1.0]))
+        .unwrap();
+    let (w, p) = render(&ctx, &graph, n);
+    near(px(&p, w, 4, 7)[0], 0.5 / 8.0, "color1 at bottom row");
+    near(px(&p, w, 4, 0)[0], 7.5 / 8.0, "color2 at top row");
+}
+
+#[test]
+fn ramp_phase_offsets_without_wrapping_the_far_edge() {
+    let ctx = gpu_or_skip!();
+    let reg = ops::registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let n = graph
+        .create(root, reg.get("rampTOP").unwrap(), None)
+        .unwrap();
+    graph.set_param(n, "resw", Value::Int(64)).unwrap();
+    graph.set_param(n, "resh", Value::Int(8)).unwrap();
+    graph.set_param(n, "phase", Value::Float(0.25)).unwrap();
+    let (w, p) = render(&ctx, &graph, n);
+    near(px(&p, w, 0, 4)[0], 0.25, "left edge follows phase");
+    near(
+        px(&p, w, 63, 4)[0],
+        1.0,
+        "right edge stays at color2 with hold extend",
+    );
+}
+
 // ------------------------------------------------------------ the blend ops
 
 /// Every named blend operator, on the same pair of inputs, against the number

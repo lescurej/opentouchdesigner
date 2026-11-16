@@ -41,7 +41,7 @@ fn the_feedback_patch_sustains_60fps_at_1080p() {
         engine.begin_frame();
         cook.cook_frame(&graph, &[out], &time, &mut engine).unwrap();
         engine.end_frame();
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
     }
     for id in graph.walk() {
         assert!(
@@ -63,7 +63,7 @@ fn the_feedback_patch_sustains_60fps_at_1080p() {
         engine.begin_frame();
         cook.cook_frame(&graph, &[out], &time, &mut engine).unwrap();
         engine.end_frame();
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
     }
     ctx.device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -92,7 +92,7 @@ fn the_feedback_loop_actually_accumulates() {
         engine.begin_frame();
         cook.cook_frame(&graph, &[out], &time, &mut engine).unwrap();
         engine.end_frame();
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
     }
 
     // Compare the loop's output against what the shader alone drew on the
@@ -164,7 +164,7 @@ fn a_glsl_top_only_recooks_what_it_must() {
         engine.begin_frame();
         cook.cook_frame(&graph, &[out], &time, &mut engine).unwrap();
         engine.end_frame();
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
     }
     let glsl = graph.find("/glsl1").unwrap();
     let fb = graph.find("/fb1").unwrap();

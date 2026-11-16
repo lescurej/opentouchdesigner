@@ -167,7 +167,8 @@ fn main() {
     let f = |v: f64| Value::Float(v);
     let s = |v: &str| Value::Str(v.into());
 
-    let one_in: Vec<(&str, &str, Vec<(&str, Value)>)> = vec![
+    type OpSample<'a> = (&'a str, &'a str, Vec<(&'a str, Value)>);
+    let one_in: Vec<OpSample<'_>> = vec![
         ("monochrome", "monochromeTOP", vec![]),
         ("rgbtohsv", "rgbtohsvTOP", vec![]),
         (

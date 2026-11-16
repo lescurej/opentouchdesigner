@@ -1,12 +1,13 @@
-// Noise TOP — fractal value noise.
+// Noise TOP — Perlin 2D in 0–1 texture space (TouchDesigner default type).
 //
 // p0 = (period, harmonics, roughness, exponent)
 // p1 = (translate.x, translate.y, translate.z, monochrome)
-// p2 = (amplitude, offset, 0, 0)
+// p2 = (amplitude, offset, seed, harmonic spread)
+// p3 = (harmonic gain, 0, 0, 0)
+// Harmonic spread is unused: it only applies to Harmonic Summation, which this
+// cook does not implement. Harmonics is the number of extra octaves; 0 is the
+// base octave alone.
 
-// Integer bit-mixing hash. The usual `fract(sin(dot(...)))` trick correlates
-// badly on a lattice and shows up as square blocking in the fbm, which is
-// exactly what a noise generator must not do.
 fn hash_u(x: u32) -> u32 {
   var h = x;
   h ^= h >> 16u;
@@ -17,74 +18,66 @@ fn hash_u(x: u32) -> u32 {
   return h;
 }
 
-fn hash3(p: vec3<f32>) -> f32 {
-  let i = vec3<i32>(p);
-  let h = hash_u(bitcast<u32>(i.x) ^ hash_u(bitcast<u32>(i.y) ^ hash_u(bitcast<u32>(i.z) ^ 0x9e3779b9u)));
-  return f32(h) * (1.0 / 4294967296.0);
+fn grad(h: u32, x: f32, y: f32) -> f32 {
+  let sx = select(-x, x, (h & 1u) == 0u);
+  let sy = select(-y, y, (h & 2u) == 0u);
+  return select(sx + sy, sx - sy, (h & 4u) == 0u);
 }
 
-fn vnoise(p: vec3<f32>) -> f32 {
-  let i = floor(p);
+fn perlin2(p: vec2<f32>, seed: u32) -> f32 {
+  let i = vec2<i32>(floor(p));
   let f = fract(p);
-  // Quintic smoothstep — continuous second derivative, so fbm doesn't band.
   let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-
-  let n000 = hash3(i + vec3<f32>(0.0, 0.0, 0.0));
-  let n100 = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
-  let n010 = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
-  let n110 = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
-  let n001 = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
-  let n101 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
-  let n011 = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
-  let n111 = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
-
-  let x00 = mix(n000, n100, u.x);
-  let x10 = mix(n010, n110, u.x);
-  let x01 = mix(n001, n101, u.x);
-  let x11 = mix(n011, n111, u.x);
-  return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
+  let aa = hash_u(bitcast<u32>(i.x) ^ hash_u(bitcast<u32>(i.y) ^ seed));
+  let ba = hash_u(bitcast<u32>(i.x + 1) ^ hash_u(bitcast<u32>(i.y) ^ seed));
+  let ab = hash_u(bitcast<u32>(i.x) ^ hash_u(bitcast<u32>(i.y + 1) ^ seed));
+  let bb = hash_u(bitcast<u32>(i.x + 1) ^ hash_u(bitcast<u32>(i.y + 1) ^ seed));
+  let x1 = mix(grad(aa, f.x, f.y), grad(ba, f.x - 1.0, f.y), u.x);
+  let x2 = mix(grad(ab, f.x, f.y - 1.0), grad(bb, f.x - 1.0, f.y - 1.0), u.x);
+  return mix(x1, x2, u.y) * 1.41421356;
 }
 
-fn fbm(p: vec3<f32>, harmonics: i32, roughness: f32) -> f32 {
-  var sum = 0.0;
-  var amp = 1.0;
-  var norm = 0.0;
-  var q = p;
-  for (var i = 0; i < harmonics; i = i + 1) {
-    sum = sum + amp * vnoise(q);
-    norm = norm + amp;
+fn fbm(p: vec2<f32>, harmonics: i32, roughness: f32, gain: f32, seed: u32) -> f32 {
+  var sum = perlin2(p, seed);
+  var amp = roughness * gain;
+  var q = p * 2.0;
+  let n = max(harmonics, 0) + 1;
+  for (var i = 1; i < n; i = i + 1) {
+    sum = sum + amp * perlin2(q, seed);
     amp = amp * roughness;
     q = q * 2.0;
   }
-  return sum / max(norm, 1e-6);
+  return sum;
+}
+
+fn shape(n: f32, exponent: f32, amplitude: f32, offset: f32) -> f32 {
+  let c = clamp(n, -1.0, 1.0);
+  return sign(c) * pow(abs(c), exponent) * amplitude + offset;
 }
 
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
   let period = max(U.p0.x, 1e-4);
-  let harmonics = clamp(i32(U.p0.y), 1, 10);
-  let roughness = clamp(U.p0.z, 0.0, 1.0);
+  let harmonics = i32(U.p0.y);
+  let roughness = clamp(U.p0.z, 0.0, 8.0);
   let exponent = max(U.p0.w, 1e-3);
-  let aspect = U.res.x / max(U.res.y, 1.0);
-
-  // Keep noise square regardless of output aspect.
-  var p = vec3<f32>((in.uv.x - 0.5) * aspect, in.uv.y - 0.5, 0.0) / period;
-  p = p + U.p1.xyz;
+  let gain = max(U.p3.x, 0.0);
+  let seed = bitcast<u32>(i32(round(U.p2.z)));
+  let aspect = U.res.y / max(U.res.x, 1.0);
+  let uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+  let p = vec2<f32>(uv.x, uv.y * aspect) / period + U.p1.xy;
 
   let mono = U.p1.w > 0.5;
   var rgb: vec3<f32>;
   if (mono) {
-    let n = fbm(p, harmonics, roughness);
+    let n = shape(fbm(p, harmonics, roughness, gain, seed), exponent, U.p2.x, U.p2.y);
     rgb = vec3<f32>(n);
   } else {
     rgb = vec3<f32>(
-      fbm(p, harmonics, roughness),
-      fbm(p + vec3<f32>(37.2, 11.5, 5.1), harmonics, roughness),
-      fbm(p + vec3<f32>(91.7, 63.3, 19.9), harmonics, roughness),
+      shape(fbm(p, harmonics, roughness, gain, seed), exponent, U.p2.x, U.p2.y),
+      shape(fbm(p, harmonics, roughness, gain, seed ^ 0x9e3779b9u), exponent, U.p2.x, U.p2.y),
+      shape(fbm(p, harmonics, roughness, gain, seed ^ 0x85ebca6bu), exponent, U.p2.x, U.p2.y),
     );
   }
-
-  rgb = pow(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(exponent));
-  rgb = rgb * U.p2.x + U.p2.y;
   return vec4<f32>(rgb, 1.0);
 }

@@ -59,11 +59,11 @@ fn undo_changes_the_pixels_not_just_the_parameter() {
         .set_param(node, "color", Value::Vec4([0.0, 0.0, 1.0, 1.0]))
         .unwrap();
     history.end_gesture();
-    time.advance(1.0 / 60.0);
+    time.advance_nominal_frame();
     assert_eq!(frame(&graph, &mut engine, &mut cook, &time), [0, 0, 255]);
 
     graph = history.undo(&graph).unwrap();
-    time.advance(1.0 / 60.0);
+    time.advance_nominal_frame();
     assert_eq!(
         frame(&graph, &mut engine, &mut cook, &time),
         [255, 0, 0],
@@ -71,7 +71,7 @@ fn undo_changes_the_pixels_not_just_the_parameter() {
     );
 
     graph = history.redo(&graph).unwrap();
-    time.advance(1.0 / 60.0);
+    time.advance_nominal_frame();
     assert_eq!(frame(&graph, &mut engine, &mut cook, &time), [0, 0, 255]);
 }
 
@@ -118,8 +118,10 @@ fn undoing_a_delete_brings_the_texture_back() {
     // mistaken for a current result.
     graph = history.undo(&graph).unwrap();
     assert_eq!(graph.node(level).inputs[0], Some(src), "the wire returned");
+    engine.sync_with_graph(&graph);
+    cook.sync_with_graph(&graph);
 
-    time.advance(1.0 / 60.0);
+    time.advance_nominal_frame();
     engine.begin_frame();
     cook.cook_frame(&graph, &[level], &time, &mut engine)
         .unwrap();

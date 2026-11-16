@@ -1,21 +1,24 @@
 use otd_core::indexmap::IndexMap;
 use otd_core::{EvalContext, Node, Param};
 
-use super::helpers::*;
 use super::PackedParams;
+use super::helpers::*;
 
 // The named blend operators. Each is a Composite TOP with its Operation fixed,
 // which is what makes them one line each: the alternative, an operator apiece
 // with its own shader, is eleven copies of the same twenty lines.
-pub(crate) fn params_blend() -> IndexMap<String, Param> {
-    params! {
-        "opacity" => Param::float(1.0).with_label("Opacity").with_range(0.0, 1.0),
-    }
+pub fn params_blend() -> IndexMap<String, Param> {
+    append_params(
+        params! {
+            "opacity" => Param::float(1.0).with_label("Opacity").with_range(0.0, 1.0),
+        },
+        params_dual_input_sizing(),
+    )
 }
 
 macro_rules! blend_pack {
     ($name:ident, $op:expr) => {
-        pub(crate) fn $name(n: &Node, c: &EvalContext) -> PackedParams {
+        pub fn $name(n: &Node, c: &EvalContext) -> PackedParams {
             [
                 [$op as f32, f(n, c, "opacity"), 0.0, 0.0],
                 [0.0; 4],

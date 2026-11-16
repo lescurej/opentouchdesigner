@@ -74,7 +74,7 @@ impl Rig {
             .cook_frame(&self.graph, &[root], &self.time, &mut self.engine)
             .unwrap();
         self.engine.end_frame();
-        self.time.frame += 1;
+        self.time.advance_nominal_frame();
     }
 
     /// Cook until the decoder thread has produced something, or give up.
@@ -359,10 +359,24 @@ fn sequential_movie_instances_advance_independently() {
             .unwrap();
     }
     assert!(rig.run_until_picture(a));
-    assert!(rig.run_until_picture(b));
+    for _ in 0..40 {
+        rig.run(a);
+    }
+    for _ in 0..200 {
+        rig.run(a);
+        rig.run(b);
+        if rig.max_channel(b) > 4 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        rig.max_channel(b) > 4,
+        "second instance never decoded: {:?}",
+        rig.engine.status(b)
+    );
 
     for _ in 0..120 {
-        rig.time.advance(1.0 / 60.0);
         rig.run(a);
         rig.run(b);
     }

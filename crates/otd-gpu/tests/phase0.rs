@@ -67,7 +67,7 @@ fn noise_level_viewer_sustains_60fps_at_720p() {
 
     let started = Instant::now();
     for _ in 0..FRAMES {
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
         engine.begin_frame();
         cook.cook_frame(&graph, &[out], &time, &mut engine).unwrap();
         engine.end_frame();
@@ -159,7 +159,7 @@ fn a_static_branch_costs_nothing_after_the_first_frame() {
         cook.cook_frame(&graph, &[blur], &time, &mut engine)
             .unwrap();
         engine.end_frame();
-        time.advance(1.0 / 60.0);
+        time.advance_nominal_frame();
     }
     assert_eq!(cook.cook_count(ramp), 1);
     assert_eq!(cook.cook_count(blur), 1);
