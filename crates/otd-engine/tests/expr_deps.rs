@@ -44,7 +44,7 @@ fn relative_op_expression_cooks_source_first() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[blur, lfo], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 
     let v = engines
         .eval_param(&graph, blur, "size", &time)
@@ -60,11 +60,7 @@ fn comp_local_rate_scales_time_in_expressions() {
     let mut graph = Graph::new();
     let root = graph.root();
     let comp = graph
-        .create(
-            root,
-            &reg.get("containerCOMP").unwrap().clone(),
-            Some("comp1"),
-        )
+        .create(root, &reg.get("baseCOMP").unwrap().clone(), Some("comp1"))
         .unwrap();
     graph.add_custom_param(comp, "rate", Param::new(Value::Float(2.0)));
     let lfo_def = reg.get("lfoCHOP").unwrap().clone();
@@ -79,7 +75,7 @@ fn comp_local_rate_scales_time_in_expressions() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[lfo], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
     let (local, _, _) = graph.local_clock_at(lfo, &time);
     assert!((local - 2.0).abs() < 1e-6);
 }

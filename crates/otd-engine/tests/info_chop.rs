@@ -50,7 +50,7 @@ fn info_chop_reads_movie_file_in_channels() {
         engines
             .run_cook_frame(&mut cook, &graph, &[info, movie], &time)
             .unwrap();
-        engines.end_frame();
+        engines.end_frame(&graph);
     }
 
     let data = engines.chop_data(info).expect("info chop cooked");
@@ -118,14 +118,14 @@ fn info_tracks_movie_with_full_graph_roots_and_no_viewer_flag() {
         engines
             .run_cook_frame(&mut cook, &graph, &roots, &time)
             .unwrap();
-        engines.end_frame();
+        engines.end_frame(&graph);
         if let Some(v) = engines.chop_data(info).and_then(|d| d.value("index")) {
             if first.is_none() {
                 first = Some(v);
             }
             last = Some(v);
         }
-        time.advance(1.0 / 60.0);
+        time.advance(time.dt);
     }
     let first = first.expect("index channel");
     let last = last.expect("index advanced");
@@ -172,7 +172,7 @@ fn info_chop_emits_one_sample_per_channel() {
                 &time,
             )
             .unwrap();
-        engines.end_frame();
+        engines.end_frame(&graph);
         let data = engines.chop_data(info).expect("info cooked");
         assert!(
             !data.time_sliced,
@@ -243,7 +243,7 @@ fn info_index_slope_is_media_fps_at_project_rate() {
         engines
             .run_cook_frame(&mut cook, &graph, &roots, &time)
             .unwrap();
-        engines.end_frame();
+        engines.end_frame(&graph);
         time.advance(time.dt);
     }
     let v = engines
@@ -253,6 +253,83 @@ fn info_index_slope_is_media_fps_at_project_rate() {
     assert!(
         (v - 25.0).abs() < 2.0,
         "slope on index should be ~25 at 25fps media, got {v}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn movie_timecodeop_follows_timecode_chop_smpte_channels() {
+    let gpu = gpu_or_skip!();
+    if !std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    }
+    let reg = registry();
+    let dir = std::env::temp_dir().join(format!("otd-movie-tc-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clip.mp4");
+    std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=25:duration=2",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("ffmpeg");
+
+    let mut graph = Graph::new();
+    let tc = add(&mut graph, &reg, "timecodeCHOP", "tc1");
+    graph
+        .set_param(tc, "ratemenu", Value::Str("25".into()))
+        .unwrap();
+    let movie = add(&mut graph, &reg, "moviefileinTOP", "movie1");
+    graph
+        .set_param(movie, "file", Value::Str(path.display().to_string()))
+        .unwrap();
+    graph.set_param(movie, "play", Value::Bool(true)).unwrap();
+    graph
+        .set_param(movie, "playmode", Value::Str("timecodeop".into()))
+        .unwrap();
+    graph
+        .set_param(movie, "timecodeop", Value::Str("../tc1".into()))
+        .unwrap();
+    let info = add(&mut graph, &reg, "infoCHOP", "info1");
+    graph
+        .set_param(info, "op", Value::Str("../movie1".into()))
+        .unwrap();
+
+    let mut engines = Engines::new(gpu);
+    let mut cook = CookEngine::new();
+    let mut time = CookContext::default();
+    let roots = otd_engine::editor_cook_roots(&graph, None);
+
+    for _ in 0..5 {
+        engines.begin_frame();
+        engines
+            .run_cook_frame(&mut cook, &graph, &roots, &time)
+            .unwrap();
+        engines.end_frame(&graph);
+        time.advance(1.0 / 25.0);
+    }
+
+    let idx = engines
+        .chop_data(info)
+        .and_then(|d| d.value("index"))
+        .unwrap_or(f32::NAN);
+    assert!(
+        (idx - 4.0).abs() < 1.5,
+        "after ~5 frames at 25fps timecode, movie index should be ~4, got {idx}"
     );
 
     std::fs::remove_dir_all(&dir).ok();

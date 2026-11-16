@@ -72,7 +72,7 @@ fn place(graph: &mut Graph, id: NodeId, x: f32, y: f32) {
 /// The classic feedback loop, packaged: in → composite ← (feedback → decay →
 /// drift), out. The knobs are the three numbers everyone ends up tuning.
 fn trails(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
-    let comp = add(graph, reg, parent, "containerCOMP", "trails1");
+    let comp = add(graph, reg, parent, "baseCOMP", "trails1");
     graph.add_custom_param(
         comp,
         "decay",
@@ -132,7 +132,7 @@ fn trails(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
 
 /// Blur the image, add the blur back. The blur *is* the glow.
 fn bloom(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
-    let comp = add(graph, reg, parent, "containerCOMP", "bloom1");
+    let comp = add(graph, reg, parent, "baseCOMP", "bloom1");
     graph.add_custom_param(
         comp,
         "size",
@@ -187,7 +187,7 @@ return vec4f(base.rgb * (1.0 - U.p1.x * falloff), base.a);
 /// A GLSL TOP with its uniforms wired to custom parameters — the smallest
 /// example of turning a shader into a component with knobs.
 fn vignette(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
-    let comp = add(graph, reg, parent, "containerCOMP", "vignette1");
+    let comp = add(graph, reg, parent, "baseCOMP", "vignette1");
     graph.add_custom_param(
         comp,
         "radius",
@@ -228,7 +228,7 @@ fn vignette(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
 /// Microphone to one smoothed 0..1-ish channel: the thing every
 /// audio-reactive patch starts by building.
 fn audio_level(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
-    let comp = add(graph, reg, parent, "containerCOMP", "audiolevel1");
+    let comp = add(graph, reg, parent, "baseCOMP", "audiolevel1");
     graph.add_custom_param(
         comp,
         "gain",
@@ -251,6 +251,9 @@ fn audio_level(graph: &mut Graph, reg: &OpRegistry, parent: NodeId) -> NodeId {
     graph.connect(spectrum, lag, 0).unwrap();
     graph.connect(lag, out, 0).unwrap();
 
+    graph
+        .set_param(spectrum, "mode", Value::Str("visual".into()))
+        .unwrap();
     graph.set_param(spectrum, "bands", Value::Int(1)).unwrap();
     graph
         .set_expression(spectrum, "gain", "parent.gain")

@@ -14,10 +14,7 @@ pub fn lint_op_paths(graph: &Graph, me_path: &str, source: &str) -> Vec<PythonLi
                         line: lit.line,
                         column: lit.column,
                         span_len: lit.text.chars().count() as u32,
-                        message: format!(
-                            "unknown operator {:?} (resolved {resolved})",
-                            lit.text
-                        ),
+                        message: format!("unknown operator {:?} (resolved {resolved})", lit.text),
                         severity: LintSeverity::Warning,
                     });
                 }
@@ -60,9 +57,7 @@ pub fn lint_ch_paths(
                     j += 1;
                     if let Some(chan_lit) = read_string_literal(source, &mut j) {
                         let names = channel_names(&resolved);
-                        if !names.is_empty()
-                            && !names.iter().any(|n| n.as_str() == chan_lit.text)
-                        {
+                        if !names.is_empty() && !names.iter().any(|n| n.as_str() == chan_lit.text) {
                             out.push(PythonLint {
                                 line: chan_lit.line,
                                 column: chan_lit.column,
@@ -164,31 +159,5 @@ pub fn resolve_op_ref(me_path: &str, op_path: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use otd_core::Graph;
-
-    #[test]
-    fn flags_missing_op_path() {
-        let graph = Graph::new();
-        let issues = lint_op_paths(&graph, "/project1", "x = op('nope')");
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0].message.contains("nope"));
-    }
-
-    #[test]
-    fn flags_missing_ch_op() {
-        let graph = Graph::new();
-        let issues = lint_ch_paths(&graph, "/project1", "x = ch('nope', 'chan1')", |_| vec![]);
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0].message.contains("nope"));
-    }
-
-    #[test]
-    fn lint_does_not_panic_on_utf8_in_comments() {
-        let graph = Graph::new();
-        let src = "# café à la mode\nx = op('missing')\n";
-        let issues = lint_op_paths(&graph, "/project1", src);
-        assert_eq!(issues.len(), 1);
-    }
-}
+#[path = "tests/lint__tests.rs"]
+mod tests;

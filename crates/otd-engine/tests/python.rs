@@ -56,7 +56,7 @@ fn a_python_expression_drives_a_texture() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[level], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 
     let tex = engines.top.output(&graph, level).unwrap().clone();
     let (_, _, pixels) = read_pixels_rgba8(&gpu, &tex).unwrap();
@@ -88,10 +88,44 @@ fn python_can_read_a_chop_channel() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[target], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 
     let data = engines.chop_data(target).unwrap();
     assert_eq!(data.value("chan1"), Some(2.5));
+}
+
+#[test]
+fn python_reads_parent_par_custom_parameter() {
+    let gpu = gpu_or_skip!();
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "rig");
+    graph.add_custom_param(comp, "Testmode", otd_core::Param::bool(true));
+    let switch = add(&mut graph, &reg, comp, "switchCHOP", "switch1");
+    graph
+        .set_expression(switch, "index", "parent().par.Testmode")
+        .unwrap();
+
+    let mut engines = Engines::new(gpu);
+    if engines.python_error().is_some() {
+        return;
+    }
+    let mut cook = CookEngine::new();
+    let time = CookContext::default();
+    engines.begin_frame();
+    cook.cook_frame(&graph, &[switch], &time, &mut engines)
+        .unwrap();
+    engines.end_frame(&graph);
+    assert_eq!(
+        engines
+            .eval_param(&graph, switch, "index", &time)
+            .unwrap()
+            .as_f64(),
+        1.0,
+        "parent().par.Testmode should read the enclosing COMP parameter"
+    );
 }
 
 #[test]
@@ -101,7 +135,7 @@ fn python_reads_a_components_custom_parameter() {
     let mut graph = Graph::new();
     let root = graph.root();
 
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "rig");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "rig");
     graph.add_custom_param(comp, "steps", otd_core::Param::int(4));
     let inner = add(&mut graph, &reg, comp, "constantCHOP", "count");
     graph
@@ -117,7 +151,7 @@ fn python_reads_a_components_custom_parameter() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[inner], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
     assert_eq!(engines.chop_data(inner).unwrap().value("chan1"), Some(16.0));
 }
 
@@ -142,7 +176,7 @@ fn the_built_in_language_still_handles_simple_expressions() {
     };
     engines.begin_frame();
     cook.cook_frame(&graph, &[c], &time, &mut engines).unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
     let v = engines.chop_data(c).unwrap().value("chan1").unwrap();
     assert!((v - 2.0).abs() < 1e-5, "got {v}");
 }
@@ -168,7 +202,7 @@ fn a_broken_python_expression_keeps_the_constant_and_reports_why() {
     engines.begin_frame();
     // The cook must succeed; a bad expression is not a failed frame.
     cook.cook_frame(&graph, &[c], &time, &mut engines).unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
     assert_eq!(engines.chop_data(c).unwrap().value("chan1"), Some(0.75));
 
     // And the editor can still ask what went wrong.

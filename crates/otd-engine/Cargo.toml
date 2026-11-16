@@ -7,13 +7,20 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-otd-chop = { version = "0.1.0", path = "../otd-chop" }
-otd-core = { version = "0.1.0", path = "../otd-core" }
-otd-dat = { version = "0.1.0", path = "../otd-dat" }
-otd-gpu = { version = "0.1.0", path = "../otd-gpu" }
-otd-py = { version = "0.1.0", path = "../otd-py" }
-otd-sop = { version = "0.1.0", path = "../otd-sop" }
+otd-chop = { workspace = true }
+otd-panel = { workspace = true }
+otd-core = { workspace = true }
+otd-dat = { workspace = true }
+otd-gpu = { workspace = true }
+otd-py = { workspace = true }
+otd-sop = { workspace = true }
+otd-audio = { workspace = true }
+rtrb = "0.3.2"
+log = "0.4.33"
+wgpu = "29"
 
 [dev-dependencies]
 image = { version = "0.25.9", default-features = false, features = ["png"] }
-wgpu = "29"
+
+[lints]
+workspace = true

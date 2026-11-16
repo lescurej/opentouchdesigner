@@ -41,5 +41,5 @@ fn queued_edits_apply_before_the_next_cook() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[constant], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 }

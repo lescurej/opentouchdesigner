@@ -8,6 +8,7 @@ pub enum NodeMessageLevel {
     Warning,
 }
 
+#[derive(Clone)]
 pub struct NodeMessage {
     pub level: NodeMessageLevel,
     pub text: String,
@@ -32,36 +33,14 @@ pub fn classify_node_message(text: &str) -> NodeMessageLevel {
     NodeMessageLevel::Error
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn movie_lag_telemetry_is_not_a_node_message() {
-        assert!(is_movie_playback_telemetry(
-            "lag 2 · pending 1 · decode on · drops 0"
-        ));
-    }
-
-    #[test]
-    fn movie_lag_is_a_warning_not_an_error() {
-        assert_eq!(
-            classify_node_message("lag 2 · pending 1 · decode on · drops 0"),
-            NodeMessageLevel::Warning
-        );
-    }
-
-    #[test]
-    fn missing_file_is_an_error() {
-        assert_eq!(
-            classify_node_message("could not open movie"),
-            NodeMessageLevel::Error
-        );
-    }
-}
-
 impl Engines {
     pub fn node_message(&self, graph: &Graph, id: NodeId) -> Option<NodeMessage> {
+        if let Some(text) = otd_core::missing_node_message(graph, id) {
+            return Some(NodeMessage {
+                level: NodeMessageLevel::Error,
+                text,
+            });
+        }
         if let Some(err) = self.top.shader_error(id) {
             return Some(NodeMessage {
                 level: NodeMessageLevel::Error,
@@ -78,3 +57,7 @@ impl Engines {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "tests/node_message__tests.rs"]
+mod tests;

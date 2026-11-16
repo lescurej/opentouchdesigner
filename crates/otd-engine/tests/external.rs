@@ -33,7 +33,7 @@ fn a_component_file_holds_the_network_and_the_project_holds_a_reference() {
 
     let mut graph = Graph::new();
     let root = graph.root();
-    let def = reg.get("containerCOMP").unwrap().clone();
+    let def = reg.get("baseCOMP").unwrap().clone();
     let comp = graph.create(root, &def, Some("vis1")).unwrap();
     graph
         .attach_external(comp, file.to_str().unwrap(), &reg)
@@ -68,7 +68,7 @@ fn two_projects_can_share_one_component_file() {
     let build = |name: &str, hue: f64| {
         let mut graph = Graph::new();
         let root = graph.root();
-        let def = reg.get("containerCOMP").unwrap().clone();
+        let def = reg.get("baseCOMP").unwrap().clone();
         let comp = graph.create(root, &def, Some(name)).unwrap();
         graph
             .attach_external(comp, file.to_str().unwrap(), &reg)
@@ -94,7 +94,7 @@ fn editing_the_component_file_updates_every_project_that_uses_it() {
 
     let mut graph = Graph::new();
     let root = graph.root();
-    let def = reg.get("containerCOMP").unwrap().clone();
+    let def = reg.get("baseCOMP").unwrap().clone();
     let comp = graph.create(root, &def, Some("vis1")).unwrap();
     graph
         .attach_external(comp, file.to_str().unwrap(), &reg)
@@ -138,7 +138,7 @@ fn a_missing_component_file_is_an_error_not_an_empty_component() {
     let reg = registry();
     let mut graph = Graph::new();
     let root = graph.root();
-    let def = reg.get("containerCOMP").unwrap().clone();
+    let def = reg.get("baseCOMP").unwrap().clone();
     let comp = graph.create(root, &def, Some("vis1")).unwrap();
     assert!(
         graph
@@ -160,7 +160,7 @@ fn a_clone_tracks_its_master_through_a_save_and_load() {
     let mut graph = Graph::new();
     let root = graph.root();
     let master = demo::visualiser(&reg, &mut graph, root, "master_vis");
-    let def = reg.get("containerCOMP").unwrap().clone();
+    let def = reg.get("baseCOMP").unwrap().clone();
     let clone = graph.create(root, &def, Some("clone_vis")).unwrap();
     graph.set_clone(clone, Some("/master_vis"));
     graph.sync_clones(&reg);

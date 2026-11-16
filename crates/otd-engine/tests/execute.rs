@@ -59,11 +59,11 @@ impl Rig {
         self.cook
             .cook_frame(&self.graph, &roots, &self.time, &mut self.engines)
             .unwrap();
-        self.engines.end_frame();
+        self.engines.end_frame(&self.graph);
         let edits = self.engines.take_edits();
         let (_, problems) = otd_core::edit::apply(&mut self.graph, &edits);
         self.problems = problems;
-        self.time.advance(1.0 / 60.0);
+        self.time.advance(self.time.dt);
     }
     fn param(&self, id: NodeId, key: &str) -> f64 {
         self.graph
@@ -197,10 +197,15 @@ fn a_chop_execute_fires_on_change_and_on_the_edge() {
         return;
     }
     let src = rig.add("constantCHOP", "src");
+    rig.set(src, "rows", Value::Int(1));
+    rig.set(src, "name0", Value::Str("gain".into()));
     let changes = rig.add("blurTOP", "changes");
+    rig.set(changes, "size", Value::Float(0.0));
     let edges = rig.add("blurTOP", "edges");
+    rig.set(edges, "size", Value::Float(0.0));
     let ex = rig.add("chopexecuteDAT", "watch1");
     rig.set(ex, "chop", Value::Str("/src".into()));
+    rig.set(ex, "channels", Value::Str("gain".into()));
     rig.set(ex, "threshold", Value::Float(0.5));
     rig.set(
         ex,
@@ -208,11 +213,11 @@ fn a_chop_execute_fires_on_change_and_on_the_edge() {
         Value::Str(
             "changes = 0\n\
              edges = 0\n\
-             def onValueChange(channel, value, prev):\n    \
+             def onValueChange(channel, sampleIndex, val, prev):\n    \
                  global changes\n    \
                  changes += 1\n    \
                  setpar('/changes', 'size', changes)\n\
-             def onOffToOn(channel, value):\n    \
+             def onOffToOn(channel, sampleIndex, val, prev):\n    \
                  global edges\n    \
                  edges += 1\n    \
                  setpar('/edges', 'size', edges)\n"
@@ -224,7 +229,7 @@ fn a_chop_execute_fires_on_change_and_on_the_edge() {
     // was nothing to cross from.
     rig.frame();
     assert_eq!(rig.param(changes, "size"), 1.0);
-    assert_eq!(rig.param(edges, "size"), 8.0, "no edge on the first sight");
+    assert_eq!(rig.param(edges, "size"), 0.0, "no edge on the first sight");
 
     // An unchanged channel fires nothing at all.
     rig.frame();
@@ -307,54 +312,4 @@ fn an_inactive_execute_dat_fires_nothing() {
     let before = rig.param(blur, "size");
     rig.frame();
     assert_eq!(rig.param(blur, "size"), before);
-}
-
-// ------------------------------------------------------------------ panels
-
-#[test]
-fn a_panel_chop_reads_widget_values_as_channels() {
-    let gpu = gpu_or_skip!();
-    let mut rig = Rig::new(gpu);
-    let fader = rig.add("sliderCOMP", "fader1");
-    let go = rig.add("buttonCOMP", "go");
-    let panel = rig.add("panelCHOP", "panel1");
-    rig.set(panel, "ops", Value::Str("/fader1 /go".into()));
-    rig.set(fader, "value", Value::Float(0.75));
-    rig.set(go, "value", Value::Float(1.0));
-
-    let roots = vec![panel];
-    rig.engines.begin_frame();
-    rig.cook
-        .cook_frame(&rig.graph, &roots, &rig.time, &mut rig.engines)
-        .unwrap();
-    rig.engines.end_frame();
-
-    let data = rig.engines.chop_data(panel).expect("the CHOP cooked");
-    assert_eq!(data.names(), vec!["fader1", "go"]);
-    assert_eq!(data.value("fader1"), Some(0.75));
-    assert_eq!(data.value("go"), Some(1.0));
-}
-
-#[test]
-fn a_widgets_state_is_a_parameter_so_a_callback_can_move_it() {
-    // The claim the panel module makes: a widget is driven by the network as
-    // readily as it drives it, because there is no second value system.
-    let gpu = gpu_or_skip!();
-    let mut rig = Rig::new(gpu);
-    if !python_or_skip(&rig) {
-        return;
-    }
-    let fader = rig.add("sliderCOMP", "fader1");
-    let ex = rig.add("executeDAT", "exec1");
-    rig.set(
-        ex,
-        "source",
-        Value::Str("def onFrameStart(frame):\n    setpar('/fader1', 'value', 0.42)\n".into()),
-    );
-    rig.frame();
-
-    assert_eq!(rig.param(fader, "value"), 0.42);
-    // And the editor sees the moved fader, because it reads the same place.
-    let w = &otd_engine::panel::widgets(&rig.graph)[0];
-    assert_eq!(w.value, 0.42);
 }

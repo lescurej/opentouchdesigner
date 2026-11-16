@@ -44,6 +44,24 @@ fn darkener(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, name: &str) -> 
 }
 
 #[test]
+fn container_comp_surfaces_in_and_out_operators_as_connectors() {
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "ui");
+
+    assert_eq!(graph.node(comp).inputs.len(), 0);
+    let _in1 = add(&mut graph, &reg, comp, "inTOP", "in1");
+    assert_eq!(graph.node(comp).inputs.len(), 1);
+    assert_eq!(graph.node(comp).input_labels, vec!["in1"]);
+
+    assert_eq!(graph.comp_out_connectors(comp).len(), 0);
+    let _out1 = add(&mut graph, &reg, comp, "outTOP", "out1");
+    assert_eq!(graph.comp_out_connectors(comp).len(), 1);
+    assert_eq!(graph.output_family(comp), Some(otd_core::Family::Top));
+}
+
+#[test]
 fn an_in_operator_becomes_a_connector_on_the_component() {
     let reg = registry();
     let mut graph = Graph::new();
@@ -135,7 +153,7 @@ fn a_component_actually_processes_what_is_wired_to_it() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[out], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 
     let tex = engines.top.output(&graph, out).unwrap().clone();
     let (_, _, pixels) = read_pixels_rgba8(&gpu, &tex).unwrap();
@@ -181,7 +199,7 @@ fn the_same_component_used_twice_keeps_its_own_settings() {
     engines.begin_frame();
     cook.cook_frame(&graph, &[a, b], &time, &mut engines)
         .unwrap();
-    engines.end_frame();
+    engines.end_frame(&graph);
 
     let read = |id| {
         let tex = engines.top.output(&graph, id).unwrap().clone();
@@ -223,8 +241,8 @@ fn animation_crosses_the_component_boundary_in_both_directions() {
         for _ in 0..n {
             engines.begin_frame();
             cook.cook_frame(graph, &[out], time, engines).unwrap();
-            engines.end_frame();
-            time.advance(1.0 / 60.0);
+            engines.end_frame(graph);
+            time.advance(time.dt);
         }
     }
 
@@ -314,8 +332,8 @@ fn custom_parameters_are_a_components_api() {
         |graph: &Graph, engines: &mut Engines, cook: &mut CookEngine, time: &mut CookContext| {
             engines.begin_frame();
             cook.cook_frame(graph, &[comp], time, engines).unwrap();
-            engines.end_frame();
-            time.advance(1.0 / 60.0);
+            engines.end_frame(graph);
+            time.advance(time.dt);
             let tex = engines.top.output(graph, comp).unwrap().clone();
             read_pixels_rgba8(&gpu, &tex).unwrap().2[0]
         };
@@ -368,6 +386,37 @@ fn a_custom_parameter_round_trips_with_its_definition() {
 }
 
 #[test]
+fn a_custom_op_parameter_round_trips_as_a_path_ref() {
+    use otd_core::Project;
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "ui");
+    graph.add_custom_param(
+        comp,
+        "source",
+        otd_core::Param::str("/out1")
+            .with_label("Source")
+            .as_path_ref(),
+    );
+
+    let text = Project::from_graph(&graph, &reg, 60.0).to_ron().unwrap();
+    assert!(
+        text.contains("op_ref: true"),
+        "custom OP params must persist as path refs: {text}"
+    );
+    let back = Project::from_ron(&text).unwrap().to_graph(&reg).unwrap();
+    let comp2 = back.find("/ui").unwrap();
+    let p = back
+        .node(comp2)
+        .param("source")
+        .expect("custom op param survived");
+    assert!(p.custom);
+    assert!(p.is_path_ref());
+    assert_eq!(p.value.as_str(), "/out1");
+}
+
+#[test]
 fn a_chop_component_works_the_same_way() {
     let reg = registry();
     let mut graph = Graph::new();
@@ -413,4 +462,37 @@ fn indat_cut_pastes_into_another_base() {
     let pasted = paste(&mut graph, b, &reg, &clip, [40.0, 20.0]).unwrap();
     assert_eq!(pasted.len(), 1);
     assert_eq!(graph.node(b).input_families, vec![otd_core::Family::Dat]);
+}
+
+#[test]
+fn nested_clone_keeps_parent_level_wires_when_resynced() {
+    let reg = registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+
+    let parent = add(&mut graph, &reg, root, "baseCOMP", "parent");
+    let template = add(&mut graph, &reg, parent, "baseCOMP", "template");
+    let _inp = add(&mut graph, &reg, template, "inCHOP", "in1");
+    let lag = add(&mut graph, &reg, template, "lagCHOP", "lag1");
+    let _outp = add(&mut graph, &reg, template, "outCHOP", "out1");
+    graph.connect(_inp, lag, 0).unwrap();
+
+    let instance = add(&mut graph, &reg, parent, "baseCOMP", "instance");
+    graph.set_clone(instance, Some("/parent/template"));
+    assert_eq!(graph.sync_clones(&reg), 1);
+
+    let src = add(&mut graph, &reg, parent, "lfoCHOP", "lfo1");
+    graph
+        .connect(src, instance, 0)
+        .expect("wire into nested clone at parent level");
+
+    // Re-sync after a change to the template (as when the master edits).
+    add(&mut graph, &reg, template, "nullCHOP", "extra");
+    assert_eq!(graph.sync_clones(&reg), 1);
+
+    assert_eq!(
+        graph.node(instance).inputs[0],
+        Some(src),
+        "parent-level input wires must survive clone re-expand"
+    );
 }

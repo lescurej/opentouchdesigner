@@ -54,8 +54,8 @@ impl Rig {
         self.cook
             .cook_frame(&self.graph, &[root], &self.time, &mut self.engines)
             .unwrap();
-        self.engines.end_frame();
-        self.time.advance(1.0 / 60.0);
+        self.engines.end_frame(&self.graph);
+        self.time.advance(self.time.dt);
     }
     fn pixels(&self, id: NodeId) -> Vec<u8> {
         let tex = self.engines.top.output(&self.graph, id).unwrap().clone();

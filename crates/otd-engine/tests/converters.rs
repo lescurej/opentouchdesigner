@@ -7,6 +7,7 @@
 //! rejected everywhere it has not been declared.
 
 use otd_core::{CookContext, CookEngine, Graph, GraphError, NodeId, OpRegistry, Value};
+use otd_dat::{DatData, chop_mirror};
 use otd_engine::{Engines, registry};
 use otd_gpu::GpuContext;
 
@@ -25,6 +26,11 @@ macro_rules! gpu_or_skip {
 fn add(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, op: &str, name: &str) -> NodeId {
     let def = reg.get(op).unwrap().clone();
     graph.create(parent, &def, Some(name)).unwrap()
+}
+
+fn set_ref(graph: &mut Graph, node: NodeId, key: &str, target: NodeId) {
+    let path = graph.path(target);
+    graph.set_param(node, key, Value::Str(path)).unwrap();
 }
 
 struct Rig {
@@ -48,8 +54,8 @@ impl Rig {
         self.cook
             .cook_frame(&self.graph, &[root], &self.time, &mut self.engines)
             .unwrap();
-        self.engines.end_frame();
-        self.time.advance(1.0 / 60.0);
+        self.engines.end_frame(&self.graph);
+        self.time.advance(self.time.dt);
     }
     fn chan(&self, id: NodeId, name: &str) -> Vec<f32> {
         self.engines
@@ -62,6 +68,27 @@ impl Rig {
             .samples
             .clone()
     }
+
+    /// `choptodatDAT` keeps an empty `rows` vec and mirrors the CHOP on demand.
+    fn dat_table(&self, id: NodeId) -> Vec<Vec<String>> {
+        let d = self.engines.dat_data(id).expect("the DAT has cooked");
+        materialize_dat_rows(&self.graph, &self.engines, d)
+    }
+}
+
+fn materialize_dat_rows(graph: &Graph, engines: &Engines, d: &DatData) -> Vec<Vec<String>> {
+    if let Some(m) = &d.chop_mirror {
+        let chop_id = graph
+            .find(&m.chop_path)
+            .unwrap_or_else(|| panic!("missing CHOP `{}`", m.chop_path));
+        let data = engines
+            .chop_data(chop_id)
+            .expect("mirrored CHOP has cooked");
+        let names: Vec<String> = data.channels.iter().map(|c| c.name.clone()).collect();
+        let samples: Vec<Vec<f32>> = data.channels.iter().map(|c| c.samples.clone()).collect();
+        return chop_mirror::materialize_table(m, &names, &samples);
+    }
+    d.rows.clone()
 }
 
 #[test]
@@ -72,7 +99,7 @@ fn a_table_becomes_channels_named_by_its_header() {
     let root = rig.graph.root();
     let table = add(&mut rig.graph, &reg, root, "tableDAT", "cues");
     let to_chop = add(&mut rig.graph, &reg, root, "dattochopCHOP", "vals");
-    rig.graph.connect(table, to_chop, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "dat", table);
     rig.graph
         .set_param(
             table,
@@ -96,7 +123,7 @@ fn a_label_column_reads_as_zero_rather_than_failing_the_cook() {
     let root = rig.graph.root();
     let table = add(&mut rig.graph, &reg, root, "tableDAT", "cues");
     let to_chop = add(&mut rig.graph, &reg, root, "dattochopCHOP", "vals");
-    rig.graph.connect(table, to_chop, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "dat", table);
     rig.graph
         .set_param(
             table,
@@ -119,17 +146,22 @@ fn channels_become_a_table_and_survive_the_round_trip() {
     let table = add(&mut rig.graph, &reg, root, "tableDAT", "src");
     let to_chop = add(&mut rig.graph, &reg, root, "dattochopCHOP", "chans");
     let back = add(&mut rig.graph, &reg, root, "choptodatDAT", "again");
-    rig.graph.connect(table, to_chop, 0).unwrap();
-    rig.graph.connect(to_chop, back, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "dat", table);
+    set_ref(&mut rig.graph, back, "chop", to_chop);
     rig.graph
         .set_param(table, "text", Value::Str("a\tb\n1\t2\n3\t4".into()))
         .unwrap();
+    rig.run(to_chop);
     rig.run(back);
 
-    let d = rig.engines.dat_data(back).unwrap();
-    assert_eq!(d.rows[0], vec!["a".to_string(), "b".to_string()]);
-    assert_eq!(d.rows[1], vec!["1".to_string(), "2".to_string()]);
-    assert_eq!(d.rows[2], vec!["3".to_string(), "4".to_string()]);
+    let rows = rig.dat_table(back);
+    assert!(
+        !rows.is_empty(),
+        "choptodat should mirror dattochop channels"
+    );
+    assert_eq!(rows[0], vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(rows[1], vec!["1".to_string(), "2".to_string()]);
+    assert_eq!(rows[2], vec!["3".to_string(), "4".to_string()]);
 }
 
 #[test]
@@ -140,7 +172,7 @@ fn geometry_points_become_one_sample_each() {
     let root = rig.graph.root();
     let grid = add(&mut rig.graph, &reg, root, "gridSOP", "grid");
     let to_chop = add(&mut rig.graph, &reg, root, "soptochopCHOP", "pts");
-    rig.graph.connect(grid, to_chop, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "sop", grid);
     rig.graph
         .set_param(to_chop, "attrs", Value::Str("P uv".into()))
         .unwrap();
@@ -169,7 +201,7 @@ fn channels_become_a_texture_a_shader_can_sample() {
     let root = rig.graph.root();
     let pattern = add(&mut rig.graph, &reg, root, "patternCHOP", "wave");
     let to_top = add(&mut rig.graph, &reg, root, "choptotopTOP", "tex");
-    rig.graph.connect(pattern, to_top, 0).unwrap();
+    set_ref(&mut rig.graph, to_top, "chop", pattern);
     rig.graph
         .set_param(pattern, "length", Value::Int(64))
         .unwrap();
@@ -202,7 +234,7 @@ fn a_top_reads_back_as_channels_one_frame_behind() {
     let root = rig.graph.root();
     let constant = add(&mut rig.graph, &reg, root, "constantTOP", "grey");
     let to_chop = add(&mut rig.graph, &reg, root, "toptochopCHOP", "read");
-    rig.graph.connect(constant, to_chop, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "top", constant);
     for (key, v) in [("resw", 4), ("resh", 4)] {
         rig.graph.set_param(constant, key, Value::Int(v)).unwrap();
     }
@@ -240,7 +272,10 @@ fn a_wire_only_crosses_where_the_operator_declared_it() {
         rig.graph.connect(table, lag, 0),
         Err(GraphError::FamilyMismatch("DAT", "CHOP"))
     ));
-    assert!(rig.graph.connect(table, to_chop, 0).is_ok());
+    assert!(matches!(
+        rig.graph.connect(table, to_chop, 0),
+        Err(GraphError::BadInputIndex(0))
+    ));
     // And the converter's output is an ordinary CHOP.
     assert!(rig.graph.connect(to_chop, lag, 0).is_ok());
 }
@@ -253,7 +288,7 @@ fn a_whole_image_reads_back_as_a_point_cloud_with_positions() {
     let root = rig.graph.root();
     let ramp = add(&mut rig.graph, &reg, root, "rampTOP", "ramp");
     let to_chop = add(&mut rig.graph, &reg, root, "toptochopCHOP", "read");
-    rig.graph.connect(ramp, to_chop, 0).unwrap();
+    set_ref(&mut rig.graph, to_chop, "top", ramp);
     for (key, v) in [("resw", 8), ("resh", 4)] {
         rig.graph.set_param(ramp, key, Value::Int(v)).unwrap();
     }

@@ -45,7 +45,7 @@ fn feedback_top_cooks_without_cycle_error() {
         engines.begin_frame();
         cook.cook_frame(&graph, &[null], &time, &mut engines)
             .unwrap();
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(&graph);
+        time.advance(time.dt);
     }
 }

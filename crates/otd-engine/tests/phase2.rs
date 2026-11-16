@@ -7,6 +7,7 @@
 //! the test can control, so the assertion is about the plumbing rather than
 //! about whatever happens to be plugged in.
 
+use otd_core::param::channel_expression;
 use otd_core::{CookContext, CookEngine, Graph, NodeId, Value};
 use otd_engine::{Engines, demo, registry};
 use otd_gpu::{GpuContext, read_pixels_rgba8};
@@ -48,8 +49,8 @@ impl Rig {
             self.cook
                 .cook_frame(&self.graph, &[root], &self.time, &mut self.engines)
                 .unwrap();
-            self.engines.end_frame();
-            self.time.advance(1.0 / 60.0);
+            self.engines.end_frame(&self.graph);
+            self.time.advance(self.time.dt);
         }
     }
 
@@ -110,11 +111,8 @@ fn an_export_reads_this_frames_value_not_last_frames() {
         .unwrap();
     let level = graph.find("/level1").unwrap();
     graph
-        .node_mut(level)
-        .params
-        .get_mut("brightness")
-        .unwrap()
-        .set_export("/step", "chan1");
+        .set_expression(level, "brightness", &channel_expression("/step", "chan1"))
+        .unwrap();
 
     let mut rig = Rig::new(gpu, graph);
     rig.graph
@@ -163,24 +161,21 @@ fn a_midi_note_reaches_a_texture_parameter() {
         .create(root, reg.get("constantCHOP").unwrap(), Some("pad"))
         .unwrap();
     graph
-        .set_param(pad, "name", Value::Str("n3".into()))
+        .set_param(pad, "name0", Value::Str("n3".into()))
         .unwrap();
     let trigger = graph.find("/trigger1").unwrap();
     graph.disconnect(trigger, 0).unwrap();
     graph.connect(pad, trigger, 0).unwrap();
     let xform = graph.find("/transform1").unwrap();
     graph
-        .node_mut(xform)
-        .params
-        .get_mut("rotate")
-        .unwrap()
-        .set_export("/math_kick", "n31");
+        .set_expression(xform, "rotate", &channel_expression("/math_kick", "n3"))
+        .unwrap();
 
     let mut rig = Rig::new(gpu, graph);
     rig.run(out, 5);
     let rotate_at_rest = rig
         .engines
-        .channel_value(&rig.graph, "/math_kick", "n31")
+        .channel_value(&rig.graph, "/math_kick", "n3")
         .unwrap();
     assert!(rotate_at_rest.abs() < 1e-3, "no note, no rotation");
 
@@ -191,7 +186,7 @@ fn a_midi_note_reaches_a_texture_parameter() {
     rig.run(out, 10);
     let rotate_after_hit = rig
         .engines
-        .channel_value(&rig.graph, "/math_kick", "n31")
+        .channel_value(&rig.graph, "/math_kick", "n3")
         .unwrap();
     assert!(
         rotate_after_hit > 1.0,
@@ -245,8 +240,8 @@ fn the_audio_reactive_patch_round_trips_through_the_project_format() {
 
     let noise = back.find("/noise1").expect("noise1 survived");
     let period = &back.node(noise).params["period"];
-    assert_eq!(period.mode, otd_core::ParamMode::Export);
-    assert_eq!(period.source_parts(), Some(("/math_bass", "bass")));
+    assert_eq!(period.mode, otd_core::ParamMode::Expression);
+    assert_eq!(period.expression, "ch('/math_bass', 'bass')");
 
     let text2 = Project::from_graph(&back, &reg, 60.0).to_ron().unwrap();
     assert_eq!(text, text2, "second round trip must be byte-identical");

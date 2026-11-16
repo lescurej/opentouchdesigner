@@ -58,8 +58,8 @@ impl Rig {
         self.cook
             .cook_frame(&self.graph, roots, &self.time, &mut self.engines)
             .unwrap();
-        self.engines.end_frame();
-        self.time.advance(1.0 / 60.0);
+        self.engines.end_frame(&self.graph);
+        self.time.advance(self.time.dt);
         changed
     }
 
@@ -78,7 +78,7 @@ impl Rig {
 
 /// A master whose one knob is how bright its constant colour is.
 fn master(rig: &mut Rig, parent: NodeId) -> NodeId {
-    let comp = add(&mut rig.graph, &rig.reg, parent, "containerCOMP", "cell");
+    let comp = add(&mut rig.graph, &rig.reg, parent, "baseCOMP", "cell");
     rig.graph
         .add_custom_param(comp, "bright", otd_core::Param::float(0.1));
     let c = add(&mut rig.graph, &rig.reg, comp, "constantTOP", "colour");

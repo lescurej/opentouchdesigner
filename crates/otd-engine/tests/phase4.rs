@@ -31,8 +31,8 @@ fn run(graph: &Graph, engines: &mut Engines, cook: &mut CookEngine, root: NodeId
     for _ in 0..frames {
         engines.begin_frame();
         cook.cook_frame(graph, &[root], &time, engines).unwrap();
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(graph);
+        time.advance(time.dt);
     }
 }
 

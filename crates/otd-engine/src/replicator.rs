@@ -49,6 +49,10 @@ pub const DEF: OpDef = OpDef {
     connector: Connector::None,
 };
 
+pub fn register_all(registry: &mut otd_core::OpRegistry) {
+    registry.register(DEF);
+}
+
 /// A row name has to be a node name. Anything that is not one becomes `_`,
 /// so `Cue 12!` and `Cue 12?` collide — visibly, in the editor, rather than
 /// silently making two nodes that print identically.
@@ -140,6 +144,8 @@ fn wanted(rows: &[Vec<String>], by_name: bool, master_params: &[String]) -> Vec<
 /// Returns how many nodes were created or removed, which the editor reports
 /// so the behaviour is visible rather than mysterious.
 pub fn sync(graph: &mut Graph, dats: &DatStore) -> usize {
+    let reg = crate::registry();
+    let base_def = reg.get(crate::comp::BASE).unwrap().clone();
     let replicators: Vec<NodeId> = graph
         .walk()
         .into_iter()
@@ -210,8 +216,7 @@ pub fn sync(graph: &mut Graph, dats: &DatStore) -> usize {
             let id = match graph.find(&path) {
                 Some(id) => id,
                 None => {
-                    let Ok(id) = graph.create(rep, &crate::panel::CONTAINER_DEF, Some(&w.name))
-                    else {
+                    let Ok(id) = graph.create(rep, &base_def, Some(&w.name)) else {
                         continue;
                     };
                     graph.set_clone(id, Some(master_path.trim()));

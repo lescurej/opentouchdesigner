@@ -34,7 +34,7 @@ pub fn is_execute(op_type: &str) -> bool {
         otd_dat::ops::EXECUTE
             | "chopexecuteDAT"
             | "parameterexecuteDAT"
-            |             otd_dat::ops::PANEL_EXECUTE
+            | otd_dat::ops::PANEL_EXECUTE
             | otd_dat::ops::WEBSERVER
     )
 }

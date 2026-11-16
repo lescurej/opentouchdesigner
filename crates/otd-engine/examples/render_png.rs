@@ -68,8 +68,8 @@ fn main() -> Result<(), String> {
         engines.begin_frame();
         cook.cook_frame(&graph, &[viewer], &time, &mut engines)
             .map_err(|e| e.to_string())?;
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(&graph);
+        time.advance_nominal_frame();
     }
 
     for id in graph.walk() {

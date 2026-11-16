@@ -44,9 +44,8 @@ fn webserver_http_callback_responds() {
     for _ in 0..120 {
         time.frame += 1;
         engines.begin_frame();
-        cook.cook_frame(&graph, &[ws], &time, &mut engines)
-            .unwrap();
-        engines.end_frame();
+        cook.cook_frame(&graph, &[ws], &time, &mut engines).unwrap();
+        engines.end_frame(&graph);
         if let Some(p) = engines
             .dat_data(ws)
             .and_then(|d| d.lookup("port", 1))
@@ -72,9 +71,8 @@ fn webserver_http_callback_responds() {
     for _ in 0..200 {
         time.frame += 1;
         engines.begin_frame();
-        cook.cook_frame(&graph, &[ws], &time, &mut engines)
-            .unwrap();
-        engines.end_frame();
+        cook.cook_frame(&graph, &[ws], &time, &mut engines).unwrap();
+        engines.end_frame(&graph);
         if handle.is_finished() {
             break;
         }

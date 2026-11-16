@@ -42,8 +42,8 @@ impl Rig {
         self.cook
             .cook_frame(&self.graph, &[root], &self.time, &mut self.engines)
             .unwrap();
-        self.engines.end_frame();
-        self.time.advance(1.0 / 60.0);
+        self.engines.end_frame(&self.graph);
+        self.time.advance(self.time.dt);
     }
     fn data(&self, id: NodeId) -> &otd_engine::DatData {
         self.engines.dat_data(id).expect("the DAT has cooked")
@@ -227,7 +227,7 @@ fn a_dat_component_has_data_connectors() {
     let reg = registry();
     let mut graph = Graph::new();
     let root = graph.root();
-    let comp = add(&mut graph, &reg, root, "containerCOMP", "sheet");
+    let comp = add(&mut graph, &reg, root, "baseCOMP", "sheet");
     let _in = add(&mut graph, &reg, comp, "inDAT", "in1");
     let _out = add(&mut graph, &reg, comp, "outDAT", "out1");
     assert_eq!(graph.node(comp).input_families, vec![otd_core::Family::Dat]);
@@ -456,4 +456,28 @@ fn convert_moves_between_a_table_and_text() {
     let d = rig.data(c);
     assert!(d.is_text);
     assert_eq!(d.as_text(), "a,b\n1,2");
+}
+
+#[test]
+fn insert_dat_splices_rows() {
+    let gpu = gpu_or_skip!();
+    let reg = registry();
+    let mut rig = Rig::new(gpu);
+    let root = rig.graph.root();
+    let a = add(&mut rig.graph, &reg, root, "tableDAT", "a");
+    let b = add(&mut rig.graph, &reg, root, "tableDAT", "b");
+    let ins = add(&mut rig.graph, &reg, root, "insertDAT", "ins");
+    rig.graph.connect(a, ins, 0).unwrap();
+    rig.graph.connect(b, ins, 1).unwrap();
+    rig.graph
+        .set_param(a, "text", Value::Str("x\ty\n1\t2".into()))
+        .unwrap();
+    rig.graph
+        .set_param(b, "text", Value::Str("mid\t0".into()))
+        .unwrap();
+    rig.graph.set_param(ins, "index", Value::Int(1)).unwrap();
+    rig.run(ins);
+    let d = rig.data(ins);
+    assert_eq!(d.cell(1, 0), "mid");
+    assert_eq!(d.cell(2, 0), "1");
 }

@@ -1,15 +1,13 @@
+use otd_chop::CONTROL_RATE;
 use otd_chop::data::{slice_len, slice_times};
 use otd_core::CookContext;
 
 #[test]
 fn slice_length_scales_with_dt() {
-    let mut ctx = CookContext {
-        dt: 1.0 / 60.0,
-        ..Default::default()
-    };
-    assert_eq!(slice_len(60.0, &ctx), 1);
-    ctx.dt = 2.0 / 60.0;
-    assert_eq!(slice_len(60.0, &ctx), 2);
+    let mut ctx = CookContext::default();
+    assert_eq!(slice_len(CONTROL_RATE, &ctx), 1);
+    ctx.dt = 2.0 * ctx.nominal_dt();
+    assert_eq!(slice_len(CONTROL_RATE, &ctx), 2);
 }
 
 #[test]

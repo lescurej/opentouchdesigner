@@ -3,6 +3,7 @@
 //! The TOP-only patches live in `otd_gpu::demo`; this adds the ones that need
 //! CHOPs and re-exports the lot under one name lookup.
 
+use otd_core::param::channel_expression;
 use otd_core::{Graph, NodeId, OpRegistry, Param, Value};
 
 pub use otd_gpu::demo::{FEEDBACK_GLSL, feedback, starter};
@@ -15,7 +16,7 @@ pub use otd_gpu::demo::{FEEDBACK_GLSL, feedback, starter};
 ///                                  └─► high  ─► math_high  ═► level1.brightness
 ///   midiin1 ─► kick ─► trigger1 ─► math_kick ══════════════► transform1.rotate
 ///
-///   noise1 ─► level1 ─► transform1 ─► out1        (═► is an Export)
+///   noise1 ─► level1 ─► transform1 ─► out1        (═► `ch()` on parameters)
 /// ```
 ///
 /// Every device here degrades to silence when it is absent, so the patch
@@ -72,6 +73,7 @@ pub fn audio_reactive(registry: &OpRegistry) -> (Graph, NodeId) {
 
     let mut set = |id, key: &str, v: Value| graph.set_param(id, key, v).unwrap();
 
+    set(spectrum, "mode", Value::Str("visual".into()));
     set(spectrum, "bands", Value::Int(4));
     set(spectrum, "gain", Value::Float(24.0));
     // Fast to rise, slow to fall — the shape that reads as "reacting to
@@ -79,10 +81,10 @@ pub fn audio_reactive(registry: &OpRegistry) -> (Graph, NodeId) {
     set(lag, "lagup", Value::Float(0.01));
     set(lag, "lagdown", Value::Float(0.25));
 
-    set(bass, "channels", Value::Str("band1".into()));
-    set(bass, "rename", Value::Str("bass".into()));
-    set(high, "channels", Value::Str("band4".into()));
-    set(high, "rename", Value::Str("high".into()));
+    set(bass, "channames", Value::Str("band1".into()));
+    set(bass, "renameto", Value::Str("bass".into()));
+    set(high, "channames", Value::Str("band4".into()));
+    set(high, "renameto", Value::Str("high".into()));
 
     // Map band energy into a sensible parameter range, and clamp, so a loud
     // room cannot drive the visual somewhere useless.
@@ -100,7 +102,7 @@ pub fn audio_reactive(registry: &OpRegistry) -> (Graph, NodeId) {
 
     // MIDI note 36 is the kick on almost every drum machine and pad layout.
     set(midi, "notes", Value::Str("36 38 42".into()));
-    set(kick, "channels", Value::Str("n36".into()));
+    set(kick, "channames", Value::Str("n36".into()));
     set(trigger, "threshold", Value::Float(0.05));
     set(trigger, "attack", Value::Float(0.01));
     set(trigger, "release", Value::Float(0.4));
@@ -122,9 +124,7 @@ pub fn audio_reactive(registry: &OpRegistry) -> (Graph, NodeId) {
 }
 
 fn export(graph: &mut Graph, id: NodeId, param: &str, op_path: &str, channel: &str) {
-    if let Some(p) = graph.node_mut(id).params.get_mut(param) {
-        p.set_export(op_path, channel);
-    }
+    let _ = graph.set_expression(id, param, &channel_expression(op_path, channel));
 }
 
 /// A patch with no devices in it, for tests and for anyone without an
@@ -412,7 +412,7 @@ pub fn visualiser(registry: &OpRegistry, graph: &mut Graph, parent: NodeId, name
         id
     };
 
-    let comp = add(graph, parent, "containerCOMP", name, [0.0, 0.0]);
+    let comp = add(graph, parent, "baseCOMP", name, [0.0, 0.0]);
     graph.add_custom_param(
         comp,
         "band",
@@ -444,10 +444,10 @@ pub fn visualiser(registry: &OpRegistry, graph: &mut Graph, parent: NodeId, name
     // The band to pick is a parameter of the component, so each instance
     // listens to a different part of the spectrum.
     graph
-        .set_expression(pick, "channels", "'band' + str(parent('band'))")
+        .set_expression(pick, "channames", "'band' + str(parent('band'))")
         .unwrap();
     graph
-        .set_param(pick, "rename", Value::Str("level".into()))
+        .set_param(pick, "renameto", Value::Str("level".into()))
         .unwrap();
     graph
         .set_param(smooth, "lagup", Value::Float(0.02))
@@ -466,7 +466,7 @@ pub fn visualiser(registry: &OpRegistry, graph: &mut Graph, parent: NodeId, name
         .set_expression(
             shader,
             "uniform1",
-            "[ch(me.rsplit('/', 1)[0] + '/smooth', 'level'), parent('hue'), parent('gain'), 1.0]",
+            "[ch('../smooth', 'level'), parent('hue'), parent('gain'), 1.0]",
         )
         .unwrap();
 
@@ -509,6 +509,9 @@ pub fn two_visualisers(registry: &OpRegistry) -> (Graph, NodeId) {
         [-560.0, 200.0],
     );
     graph.connect(audio, spectrum, 0).unwrap();
+    graph
+        .set_param(spectrum, "mode", Value::Str("visual".into()))
+        .unwrap();
     graph.set_param(spectrum, "bands", Value::Int(4)).unwrap();
     graph
         .set_param(spectrum, "gain", Value::Float(24.0))
@@ -592,6 +595,9 @@ pub fn instanced_audio(registry: &OpRegistry) -> (Graph, NodeId) {
     graph.connect(lag, bass, 0).unwrap();
     graph.connect(bass, size, 0).unwrap();
 
+    graph
+        .set_param(spectrum, "mode", Value::Str("visual".into()))
+        .unwrap();
     graph.set_param(spectrum, "bands", Value::Int(4)).unwrap();
     graph
         .set_param(spectrum, "gain", Value::Float(30.0))
@@ -599,10 +605,10 @@ pub fn instanced_audio(registry: &OpRegistry) -> (Graph, NodeId) {
     graph.set_param(lag, "lagup", Value::Float(0.01)).unwrap();
     graph.set_param(lag, "lagdown", Value::Float(0.2)).unwrap();
     graph
-        .set_param(bass, "channels", Value::Str("band1".into()))
+        .set_param(bass, "channames", Value::Str("band1".into()))
         .unwrap();
     graph
-        .set_param(bass, "rename", Value::Str("sx".into()))
+        .set_param(bass, "renameto", Value::Str("sx".into()))
         .unwrap();
     // Even in silence the grid should be visible, so the band adds to a base.
     graph.set_param(size, "gain", Value::Float(1.4)).unwrap();
