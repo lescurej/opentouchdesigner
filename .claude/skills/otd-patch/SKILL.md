@@ -43,6 +43,10 @@ API key in one — see `docs/AI.md`.
 - `pos` is canvas coordinates. Lay a chain out left to right, ~180 apart, and
   branches on separate rows — a patch nobody can read is a patch nobody edits.
 - `params` omits anything left at its default. Don't write defaults back out.
+- `editor` is the network camera: which component was open (`network`,
+  omitted at root) and each network's pan and zoom (`views`, keyed by path,
+  `"/"` for root). Omitted entirely at the default view. `Project::from_graph`
+  does not carry it — copy `editor` across when rewriting a file that has one.
 
 ## Parameter values
 
@@ -56,8 +60,8 @@ API key in one — see `docs/AI.md`.
 "period":    (value: Float(0.25)),                                   // Constant (default, omit `mode`)
 "translate": (value: Vec3((0.0,0.0,0.0)), mode: Expression,
               expression: "absTime * 0.05"),
-"period":    (value: Float(0.25), mode: Export, source: "/bass:bass"),  // op_path:channel
-"hue":       (value: Float(0.0),  mode: Bind,   source: "/master:hue"), // op_path:param
+"period":    (value: Float(0.25), mode: Expression, expression: "ch('/bass', 'bass')"),
+"hue":       (value: Float(0.0),  mode: Expression, expression: "par('/master', 'hue')"),
 ```
 
 Expressions see `absTime`, `time`, `frame`, `fps`, `me`, the `math` names

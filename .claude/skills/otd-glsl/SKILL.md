@@ -11,8 +11,11 @@ validated with naga before the GPU sees it, so a typo gives a line number and
 **the last shader that compiled keeps running** — the patch never goes black
 mid-edit.
 
-TouchDesigner names do not exist here. No `sTD2DInputs`, no `TDOutputSwizzle`,
-no `vUV`, no `TDSimplexNoise`. Writing them is an error, not a fallback.
+A pixel shader that already uses `sTD2DInputs`, `uTD2DInfos` or `TDOutputSwizzle`
+is wrapped: those samplers bind to the wired inputs, `vUV` is bottom-left, and
+`gl_FragCoord` is bottom-left. `TDSimplexNoise` does not exist. A shader written
+for this operator directly still uses `sample0` / `otd_uv` (top-left) or Shadertoy
+`mainImage`.
 
 ## WGSL — write a fragment body
 

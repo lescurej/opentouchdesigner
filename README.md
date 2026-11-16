@@ -223,7 +223,7 @@ budget  16.67 ms   1 frame(s) over
 | `F1` | perform mode — the editor disappears and the window is the output. `F1` or `Escape` to come back |
 | drag background | pan · scroll to zoom |
 | drag output port → input port | wire · click an input port to unwire |
-| right-click a node | view · replace its file · add an effect after it · bypass · delete |
+| right-click a node | view · replace its file · save CHOP to `.och` · add an effect after it · bypass · delete |
 | drop a file on the network | the operator that plays it, already viewing |
 
 **Your own material.** Drag a movie, an image, a WAV, a `.fs` ISF shader, a
@@ -267,12 +267,11 @@ propagates dirtiness and animation exactly like a wire. Feedback deliberately
 does not, which is precisely what lets a feedback loop exist without a cycle
 in the cook graph.
 
-**Parameters** — the four-mode system, all four live: **Constant**,
-**Expression**, **Export** (driven by a CHOP channel) and **Bind** (following
-another parameter). Drag a channel from the panel onto a parameter to export
-it; click the mode button to release it, keeping whatever value it was showing
-so the picture doesn't jump. Expression mode runs a self-contained numeric
-evaluator (`absTime`, `frame`, `sin`, `fit`, `clamp`, …), falling through to
+**Parameters** — **Constant** and **Expression**. Drag a CHOP channel onto a
+parameter to set `ch('/op', 'chan')`; click the mode button to toggle back to
+Constant, keeping whatever value was showing so the picture doesn't jump.
+Expression mode runs a self-contained numeric evaluator (`absTime`, `frame`,
+`sin`, `fit`, `clamp`, …), falling through to
 Python for anything more. Switching a parameter to Expression and back does
 not lose the constant underneath.
 
@@ -386,7 +385,8 @@ of them, which is how one audio band makes the whole grid breathe.
 
 **CHOPs** (`otd-chop`) — Constant, LFO, Noise, Pattern, Math, Lag, Filter,
 Logic, Trigger, Timer, Speed, Count, Slope, Delay, Limit, Hold, Shuffle,
-Rename, Analyze, Resample, Cross, Clock, Beat, Select, Merge, Switch,
+Rename, Analyze, Last, Trim, Length, Sample Rate, Cross, Clock, Beat,
+Select, Merge, Switch,
 Animation, Expression, Panel, Null, plus Audio Device In, Audio Device Out, Audio File In, Audio
 Spectrum, MIDI In, MIDI Out, OSC In, OSC Out, DMX Out, Mouse In and Keyboard
 In.
@@ -582,8 +582,8 @@ crates/otd-ai       providers, key storage, patch generation      (no GPU, no UI
 ```
 
 `otd-gpu` and `otd-chop` know nothing about each other. `otd-engine` is the
-only place they meet, and it exists for one reason: a TOP parameter in Export
-mode has to read a CHOP channel cooked in the same frame.
+only place they meet, and it exists for one reason: a TOP parameter using
+`ch()` has to read a CHOP channel cooked in the same frame.
 
 `otd-core` has no GPU or UI dependency on purpose — it is what makes the cook
 engine unit-testable and keeps a headless runtime and a future WASM playground

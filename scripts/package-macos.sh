@@ -115,13 +115,48 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <string>The Audio Device In CHOP listens to an input so patches can react to sound.</string>
   <key>NSCameraUsageDescription</key>
   <string>The Video Device In TOP reads a camera as a texture.</string>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>dev.opentouchdesigner.project</string>
+      <key>UTTypeDescription</key><string>OpenTouchDesigner Project</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.utf8-plain-text</string>
+        <string>public.text</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>otd</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>dev.opentouchdesigner.component</string>
+      <key>UTTypeDescription</key><string>OpenTouchDesigner Component</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.utf8-plain-text</string>
+        <string>public.text</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>otdc</string></array>
+      </dict>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
-      <key>CFBundleTypeName</key><string>OpenTouchDesigner project</string>
+      <key>CFBundleTypeName</key><string>OpenTouchDesigner Project</string>
       <key>CFBundleTypeRole</key><string>Editor</string>
-      <key>LSItemContentTypes</key><array><string>public.data</string></array>
-      <key>CFBundleTypeExtensions</key><array><string>otd</string><string>otdc</string></array>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>dev.opentouchdesigner.project</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>OpenTouchDesigner Component</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>dev.opentouchdesigner.component</string></array>
     </dict>
   </array>
 </dict>

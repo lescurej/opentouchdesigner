@@ -123,11 +123,10 @@ cargo run -p otd-ai --example scenarios
 
 ## Editor
 
-- [ ] **Double-clicking a `.otd` in Finder does not open it.** The bundle
-      declares `CFBundleDocumentTypes` for `.otd`/`.otdc`, so it looks like it
-      should. `open -a OpenTouchDesigner file.otd` sends an Apple Event the
-      app never handles; only `--args` reaches the command-line path added in
-      `main.rs`. Needs the open-document event wired up.
+- [x] **Double-clicking a `.otd` in Finder does not open it.** Wired
+      `application:openURLs:` (and legacy `openFile:` / `openFiles:`) onto
+      winit's delegate in `macos_open.rs`; macOS builds use an external event
+      loop so hooks install right after `EventLoop::build()`.
 
 - [ ] **No marquee selection.** `Cmd+A` and shift-click exist; dragging a box
       round several nodes does not.

@@ -14,9 +14,11 @@ sound into channels, then channels into parameters.
 | Operator | Gives you |
 |---|---|
 | `audiodeviceinCHOP` | Live input, downmixed to mono. Blank `device` = system default. |
+| `audiomovieCHOP` | Soundtrack synced to a **Movie File In TOP** playhead (`top` parameter). |
 | `audiofileinCHOP` | A file, **as a function of the timeline** — not a private play head. |
 | `midiinCHOP` | `nNN` per note, plus velocity, pitch bend, `ccNN` per control moved. |
 | `oscinCHOP` | One channel per address argument. |
+| `dmxinCHOP` | DMX slots as `chan1`..`chanN` (0..255) from Art-Net or sACN. |
 | `beatCHOP` | A tempo clock with ramp, pulse, count and bar — no audio needed. |
 | `clockCHOP` | Wall-clock time, which keeps running when the timeline is paused. |
 
@@ -30,9 +32,10 @@ WAV decodes in-process; anything else needs `ffmpeg` on `PATH`.
 audiodeviceinCHOP ─► audiospectrumCHOP ─► lagCHOP ─► selectCHOP ─► (parameter)
 ```
 
-- `audiospectrumCHOP` — energy per band, log spaced. `bands` (1–32, default 4)
-  names them `band1`..`bandN`. `size` is the FFT window; `decibels` if you want
-  a perceptual curve rather than raw energy.
+- `audiospectrumCHOP` — default **Time to Magnitude and Phase** (`mode`:
+  `timetoraw`): `chan_m` amplitude and `chan_p` degrees; sample index ×
+  (input rate / FFT size) → hertz. For VJ band sums use `mode: visual` and
+  `bands` (1–32) → `band1`..`bandN`. `size` is FFT window; `decibels` for dB.
 - **`lagCHOP` is not optional.** Raw spectrum energy jitters every frame and
   anything driven by it looks broken. Asymmetric times are the trick:
   `lagup: 0.01, lagdown: 0.25` — snap on the transient, fall off slowly. This
@@ -50,14 +53,13 @@ audiodeviceinCHOP ─► audiospectrumCHOP ─► lagCHOP ─► selectCHOP ─�
 
 ## Getting it into a parameter
 
-Prefer **Export** over an expression:
+Use an expression (or drag a CHOP channel onto the parameter — it becomes one):
 
 ```ron
-"period": (value: Float(0.25), mode: Export, source: "/bass:bass"),
+"period": (value: Float(0.25), mode: Expression, expression: "ch('/bass', 'bass')"),
 ```
 
-`source` is `op_path:channel`. Use `mode: Expression` with
-`ch('/bass', 'bass')` only when you need arithmetic the CHOP chain cannot do.
+Use arithmetic in the expression when the CHOP chain alone is not enough.
 
 Into a shader: put the channel on a GLSL TOP's `uniform1` and read `U.p0` — see
 `otd-glsl`. Into 3D: name it as an instance channel — see `otd-instancing`.
@@ -79,11 +81,20 @@ not a patch. The things worth driving are the ones that change *structure*:
 Read `docs/GUIDE.md` — the feedback loop is where the look comes from; audio
 should modulate the loop, not replace it.
 
+## Installation audio (single clock)
+
+For long-running shows (Reaper, QLab, etc.), prefer **one sample clock**:
+
+1. `audiodeviceoutCHOP` → **BlackHole** or **Loopback** (virtual device).
+2. Reaper (or the DAW) records from the same virtual device.
+
+`reaperoutCHOP` / ReaStream is fine for quick tests; UDP + two clocks can drift over hours. Raise **Audio / ReaStream buffer (ms)** in editor settings (20–300) if you must use ReaStream.
+
 ## Output too
 
 `audiodeviceoutCHOP` plays the first channel. `midioutCHOP` sends `nNN` as
 notes and `ccNN` as controls; `oscoutCHOP` sends one message per frame;
-`dmxoutCHOP` sends Art-Net or sACN. `otd run patch.otd` keeps all of those
+`dmxoutCHOP` sends Art-Net or sACN; `dmxinCHOP` receives them. `otd run patch.otd` keeps all of those
 sending with no window — that is the show-machine mode.
 
 ## Reference patch
