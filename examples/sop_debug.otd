@@ -1,0 +1,30 @@
+(
+  format: "opentouchdesigner-project",
+  version: 1,
+  fps: 60.0,
+  nodes: [
+    (
+      path: "/box1",
+      op: "boxSOP",
+      pos: (-280.0, 0.0),
+    ),
+    (
+      path: "/sphere1",
+      op: "sphereSOP",
+      pos: (0.0, 0.0),
+      params: {
+        "rows": (value: Int(12)),
+        "columns": (value: Int(16)),
+      },
+    ),
+    (
+      path: "/grid1",
+      op: "gridSOP",
+      pos: (280.0, 0.0),
+      params: {
+        "rows": (value: Int(8)),
+        "columns": (value: Int(8)),
+      },
+    ),
+  ],
+)

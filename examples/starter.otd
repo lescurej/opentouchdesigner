@@ -39,4 +39,12 @@
       ],
     ),
   ],
+  settings: (
+    start_in_perform_mode: false,
+    designer_custom_position: false,
+    designer_x: 0.0,
+    designer_y: 0.0,
+    designer_w: 0.0,
+    designer_h: 0.0,
+  ),
 )

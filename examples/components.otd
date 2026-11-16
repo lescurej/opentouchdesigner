@@ -10,7 +10,7 @@
     ),
     (
       path: "/bass_vis",
-      op: "containerCOMP",
+      op: "baseCOMP",
       pos: (-320.0, -120.0),
       inputs: [
         "/spectrum1",
@@ -57,12 +57,12 @@
         "/bass_vis/in1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("*"),
           mode: Expression,
           expression: "\'band\' + str(parent(\'band\'))",
         ),
-        "rename": (
+        "renameto": (
           value: Str("level"),
         ),
       },
@@ -78,12 +78,14 @@
         "uniform1": (
           value: Vec4((1.0, 0.6, 0.2, 1.0)),
           mode: Expression,
-          expression: "[ch(me.rsplit(\'/\', 1)[0] + \'/smooth\', \'level\'), parent(\'hue\'), parent(\'gain\'), 1.0]",
+          expression: "[ch(\'../smooth\', \'level\'), parent(\'hue\'), parent(\'gain\'), 1.0]",
         ),
         "resw": (
+          page: "Common",
           value: Int(640),
         ),
         "resh": (
+          page: "Common",
           value: Int(640),
         ),
       },
@@ -144,6 +146,9 @@
         "/audioin1",
       ],
       params: {
+        "mode": (
+          value: Str("visual"),
+        ),
         "gain": (
           value: Float(24.0),
         ),
@@ -151,7 +156,7 @@
     ),
     (
       path: "/treble_vis",
-      op: "containerCOMP",
+      op: "baseCOMP",
       pos: (-320.0, 120.0),
       inputs: [
         "/spectrum1",
@@ -198,12 +203,12 @@
         "/treble_vis/in1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("*"),
           mode: Expression,
           expression: "\'band\' + str(parent(\'band\'))",
         ),
-        "rename": (
+        "renameto": (
           value: Str("level"),
         ),
       },
@@ -219,12 +224,14 @@
         "uniform1": (
           value: Vec4((1.0, 0.6, 0.2, 1.0)),
           mode: Expression,
-          expression: "[ch(me.rsplit(\'/\', 1)[0] + \'/smooth\', \'level\'), parent(\'hue\'), parent(\'gain\'), 1.0]",
+          expression: "[ch(\'../smooth\', \'level\'), parent(\'hue\'), parent(\'gain\'), 1.0]",
         ),
         "resw": (
+          page: "Common",
           value: Int(640),
         ),
         "resh": (
+          page: "Common",
           value: Int(640),
         ),
       },
@@ -246,4 +253,12 @@
       },
     ),
   ],
+  settings: (
+    start_in_perform_mode: false,
+    designer_custom_position: false,
+    designer_x: 0.0,
+    designer_y: 0.0,
+    designer_w: 0.0,
+    designer_h: 0.0,
+  ),
 )

@@ -16,10 +16,10 @@
         "/lag1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("band1"),
         ),
-        "rename": (
+        "renameto": (
           value: Str("bass"),
         ),
       },
@@ -32,10 +32,10 @@
         "/lag1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("band4"),
         ),
-        "rename": (
+        "renameto": (
           value: Str("high"),
         ),
       },
@@ -48,7 +48,7 @@
         "/midiin1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("n36"),
         ),
       },
@@ -79,8 +79,8 @@
       params: {
         "brightness": (
           value: Float(1.0),
-          mode: Export,
-          source: "/math_high:high",
+          mode: Expression,
+          expression: "ch(\'/math_high\', \'high\')",
         ),
       },
     ),
@@ -93,18 +93,23 @@
       ],
       params: {
         "gain": (
+          page: "Mult-Add",
           value: Float(-0.35),
         ),
         "offset": (
+          page: "Mult-Add",
           value: Float(0.45),
         ),
         "clamp": (
+          page: "Range",
           value: Bool(true),
         ),
         "clampmin": (
+          page: "Range",
           value: Float(0.05),
         ),
         "clampmax": (
+          page: "Range",
           value: Float(0.5),
         ),
       },
@@ -118,18 +123,23 @@
       ],
       params: {
         "gain": (
+          page: "Mult-Add",
           value: Float(3.0),
         ),
         "offset": (
+          page: "Mult-Add",
           value: Float(0.8),
         ),
         "clamp": (
+          page: "Range",
           value: Bool(true),
         ),
         "clampmin": (
+          page: "Range",
           value: Float(0.5),
         ),
         "clampmax": (
+          page: "Range",
           value: Float(4.0),
         ),
       },
@@ -143,6 +153,7 @@
       ],
       params: {
         "gain": (
+          page: "Mult-Add",
           value: Float(30.0),
         ),
       },
@@ -164,8 +175,8 @@
       params: {
         "period": (
           value: Float(0.25),
-          mode: Export,
-          source: "/math_bass:bass",
+          mode: Expression,
+          expression: "ch(\'/math_bass\', \'bass\')",
         ),
         "translate": (
           value: Vec3((0.0, 0.0, 0.0)),
@@ -193,6 +204,9 @@
         "/audioin1",
       ],
       params: {
+        "mode": (
+          value: Str("visual"),
+        ),
         "gain": (
           value: Float(24.0),
         ),
@@ -208,8 +222,8 @@
       params: {
         "rotate": (
           value: Float(0.0),
-          mode: Export,
-          source: "/math_kick:n36",
+          mode: Expression,
+          expression: "ch(\'/math_kick\', \'n36\')",
         ),
       },
     ),
@@ -233,4 +247,12 @@
       },
     ),
   ],
+  settings: (
+    start_in_perform_mode: false,
+    designer_custom_position: false,
+    designer_x: 0.0,
+    designer_y: 0.0,
+    designer_w: 0.0,
+    designer_h: 0.0,
+  ),
 )

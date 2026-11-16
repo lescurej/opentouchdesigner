@@ -26,8 +26,8 @@
       params: {
         "brightness": (
           value: Float(1.0),
-          mode: Export,
-          source: "/anim1:bright",
+          mode: Expression,
+          expression: "ch(\'/anim1\', \'bright\')",
         ),
       },
     ),
@@ -48,9 +48,11 @@
           value: Str("vertical"),
         ),
         "resw": (
+          page: "Common",
           value: Int(640),
         ),
         "resh": (
+          page: "Common",
           value: Int(360),
         ),
       },
@@ -65,8 +67,8 @@
       params: {
         "rotate": (
           value: Float(0.0),
-          mode: Export,
-          source: "/anim1:rotate",
+          mode: Expression,
+          expression: "ch(\'/anim1\', \'rotate\')",
         ),
         "scale": (
           value: Vec2((1.0, 1.0)),
@@ -76,4 +78,12 @@
       },
     ),
   ],
+  settings: (
+    start_in_perform_mode: false,
+    designer_custom_position: false,
+    designer_x: 0.0,
+    designer_y: 0.0,
+    designer_w: 0.0,
+    designer_h: 0.0,
+  ),
 )

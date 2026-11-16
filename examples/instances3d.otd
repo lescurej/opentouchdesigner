@@ -16,10 +16,10 @@
         "/lag1",
       ],
       params: {
-        "channels": (
+        "channames": (
           value: Str("band1"),
         ),
-        "rename": (
+        "renameto": (
           value: Str("sx"),
         ),
       },
@@ -253,18 +253,23 @@
       ],
       params: {
         "gain": (
+          page: "Mult-Add",
           value: Float(1.4),
         ),
         "offset": (
+          page: "Mult-Add",
           value: Float(0.45),
         ),
         "clamp": (
+          page: "Range",
           value: Bool(true),
         ),
         "clampmin": (
+          page: "Range",
           value: Float(0.2),
         ),
         "clampmax": (
+          page: "Range",
           value: Float(1.6),
         ),
       },
@@ -277,6 +282,9 @@
         "/audioin1",
       ],
       params: {
+        "mode": (
+          value: Str("visual"),
+        ),
         "gain": (
           value: Float(30.0),
         ),
@@ -299,4 +307,12 @@
       },
     ),
   ],
+  settings: (
+    start_in_perform_mode: false,
+    designer_custom_position: false,
+    designer_x: 0.0,
+    designer_y: 0.0,
+    designer_w: 0.0,
+    designer_h: 0.0,
+  ),
 )
