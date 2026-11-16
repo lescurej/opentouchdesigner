@@ -35,7 +35,7 @@ impl Patch {
         self.cook
             .cook_frame(&self.graph, &[root], &self.time, &mut self.host)
             .unwrap();
-        self.time.advance(1.0 / 60.0);
+        self.time.advance(self.time.dt);
     }
     fn geo(&self, id: NodeId) -> &Geometry {
         self.host.geometry(id).expect("cooked")
@@ -98,6 +98,16 @@ fn a_grid_faces_the_way_it_is_told_to() {
     assert_eq!(p.geo(g).points[0].normal, [0.0, 1.0, 0.0]);
     // Laid flat, every point shares a height.
     assert!(p.geo(g).points.iter().all(|pt| pt.position[1] == 0.0));
+}
+
+#[test]
+fn grid_cols_is_the_touchdesigner_column_count() {
+    let mut p = Patch::new();
+    let g = p.add("gridSOP", "grid1");
+    p.set(g, "rows", Value::Int(2));
+    p.set(g, "cols", Value::Int(4));
+    p.run(g);
+    assert_eq!(p.geo(g).num_points(), 8);
 }
 
 #[test]
@@ -415,7 +425,10 @@ fn blending_shapes_of_different_sizes_moves_every_point() {
 
     let n_a = p.geo(a).points.len();
     let n_b = p.geo(b).points.len();
-    assert!(n_a != n_b, "the point counts must differ for this to mean anything");
+    assert!(
+        n_a != n_b,
+        "the point counts must differ for this to mean anything"
+    );
 
     let stuck = p
         .geo(blend)
@@ -438,9 +451,15 @@ fn a_twist_turns_the_top_of_a_column_and_leaves_its_root() {
     p.run(tw);
     let pts = &p.geo(tw).points;
     let (root, top) = (pts[0].position, pts[pts.len() - 1].position);
-    assert!((root[0] - 1.0).abs() < 1e-5 && root[2].abs() < 1e-5, "root untouched: {root:?}");
+    assert!(
+        (root[0] - 1.0).abs() < 1e-5 && root[2].abs() < 1e-5,
+        "root untouched: {root:?}"
+    );
     // length 2, strength 90 at y=2 is a quarter turn about Y: x=1 goes to z.
-    assert!(top[0].abs() < 1e-4 && (top[2].abs() - 1.0).abs() < 1e-4, "top turned: {top:?}");
+    assert!(
+        top[0].abs() < 1e-4 && (top[2].abs() - 1.0).abs() < 1e-4,
+        "top turned: {top:?}"
+    );
     assert!((top[1] - 2.0).abs() < 1e-5, "height kept");
 }
 
@@ -488,7 +507,10 @@ fn facet_makes_normals_follow_a_displaced_surface() {
         let n = pt.normal;
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         assert!((len - 1.0).abs() < 1e-4, "unit normals: {n:?}");
-        assert!(n[2] > 0.99, "a flat grid stays facing +Z after taper: {n:?}");
+        assert!(
+            n[2] > 0.99,
+            "a flat grid stays facing +Z after taper: {n:?}"
+        );
     }
 
     let unique = p.add("facetSOP", "facet2");
@@ -496,7 +518,11 @@ fn facet_makes_normals_follow_a_displaced_surface() {
     p.set(unique, "mode", Value::Str("unique".into()));
     p.run(unique);
     let (g, grid_geo) = (p.geo(unique), p.geo(grid));
-    assert_eq!(g.points.len(), grid_geo.indices.len(), "one point per corner");
+    assert_eq!(
+        g.points.len(),
+        grid_geo.indices.len(),
+        "one point per corner"
+    );
     assert!(g.indices.is_empty());
 }
 
@@ -512,7 +538,38 @@ fn facet_fixes_the_stale_normals_noise_leaves_behind() {
     let facet = p.add("facetSOP", "facet1");
     p.graph.connect(noise, facet, 0).unwrap();
     p.run(facet);
-    assert!(p.geo(noise).points.iter().all(|pt| pt.normal == [0.0, 0.0, 1.0]));
-    let tilted = p.geo(facet).points.iter().filter(|pt| pt.normal[2] < 0.95).count();
-    assert!(tilted > 50, "recomputed normals tilt with the bumps: {tilted}");
+    assert!(
+        p.geo(noise)
+            .points
+            .iter()
+            .all(|pt| pt.normal == [0.0, 0.0, 1.0])
+    );
+    let tilted = p
+        .geo(facet)
+        .points
+        .iter()
+        .filter(|pt| pt.normal[2] < 0.95)
+        .count();
+    assert!(
+        tilted > 50,
+        "recomputed normals tilt with the bumps: {tilted}"
+    );
+}
+
+#[test]
+fn file_in_loads_an_obj_from_disk() {
+    let dir = std::env::temp_dir().join("otd_sop_filein_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let obj = dir.join("tri.obj");
+    std::fs::write(&obj, "o tri\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+
+    let mut p = Patch::new();
+    p.graph.set_base_dir(Some(dir.clone()));
+    let f = p.add("fileinSOP", "structure");
+    p.set(f, "file", Value::Str("tri.obj".into()));
+    p.run(f);
+    let g = p.geo(f);
+    assert_eq!(g.num_points(), 3);
+    assert_eq!(g.indices.len(), 3);
 }

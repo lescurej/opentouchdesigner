@@ -16,7 +16,16 @@
 //!    familiar mental model, and because something has to make the first
 //!    points.
 
+pub use ops::btog;
+pub mod geotext;
+pub mod obj;
 pub mod ops;
+
+pub use geotext::placeholder_geometry;
+
+pub fn register_all(registry: &mut otd_core::OpRegistry) {
+    ops::register_all(registry);
+}
 
 use otd_core::{CookContext, CookError, Cooker, EvalContext, Family, Graph, NodeId};
 use slotmap::SecondaryMap;
@@ -51,7 +60,7 @@ impl Point {
 }
 
 /// How the points are meant to be assembled.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Topology {
     #[default]
     Triangles,
@@ -66,6 +75,8 @@ pub struct Geometry {
     /// Indices into `points`. Empty means the points are already in order.
     pub indices: Vec<u32>,
     pub topology: Topology,
+    /// Set by `materialSOP`: MAT path applied when rendering this SOP output.
+    pub mat_path: String,
 }
 
 impl Geometry {
@@ -123,6 +134,7 @@ impl Geometry {
                 .collect(),
             indices: self.indices.clone(),
             topology: self.topology,
+            mat_path: self.mat_path.clone(),
         }
     }
 
@@ -150,11 +162,38 @@ impl Geometry {
         } else {
             indices.extend(other.indices.iter().map(|i| i + offset));
         }
+        let mat_path = if !self.mat_path.is_empty() {
+            self.mat_path.clone()
+        } else {
+            other.mat_path.clone()
+        };
         Geometry {
             points,
             indices,
             topology: self.topology,
+            mat_path,
         }
+    }
+
+    /// Cheap fingerprint for viewer cache invalidation when geometry changes.
+    pub fn preview_stamp(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        self.num_points().hash(&mut h);
+        self.num_vertices().hash(&mut h);
+        self.topology.hash(&mut h);
+        for p in self.points.iter().take(8) {
+            for c in p.position {
+                c.to_bits().hash(&mut h);
+            }
+        }
+        if let Some(p) = self.points.last() {
+            for c in p.position {
+                c.to_bits().hash(&mut h);
+            }
+        }
+        h.finish()
     }
 
     /// The interleaved bytes a vertex buffer wants.
@@ -188,6 +227,9 @@ impl GeometryStore {
     }
     pub fn remove(&mut self, id: NodeId) {
         self.data.remove(id);
+    }
+    pub fn retain_graph(&mut self, graph: &Graph) {
+        self.data.retain(|id, _| graph.contains(id));
     }
     pub fn clear(&mut self) {
         self.data.clear();
@@ -238,7 +280,16 @@ impl SopEngine {
             path: Some(&path),
             ..*eval
         };
-        let mut cx = ops::SopCtx { node, eval, inputs };
+        let cx = ops::SopCtx {
+            graph,
+            node,
+            eval,
+            inputs,
+        };
+        if let Some(geo) = ops::try_locked_sidecar_geometry(&cx) {
+            return Ok(geo);
+        }
+        let mut cx = cx;
         Ok((spec.cook)(&mut cx))
     }
 }
@@ -260,7 +311,12 @@ impl SopHost {
 }
 
 impl Cooker for SopHost {
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<otd_core::CookOutput, CookError> {
+    fn cook(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        ctx: &CookContext,
+    ) -> Result<otd_core::CookOutput, CookError> {
         if graph.get(id).map(|n| n.family) != Some(Family::Sop) {
             return Ok(otd_core::CookOutput::Updated);
         }
@@ -273,47 +329,5 @@ impl Cooker for SopHost {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn merging_makes_implicit_indices_explicit() {
-        let a = Geometry {
-            points: vec![Point::at(0.0, 0.0, 0.0); 3],
-            ..Default::default()
-        };
-        let b = Geometry {
-            points: vec![Point::at(1.0, 0.0, 0.0); 3],
-            ..Default::default()
-        };
-        let m = a.merged(&b);
-        assert_eq!(m.num_points(), 6);
-        // Without explicit indices the two halves would be one run of six.
-        assert_eq!(m.indices, vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(m.num_primitives(), 2);
-    }
-
-    #[test]
-    fn vertex_bytes_are_interleaved_in_the_renderers_layout() {
-        let g = Geometry {
-            points: vec![Point {
-                position: [1.0, 2.0, 3.0],
-                normal: [0.0, 1.0, 0.0],
-                uv: [0.5, 0.25],
-                color: [1.0, 0.0, 0.0, 1.0],
-            }],
-            ..Default::default()
-        };
-        let v = g.vertex_bytes();
-        assert_eq!(v.len(), 12, "one point is twelve floats");
-        assert_eq!(&v[0..3], &[1.0, 2.0, 3.0]);
-        assert_eq!(&v[6..8], &[0.5, 0.25]);
-        assert_eq!(&v[8..12], &[1.0, 0.0, 0.0, 1.0]);
-    }
-
-    #[test]
-    fn bounds_of_nothing_are_not_infinite() {
-        let g = Geometry::default();
-        assert_eq!(g.bounds(), ([0.0; 3], [0.0; 3]));
-    }
-}
+#[path = "tests/lib__tests.rs"]
+mod tests;
