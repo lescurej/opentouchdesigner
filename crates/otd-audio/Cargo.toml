@@ -1,0 +1,15 @@
+[package]
+name = "otd-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cpal = "0.18.1"
+log = "0.4.33"
+rtrb = "0.3.2"
+
+[lints]
+workspace = true
