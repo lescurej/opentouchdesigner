@@ -25,10 +25,8 @@ fn syntax_from_err(py: Python<'_>, err: &PyErr) -> PythonLint {
     let mut message = crate::format_error(py, err);
     if err.is_instance_of::<PySyntaxError>(py) {
         let value = err.value(py);
-        if let Ok(l) = value.getattr("lineno").and_then(|v| v.extract::<Option<u32>>()) {
-            if let Some(l) = l {
-                line = l.max(1);
-            }
+        if let Ok(Some(l)) = value.getattr("lineno").and_then(|v| v.extract::<Option<u32>>()) {
+            line = l.max(1);
         }
         if let Ok(c) = value.getattr("offset").and_then(|v| v.extract::<Option<u32>>()) {
             column = c.unwrap_or(0);
