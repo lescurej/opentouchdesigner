@@ -20,11 +20,14 @@ otd — OpenTouchDesigner, headless
 
 USAGE:
     otd run <project.otd> [--frames N] [--fps N] [--node PATH]
+    otd audio-render <project.otd> --out <file.wav> [--seconds N] [--fps N]
     otd render <project.otd> --node <path> [--frames N] [--out DIR] [--fps N]
     otd stats <project.otd> [--frames N] [--fps N] [--node PATH]
     otd bundle <project.otd> --out <dir>
     otd docs [--out FILE]
     otd demo <name> --out <project.otd>
+    otd td report <file.toe|tox>
+    otd btog-dump <file.data>
 
 COMMANDS:
     run       Cook the project in realtime. Output CHOPs (DMX, OSC) keep
@@ -37,6 +40,8 @@ COMMANDS:
     docs      Write the operator reference, generated from the registry.
     demo      Write one of the built-in patches out as a project file, so the
               shipped examples are generated rather than hand-saved.
+    td        TouchDesigner interoperability (decode .toe/.tox, parity report).
+    btog-dump Decode a TouchDesigner geometry sidecar (*.data / BtogV) for debugging.
 
 OPTIONS:
     --frames N   How many frames to run. `run` defaults to forever.
@@ -79,6 +84,7 @@ struct Args {
     command: String,
     project: PathBuf,
     frames: Option<u64>,
+    seconds: Option<f64>,
     fps: Option<f64>,
     node: Option<String>,
     out: PathBuf,
@@ -94,7 +100,56 @@ fn parse(argv: Vec<String>) -> Result<Args, Fail> {
     if command == "-h" || command == "--help" || command == "help" {
         return Err(Fail::Help);
     }
-    if !["run", "render", "stats", "bundle", "docs", "demo"].contains(&command.as_str()) {
+    if command == "td" {
+        let sub = it.next().ok_or_else(|| {
+            Fail::Err(format!("`td` needs a subcommand — try: otd td report <file>\n\n{USAGE}"))
+        })?;
+        if sub != "report" {
+            return Err(format!("unknown td subcommand `{sub}` — try: report\n\n{USAGE}").into());
+        }
+        let path = PathBuf::from(
+            it.next().ok_or_else(|| {
+                Fail::Err(format!("`td report` needs a .toe or .tox file\n\n{USAGE}"))
+            })?,
+        );
+        return Ok(Args {
+            command: "td-report".into(),
+            project: path,
+            frames: None,
+            seconds: None,
+            fps: None,
+            node: None,
+            out: PathBuf::from("frames"),
+            out_given: false,
+        });
+    }
+    if command == "btog-dump" {
+        let path = PathBuf::from(
+            it.next()
+                .ok_or_else(|| Fail::Err(format!("`btog-dump` needs a .data file\n\n{USAGE}")))?,
+        );
+        return Ok(Args {
+            command: "btog-dump".into(),
+            project: path,
+            frames: None,
+            seconds: None,
+            fps: None,
+            node: None,
+            out: PathBuf::from("frames"),
+            out_given: false,
+        });
+    }
+    if ![
+        "run",
+        "render",
+        "stats",
+        "bundle",
+        "docs",
+        "demo",
+        "audio-render",
+    ]
+    .contains(&command.as_str())
+    {
         return Err(format!("unknown command `{command}`\n\n{USAGE}").into());
     }
     // `docs` reads the operator registry, not a project — it is about the
@@ -120,6 +175,7 @@ fn parse(argv: Vec<String>) -> Result<Args, Fail> {
         command,
         project,
         frames: None,
+        seconds: None,
         fps: None,
         node: None,
         out: PathBuf::from("frames"),
@@ -137,6 +193,16 @@ fn parse(argv: Vec<String>) -> Result<Args, Fail> {
                     v.parse()
                         .map_err(|_| format!("--frames: `{v}` is not a whole number"))?,
                 );
+            }
+            "--seconds" => {
+                let v = value()?;
+                let sec: f64 = v
+                    .parse()
+                    .map_err(|_| format!("--seconds: `{v}` is not a number"))?;
+                if sec <= 0.0 {
+                    return Err(Fail::Err("--seconds must be greater than zero".into()));
+                }
+                args.seconds = Some(sec);
             }
             "--fps" => {
                 let v = value()?;
@@ -212,6 +278,27 @@ fn run() -> Result<(), Fail> {
     if args.command == "demo" {
         return Ok(write_demo(&args)?);
     }
+    if args.command == "btog-dump" {
+        let text = otd_sop::btog::dump_path(&args.project).map_err(Fail::Err)?;
+        print!("{text}");
+        return Ok(());
+    }
+    if args.command == "td-report" {
+        let registry = otd_engine::registry();
+        match otd_td::inspect_touchdesigner_text(&args.project, &registry) {
+            Ok(text) => {
+                println!("{text}");
+                return Ok(());
+            }
+            Err(fail) => {
+                eprintln!("TouchDesigner import failed:");
+                for n in &fail.notes {
+                    eprintln!("  • {n}");
+                }
+                return Err(Fail::Err("could not decode TouchDesigner file".into()));
+            }
+        }
+    }
 
     let mut rt = Runtime::open(&args.project)?;
     if let Some(fps) = args.fps {
@@ -220,6 +307,7 @@ fn run() -> Result<(), Fail> {
     let dt = 1.0 / rt.time.fps;
 
     match args.command.as_str() {
+        "audio-render" => audio_render(&mut rt, &args, dt),
         "render" => render(&mut rt, &args, dt),
         "stats" => stats(
             &mut rt,
@@ -259,6 +347,18 @@ fn roots(rt: &Runtime, node: Option<&str>) -> Result<Vec<otd_core::NodeId>, Stri
 
 /// Cook in realtime. This is the show-machine mode: no pixels leave the
 /// process, but output operators — DMX, OSC — do their work every frame.
+fn audio_render(rt: &mut Runtime, args: &Args, dt: f64) -> Result<(), String> {
+    let seconds = args.seconds.unwrap_or(10.0);
+    let frames = (seconds / dt).ceil() as u64;
+    realtime(rt, Some(frames), None, dt)?;
+    if args.out_given {
+        eprintln!(
+            "note: `--out` WAV capture is not wired yet; cooked {frames} frame(s) of audio device/ReaStream outputs"
+        );
+    }
+    Ok(())
+}
+
 fn realtime(
     rt: &mut Runtime,
     frames: Option<u64>,
@@ -345,10 +445,12 @@ fn docs(args: &Args) -> Result<(), String> {
 /// Copy the project and everything it references into one folder.
 fn bundle(args: &Args) -> Result<(), String> {
     let registry = otd_engine::registry();
-    let fps = otd_core::Project::load(&args.project)
-        .map_err(|e| format!("{}: {e}", args.project.display()))?
-        .fps;
-    let graph = otd_core::Project::open(&args.project, &registry)
+    let project = otd_core::Project::load(&args.project)
+        .map_err(|e| format!("{}: {e}", args.project.display()))?;
+    let fps = project.fps;
+    let sample_rate = otd_core::canonical_project_sample_rate(project.sample_rate);
+    let graph = project
+        .to_graph_relative_to(&registry, args.project.parent())
         .map_err(|e| format!("{}: {e}", args.project.display()))?;
     let name = args
         .project
@@ -356,8 +458,19 @@ fn bundle(args: &Args) -> Result<(), String> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "show".into());
 
-    let out = otd_core::bundle::export(&graph, &registry, fps, &args.out, &name)
-        .map_err(|e| format!("{}: {e}", args.out.display()))?;
+    let out = otd_core::bundle::export_with(
+        &graph,
+        &registry,
+        &otd_core::bundle::ExportOptions {
+            fps,
+            sample_rate,
+            settings: &project.settings,
+            editor: &project.editor,
+        },
+        &args.out,
+        &name,
+    )
+    .map_err(|e| format!("{}: {e}", args.out.display()))?;
     println!(
         "{}  ({} component(s), {} media file(s))",
         out.project.display(),
@@ -464,61 +577,5 @@ fn report_shader_errors(rt: &Runtime) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn argv(s: &str) -> Vec<String> {
-        std::iter::once("otd".to_string())
-            .chain(s.split_whitespace().map(String::from))
-            .collect()
-    }
-
-    #[test]
-    fn flags_are_parsed_in_any_order() {
-        let a = parse(argv("render p.otd --out shots --frames 30 --node /out1")).unwrap();
-        assert_eq!(a.command, "render");
-        assert_eq!(a.project, PathBuf::from("p.otd"));
-        assert_eq!(a.frames, Some(30));
-        assert_eq!(a.node.as_deref(), Some("/out1"));
-        assert_eq!(a.out, PathBuf::from("shots"));
-    }
-
-    #[test]
-    fn defaults_do_not_silently_pick_a_frame_rate() {
-        // Left alone, the frame rate comes from the project rather than from
-        // a number invented here.
-        let a = parse(argv("run p.otd")).unwrap();
-        assert_eq!(a.fps, None);
-        assert_eq!(a.frames, None, "`run` runs until interrupted");
-    }
-
-    #[test]
-    fn a_bad_argument_says_what_was_wrong() {
-        for (args, wanted) in [
-            ("render p.otd", "--node"),
-            ("run p.otd --frames soon", "not a whole number"),
-            ("run p.otd --fps 0", "greater than zero"),
-            ("run p.otd --fps", "needs a value"),
-            ("dance p.otd", "unknown command"),
-            ("run", "needs a project file"),
-            ("run p.otd --loud", "unknown option"),
-        ] {
-            let Err(Fail::Err(err)) = parse(argv(args)) else {
-                panic!("`{args}` should have been rejected");
-            };
-            assert!(err.contains(wanted), "`{args}` -> {err}");
-        }
-    }
-
-    #[test]
-    fn asking_for_help_is_not_a_failure() {
-        // `otd --help` in a script must not exit non-zero, and it must not
-        // complain about a project file it was never given.
-        for args in ["--help", "-h", "help", ""] {
-            assert!(
-                matches!(parse(argv(args)), Err(Fail::Help)),
-                "`otd {args}` should print usage and succeed"
-            );
-        }
-    }
-}
+#[path = "tests/main__tests.rs"]
+mod tests;

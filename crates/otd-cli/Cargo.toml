@@ -11,12 +11,17 @@ name = "otd"
 path = "src/main.rs"
 
 [dependencies]
-otd-core = { version = "0.1.0", path = "../otd-core" }
-otd-engine = { version = "0.1.0", path = "../otd-engine" }
-otd-gpu = { version = "0.1.0", path = "../otd-gpu" }
+otd-core = { workspace = true }
+otd-engine = { workspace = true }
+otd-gpu = { workspace = true }
+otd-td = { workspace = true }
+otd-sop = { workspace = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
-otd-core = { version = "0.1.0", path = "../otd-core" }
-otd-engine = { version = "0.1.0", path = "../otd-engine" }
-otd-gpu = { version = "0.1.0", path = "../otd-gpu" }
+otd-core = { workspace = true }
+otd-engine = { workspace = true }
+otd-gpu = { workspace = true }
+
+[lints]
+workspace = true

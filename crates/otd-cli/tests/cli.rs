@@ -37,10 +37,13 @@ fn write_project(dir: &Path, flagged: bool) -> PathBuf {
     graph.set_param(noise, "resw", Value::Int(64)).unwrap();
     graph.set_param(noise, "resh", Value::Int(32)).unwrap();
 
-    // Start from no flags at all, so `flagged: false` really means nothing to
-    // cook rather than whatever the defaults happen to be.
+    // Start from no cook roots at all — defaults turn the viewer on, which would
+    // still pull nodes into editor roots.
     for id in graph.walk() {
-        graph.node_mut_quiet(id).flags = Default::default();
+        graph.node_mut_quiet(id).flags = otd_core::NodeFlags {
+            viewer: false,
+            ..Default::default()
+        };
     }
     if flagged {
         graph.node_mut_quiet(level).flags.render = true;
@@ -201,11 +204,7 @@ fn a_bundle_still_runs_after_the_folder_is_moved() {
     let registry = otd_engine::registry();
     let mut g = otd_core::Project::open(&project, &registry).unwrap();
     let comp = g
-        .create(
-            g.root(),
-            registry.get("containerCOMP").unwrap(),
-            Some("meter1"),
-        )
+        .create(g.root(), registry.get("baseCOMP").unwrap(), Some("meter1"))
         .unwrap();
     let otdc = shared.join("meter.otdc");
     otd_core::Component::from_graph(&g, comp, &registry)
@@ -259,14 +258,17 @@ fn bundling_a_project_whose_component_is_gone_fails_here_not_at_the_show() {
     let mut p = otd_core::Project::load(&project).unwrap();
     p.nodes.push(otd_core::project::NodeEntry {
         path: "/meter1".into(),
-        op: "containerCOMP".into(),
+        op: "baseCOMP".into(),
         pos: (0.0, 0.0),
+        size: None,
         inputs: Vec::new(),
         params: Default::default(),
         flags: Default::default(),
         external: Some("/nowhere/gone.otdc".into()),
         clone: None,
         callback_owner: None,
+        docked_to: None,
+        dock_shown: true,
     });
     p.nodes.sort_by(|a, b| a.path.cmp(&b.path));
     p.save(&project).unwrap();
@@ -281,6 +283,18 @@ fn bundling_a_project_whose_component_is_gone_fails_here_not_at_the_show() {
     ]);
     assert!(!ok, "{text}");
     assert!(text.contains("gone.otdc"), "{text}");
+}
+
+#[test]
+fn td_report_on_a_decodable_touchdesigner_file() {
+    let tox = std::path::Path::new("/tmp/protomarquee.tox");
+    if !tox.is_file() {
+        return;
+    }
+    let (ok, text) = otd(&["td", "report", tox.to_str().unwrap()]);
+    assert!(ok, "{text}");
+    assert!(text.contains("TouchDesigner import report"), "{text}");
+    assert!(text.contains("Nodes:"), "{text}");
 }
 
 #[test]
