@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::expr::ChannelSource;
 
@@ -6,28 +6,44 @@ type NetPtr = *const (dyn ChannelSource + 'static);
 
 thread_local! {
     static NETWORK: Cell<Option<NetPtr>> = const { Cell::new(None) };
-    static NODE_PATH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static NODE_PATH: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 pub struct CallbackGuard;
 
 impl CallbackGuard {
-    pub fn set(net: Option<&dyn ChannelSource>, path: &str) -> CallbackGuard {
+    pub fn set(net: Option<&dyn ChannelSource>, path: &str) -> NetworkGuard {
+        NODE_PATH.with(|p| *p.borrow_mut() = path.to_string());
         NETWORK.with(|n| {
-            n.set(net.map(|n| unsafe {
-                std::mem::transmute::<*const dyn ChannelSource, NetPtr>(n as *const dyn ChannelSource)
+            n.set(net.map(|net| unsafe {
+                std::mem::transmute::<*const dyn ChannelSource, NetPtr>(net as *const dyn ChannelSource)
             }))
         });
-        NODE_PATH.with(|p| *p.borrow_mut() = path.to_string());
-        CallbackGuard
+        NetworkGuard
     }
 }
 
-impl Drop for CallbackGuard {
+pub struct NetworkGuard;
+
+impl Drop for NetworkGuard {
     fn drop(&mut self) {
         NETWORK.with(|n| n.set(None));
-        NODE_PATH.with(|p| p.borrow_mut().clear());
     }
+}
+
+pub fn with_callback_network<R>(
+    net: Option<&dyn ChannelSource>,
+    path: &str,
+    f: impl FnOnce() -> R,
+) -> R {
+    NODE_PATH.with(|p| *p.borrow_mut() = path.to_string());
+    NETWORK.with(|n| {
+        n.set(net.map(|net| unsafe {
+            std::mem::transmute::<*const dyn ChannelSource, NetPtr>(net as *const dyn ChannelSource)
+        }))
+    });
+    let _guard = NetworkGuard;
+    f()
 }
 
 pub fn with_network<R>(f: impl FnOnce(&dyn ChannelSource, &str) -> R) -> Option<R> {

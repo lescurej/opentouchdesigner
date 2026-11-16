@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::{Family, Graph, NodeId, OpRegistry};
-use crate::project::{node_entry, restore_node, NodeEntry, ProjectError};
+use crate::project::{NodeEntry, ProjectError, node_entry, restore_node};
 
 const CLIPBOARD_MAGIC: &str = "otd-op-clipboard-v1:";
 
@@ -65,7 +65,6 @@ pub fn copy_selection(
                     }
                 })
                 .collect();
-            entry.clone = None;
             entry
         })
         .collect();
@@ -83,37 +82,34 @@ pub fn paste(
     if clip.nodes.is_empty() {
         return Ok(Vec::new());
     }
-    let (min_x, min_y) = clip
-        .nodes
-        .iter()
-        .fold((f32::MAX, f32::MAX), |(mx, my), n| {
-            (mx.min(n.pos.0), my.min(n.pos.1))
-        });
+    let (min_x, min_y) = clip.nodes.iter().fold((f32::MAX, f32::MAX), |(mx, my), n| {
+        (mx.min(n.pos.0), my.min(n.pos.1))
+    });
 
     let mut by_path: std::collections::BTreeMap<String, NodeId> = std::collections::BTreeMap::new();
     by_path.insert(String::new(), parent);
 
     let mut created = Vec::new();
     for entry in &clip.nodes {
-        let (parent_path, name) = split_relative(&entry.path)
-            .ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?;
+        let (parent_path, name) =
+            split_relative(&entry.path).ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?;
         let parent_id = *by_path
             .get(&parent_path)
             .ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?;
-        let def = registry
-            .get(&entry.op)
-            .ok_or_else(|| ProjectError::UnknownOp {
+        let resolved = crate::missing::resolve_op_def(registry, &entry.op).ok_or_else(|| {
+            ProjectError::UnknownOp {
                 op: entry.op.clone(),
                 path: entry.path.clone(),
-            })?
-            .clone();
+            }
+        })?;
         let id = graph
-            .create(parent_id, &def, Some(&name))
+            .create(parent_id, resolved.def, Some(&name))
             .map_err(|_| ProjectError::BadPath(entry.path.clone()))?;
         let mut entry = entry.clone();
         entry.pos.0 += origin[0] - min_x;
         entry.pos.1 += origin[1] - min_y;
         restore_node(graph, id, &entry);
+        crate::missing::finish_missing_substitution(graph, id, &resolved);
         by_path.insert(entry.path.clone(), id);
         created.push(id);
     }
@@ -124,10 +120,12 @@ pub fn paste(
             if src_path.is_empty() {
                 continue;
             }
-            let src = *by_path.get(src_path).ok_or_else(|| ProjectError::DanglingInput {
-                path: entry.path.clone(),
-                input: src_path.clone(),
-            })?;
+            let src = *by_path
+                .get(src_path)
+                .ok_or_else(|| ProjectError::DanglingInput {
+                    path: entry.path.clone(),
+                    input: src_path.clone(),
+                })?;
             graph
                 .connect(src, dst, i)
                 .map_err(|_| ProjectError::DanglingInput {
@@ -214,42 +212,5 @@ fn split_relative(path: &str) -> Option<(String, String)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Graph;
-
-    #[test]
-    fn split_relative_accepts_single_name() {
-        assert_eq!(split_relative("in1"), Some(("".into(), "in1".into())));
-        assert_eq!(
-            split_relative("geo/in1"),
-            Some(("geo".into(), "in1".into()))
-        );
-    }
-
-    #[test]
-    fn copy_paste_keeps_internal_wires() {
-        let reg = crate::test_ops::registry();
-        let mut graph = Graph::new();
-        let root = graph.root();
-        let a = graph
-            .create(root, reg.get("pass").unwrap(), Some("a"))
-            .unwrap();
-        let b = graph
-            .create(root, reg.get("pass").unwrap(), Some("b"))
-            .unwrap();
-        graph.connect(a, b, 0).unwrap();
-
-        let clip = copy_selection(&graph, root, &[a, b], &reg);
-        assert_eq!(clip.nodes.len(), 2);
-
-        let pasted = paste(&mut graph, root, &reg, &clip, [400.0, 100.0]).unwrap();
-        assert_eq!(pasted.len(), 2);
-        let wired = pasted
-            .iter()
-            .find(|id| graph.node(**id).inputs[0].is_some())
-            .copied()
-            .unwrap();
-        assert!(graph.node(wired).inputs[0].is_some());
-    }
-}
+#[path = "tests/clipboard__tests.rs"]
+mod tests;

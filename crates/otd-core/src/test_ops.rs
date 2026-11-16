@@ -75,6 +75,25 @@ pub fn registry() -> OpRegistry {
         params: no_params,
         connector: Connector::None,
     });
+    for (missing, family) in [
+        (crate::missing::MISSING_CHOP, Family::Chop),
+        (crate::missing::MISSING_TOP, Family::Top),
+        (crate::missing::MISSING_SOP, Family::Sop),
+        (crate::missing::MISSING_DAT, Family::Dat),
+        (crate::missing::MISSING_COMP, Family::Comp),
+    ] {
+        r.register(OpDef {
+            type_name: missing,
+            input_families: &[],
+            label: "Missing",
+            family,
+            inputs: if family == Family::Comp { &[] } else { &["in"] },
+            summary: "placeholder for tests",
+            time_dependent: false,
+            params: crate::missing::missing_params,
+            connector: Connector::None,
+        });
+    }
     r
 }
 
@@ -88,7 +107,12 @@ pub struct CountingCooker {
 }
 
 impl Cooker for CountingCooker {
-    fn cook(&mut self, graph: &Graph, id: NodeId, _ctx: &CookContext) -> Result<crate::cook::CookOutput, CookError> {
+    fn cook(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        _ctx: &CookContext,
+    ) -> Result<crate::cook::CookOutput, CookError> {
         self.log.push(graph.path(id));
         Ok(crate::cook::CookOutput::Updated)
     }

@@ -1,140 +1,21 @@
-//! The text project format.
-//!
-//! PLAN.md calls a git-diffable project format a headline feature, so it is
-//! designed here rather than retrofitted. Two decisions carry that:
-//!
-//!  * **Nodes are a flat, path-sorted list**, not a nested tree. Adding a node
-//!    to a component appends one block instead of re-indenting a subtree.
-//!  * **Everything defaultable is omitted.** A freshly created operator writes
-//!    only its path, type and position; parameters appear in the file only
-//!    once the artist has touched them. Diffs then read as a list of the
-//!    actual authoring decisions.
-//!
-//! Wiring is stored on the *consumer* as input paths, which keeps a rewire to
-//! a single changed line.
-
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::graph::{Graph, NodeFlags, NodeId, OpRegistry};
-use crate::param::Param;
+use crate::graph::{Graph, NodeId, OpRegistry};
+use crate::value::Value;
 
-pub const FORMAT_ID: &str = "opentouchdesigner-project";
-pub const FORMAT_VERSION: u32 = 1;
-
-fn normalize_legacy_comp_op(op: &str) -> &str {
-    if op == "container" {
-        "baseCOMP"
-    } else {
-        op
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProjectError {
-    #[error("not an OpenTouchDesigner project file")]
-    NotAProject,
-    #[error("project format version {0} is newer than this build understands ({FORMAT_VERSION})")]
-    TooNew(u32),
-    #[error("unknown operator type `{op}` at {path}")]
-    UnknownOp { op: String, path: String },
-    #[error("{path} refers to input `{input}`, which does not exist")]
-    DanglingInput { path: String, input: String },
-    #[error("bad path `{0}`")]
-    BadPath(String),
-    #[error("{path}: could not read component file `{file}`: {reason}")]
-    External {
-        path: String,
-        file: String,
-        reason: String,
-    },
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("parse error: {0}")]
-    Parse(String),
-    #[error("serialise error: {0}")]
-    Serialise(String),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NodeEntry {
-    pub path: String,
-    pub op: String,
-    #[serde(default, skip_serializing_if = "is_origin")]
-    pub pos: (f32, f32),
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub inputs: Vec<String>,
-    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
-    pub params: IndexMap<String, Param>,
-    #[serde(default, skip_serializing_if = "is_default_flags")]
-    pub flags: NodeFlags,
-    /// This component's network lives in a `.otdc` file. When set, the
-    /// project stores the reference and the instance's settings; the file
-    /// stores everything inside.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external: Option<String>,
-    /// This component tracks another one in the same project.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clone: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub callback_owner: Option<String>,
-}
-
-fn is_origin(p: &(f32, f32)) -> bool {
-    p.0 == 0.0 && p.1 == 0.0
-}
-fn is_default_flags(f: &NodeFlags) -> bool {
-    *f == NodeFlags::default()
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ProjectSettings {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub main_perform_window: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub main_perform_ui: String,
-    #[serde(default)]
-    pub start_in_perform_mode: bool,
-    #[serde(default)]
-    pub designer_custom_position: bool,
-    #[serde(default)]
-    pub designer_x: f32,
-    #[serde(default)]
-    pub designer_y: f32,
-    #[serde(default = "default_designer_w")]
-    pub designer_w: f32,
-    #[serde(default = "default_designer_h")]
-    pub designer_h: f32,
-}
-
-fn default_designer_w() -> f32 {
-    1600.0
-}
-
-fn default_designer_h() -> f32 {
-    980.0
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Project {
-    pub format: String,
-    pub version: u32,
-    #[serde(default = "default_fps")]
-    pub fps: f64,
-    pub nodes: Vec<NodeEntry>,
-    #[serde(default)]
-    pub settings: ProjectSettings,
-}
-
-fn default_fps() -> f64 {
-    60.0
-}
+use super::types::{
+    FORMAT_ID, FORMAT_VERSION, NodeEntry, Project, ProjectEditor, ProjectError, ProjectSettings,
+    PROJECT_SAMPLE_RATE_DEFAULT, param_matches_default,
+};
 
 impl Project {
     /// Snapshot a graph. Parameters left at their operator defaults are not
     /// written — see the module docs.
+    ///
+    /// The editor camera is not on the graph. A caller that rewrites an
+    /// existing file copies [`Project::editor`] across after this.
     pub fn from_graph(graph: &Graph, registry: &OpRegistry, fps: f64) -> Project {
         // BTreeMap gives a deterministic, path-sorted file, and guarantees a
         // parent is written before its children on load.
@@ -157,13 +38,15 @@ impl Project {
             format: FORMAT_ID.to_string(),
             version: FORMAT_VERSION,
             fps,
+            sample_rate: PROJECT_SAMPLE_RATE_DEFAULT,
             nodes: entries.into_values().collect(),
             settings: ProjectSettings::default(),
+            editor: ProjectEditor::default(),
         }
     }
 
-    /// Rebuild a graph. Fails loudly on unknown operators and dangling wires
-    /// rather than silently dropping a patch's connections.
+    /// Rebuild a graph. Unknown operator types become family placeholders;
+    /// see [`crate::missing`]. Fails on dangling wires, not on missing types.
     pub fn to_graph(&self, registry: &OpRegistry) -> Result<Graph, ProjectError> {
         self.to_graph_relative_to(registry, None)
     }
@@ -211,18 +94,19 @@ impl Project {
                     .get(&parent_path)
                     .ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?
             };
-            let op = normalize_legacy_comp_op(&entry.op);
-            let def = registry
-                .get(op)
-                .ok_or_else(|| ProjectError::UnknownOp {
-                    op: entry.op.clone(),
-                    path: entry.path.clone(),
+            let resolved =
+                crate::missing::resolve_op_def(registry, &entry.op).ok_or_else(|| {
+                    ProjectError::UnknownOp {
+                        op: entry.op.clone(),
+                        path: entry.path.clone(),
+                    }
                 })?;
             let id = graph
-                .create(parent, def, Some(&name))
+                .create(parent, resolved.def, Some(&name))
                 .map_err(|_| ProjectError::BadPath(entry.path.clone()))?;
 
             restore_node(&mut graph, id, entry);
+            crate::missing::finish_missing_substitution(&mut graph, id, &resolved);
 
             // An external component's network is not in this file: read it
             // from the one it names. A missing file is an error rather than a
@@ -241,6 +125,12 @@ impl Project {
                     graph.node_mut(id).callback_owner = Some(owner_id);
                 }
             }
+            if let Some(dock_path) = &entry.docked_to {
+                if let Some(&dock_id) = by_path.get(dock_path) {
+                    graph.node_mut(id).docked_to = Some(dock_id);
+                }
+            }
+            graph.node_mut(id).dock_shown = entry.dock_shown;
             by_path.insert(entry.path.clone(), id);
         }
 
@@ -268,6 +158,10 @@ impl Project {
 
         // Clones can only be resolved once every node exists.
         graph.sync_clones(registry);
+
+        for id in graph.walk() {
+            graph.sync_multi_inputs(id);
+        }
 
         for id in graph.walk() {
             if graph.node(id).family == crate::graph::Family::Comp {
@@ -321,7 +215,11 @@ pub(crate) fn node_entry(graph: &Graph, id: NodeId, registry: &OpRegistry) -> No
         // A custom parameter has no operator definition behind it, so it is
         // written in full — it *is* the definition.
         if param.custom {
-            params.insert(key.clone(), param.clone());
+            let mut p = param.clone();
+            if p.is_path_ref() {
+                p.op_ref = true;
+            }
+            params.insert(key.clone(), p);
         } else if !is_default {
             // Labels, ranges and menus belong to the operator definition, not
             // to the project. Writing them would put UI metadata in every
@@ -329,6 +227,8 @@ pub(crate) fn node_entry(graph: &Graph, id: NodeId, registry: &OpRegistry) -> No
             let mut param = param.clone();
             param.label = String::new();
             param.range = None;
+            param.logarithmic = false;
+            param.log_floor = None;
             param.menu = None;
             params.insert(key.clone(), param);
         }
@@ -342,17 +242,18 @@ pub(crate) fn node_entry(graph: &Graph, id: NodeId, registry: &OpRegistry) -> No
 
     NodeEntry {
         path,
-        op: node.op_type.clone(),
+        op: crate::missing::node_entry_op_type(node),
         pos: (node.pos[0], node.pos[1]),
+        size: node.size.map(|s| (s[0], s[1])),
         // Trailing unconnected inputs carry no information.
         inputs: trim_trailing_empty(inputs),
         params,
         flags: node.flags,
         external: node.external.clone(),
         clone: node.clone_of.clone(),
-        callback_owner: node
-            .callback_owner
-            .map(|owner| graph.path(owner)),
+        callback_owner: node.callback_owner.map(|owner| graph.path(owner)),
+        docked_to: node.docked_to.map(|owner| graph.path(owner)),
+        dock_shown: node.dock_shown,
     }
 }
 
@@ -360,6 +261,7 @@ pub(crate) fn node_entry(graph: &Graph, id: NodeId, registry: &OpRegistry) -> No
 pub(crate) fn restore_node(graph: &mut Graph, id: NodeId, entry: &NodeEntry) {
     let node = graph.node_mut(id);
     node.pos = [entry.pos.0, entry.pos.1];
+    node.size = entry.size.map(|s| [s.0, s.1]);
     node.flags = entry.flags;
     node.clone_of = entry.clone.clone();
     for (key, saved) in &entry.params {
@@ -367,6 +269,9 @@ pub(crate) fn restore_node(graph: &mut Graph, id: NodeId, entry: &NodeEntry) {
         // including its type, label and range.
         if saved.custom {
             let mut saved = saved.clone();
+            if saved.op_ref {
+                saved = saved.into_path_ref();
+            }
             saved.recompile();
             node.params.insert(key.clone(), saved);
             continue;
@@ -374,8 +279,19 @@ pub(crate) fn restore_node(graph: &mut Graph, id: NodeId, entry: &NodeEntry) {
         if let Some(slot) = node.params.get_mut(key) {
             let mut saved = saved.clone();
             // Keep the operator's declared type authoritative; a hand-edited
-            // file cannot turn a float into a string.
-            if !slot.value.same_type_as(&saved.value) {
+            // file cannot turn a float into a string. Menu choices are stored
+            // as either a string or a select — the parameter panel writes a
+            // select into menus the operator declared as a string — so keep
+            // the chosen text instead of falling back to the default.
+            if (slot.menu.is_some() || matches!(slot.value, Value::Select(_)))
+                && matches!(saved.value, Value::Str(_) | Value::Select(_))
+            {
+                let chosen = saved.value.as_str();
+                saved.value = match &slot.value {
+                    Value::Select(_) => Value::Select(chosen),
+                    _ => Value::Str(chosen),
+                };
+            } else if !slot.value.same_type_as(&saved.value) {
                 saved.value = slot.value.clone();
             }
             saved.label = slot.label.clone();
@@ -388,15 +304,22 @@ pub(crate) fn restore_node(graph: &mut Graph, id: NodeId, entry: &NodeEntry) {
                 saved = saved.into_path_ref();
             }
             saved.range = slot.range.or(saved.range);
+            saved.logarithmic = slot.logarithmic;
+            saved.log_floor = slot.log_floor;
             saved.menu = slot.menu.clone().or(saved.menu);
+            // Which hardware list fills the device menu is definition
+            // metadata, same as the menu itself. It is not in the file.
+            saved = saved.with_audio_device_list(slot.audio_device_list());
+            if slot.is_file_ref() {
+                saved = saved.as_file_ref();
+            }
+            if slot.is_folder_ref() {
+                saved = saved.as_folder_ref();
+            }
             saved.recompile();
             *slot = saved;
         }
     }
-}
-
-fn param_matches_default(a: &Param, b: &Param) -> bool {
-    a.mode == b.mode && a.value == b.value && a.expression == b.expression && a.source == b.source
 }
 
 fn trim_trailing_empty(mut v: Vec<String>) -> Vec<String> {
@@ -415,115 +338,4 @@ fn split_path(path: &str) -> Option<(String, String)> {
         return None;
     }
     Some((trimmed[..idx].to_string(), name.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_ops::{TEST_PASS, registry};
-    use crate::value::Value;
-
-    fn sample() -> (Graph, OpRegistry) {
-        let reg = registry();
-        let mut g = Graph::new();
-        let root = g.root();
-        let comp = g.create(root, reg.get("container").unwrap(), None).unwrap();
-        let a = g.create(comp, reg.get("pass").unwrap(), None).unwrap();
-        let b = g.create(root, reg.get("comp2").unwrap(), None).unwrap();
-        let m = g.create(root, reg.get("movie").unwrap(), None).unwrap();
-        g.connect(m, b, 0).unwrap();
-        g.set_param(a, TEST_PASS, Value::Float(0.375)).unwrap();
-        g.set_expression(b, TEST_PASS, "sin(absTime) * 0.5")
-            .unwrap();
-        g.node_mut(a).pos = [120.0, -40.0];
-        g.node_mut(b).flags.bypass = true;
-        (g, reg)
-    }
-
-    #[test]
-    fn round_trips_through_text() {
-        let (g, reg) = sample();
-        let text = Project::from_graph(&g, &reg, 60.0).to_ron().unwrap();
-        let g2 = Project::from_ron(&text).unwrap().to_graph(&reg).unwrap();
-
-        assert_eq!(g.len(), g2.len());
-        for id in g.walk() {
-            let path = g.path(id);
-            let id2 = g2.find(&path).unwrap_or_else(|| panic!("missing {path}"));
-            let (n, n2) = (g.node(id), g2.node(id2));
-            assert_eq!(n.op_type, n2.op_type);
-            assert_eq!(n.pos, n2.pos);
-            assert_eq!(n.flags, n2.flags);
-            for (k, p) in &n.params {
-                let p2 = &n2.params[k];
-                assert_eq!(p.mode, p2.mode, "{path}.{k} mode");
-                assert_eq!(p.value, p2.value, "{path}.{k} value");
-                assert_eq!(p.expression, p2.expression, "{path}.{k} expression");
-            }
-            for (i, slot) in n.inputs.iter().enumerate() {
-                assert_eq!(
-                    slot.map(|s| g.path(s)),
-                    n2.inputs[i].map(|s| g2.path(s)),
-                    "{path} input {i}"
-                );
-            }
-        }
-
-        // Second round trip must be byte-identical: no churn in git.
-        let text2 = Project::from_graph(&g2, &reg, 60.0).to_ron().unwrap();
-        assert_eq!(text, text2);
-    }
-
-    #[test]
-    fn expressions_are_live_again_after_loading() {
-        let (g, reg) = sample();
-        let text = Project::from_graph(&g, &reg, 60.0).to_ron().unwrap();
-        let g2 = Project::from_ron(&text).unwrap().to_graph(&reg).unwrap();
-        let b = g2.find("/comp1").unwrap();
-        assert!(
-            g2.node(b).has_time_dependent_param(),
-            "a loaded expression must re-arm time dependence"
-        );
-    }
-
-    #[test]
-    fn untouched_parameters_are_not_written() {
-        let (g, reg) = sample();
-        let text = Project::from_graph(&g, &reg, 60.0).to_ron().unwrap();
-        let movie_block = text
-            .lines()
-            .skip_while(|l| !l.contains("path: \"/movie1\""))
-            .take(4)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            !movie_block.contains("params"),
-            "default params leaked into the file:\n{text}"
-        );
-    }
-
-    #[test]
-    fn an_unknown_operator_is_an_error_not_a_silent_drop() {
-        let (g, reg) = sample();
-        let text = Project::from_graph(&g, &reg, 60.0)
-            .to_ron()
-            .unwrap()
-            .replace("\"movie\"", "\"nonesuch\"");
-        let err = Project::from_ron(&text)
-            .unwrap()
-            .to_graph(&reg)
-            .unwrap_err();
-        assert!(matches!(err, ProjectError::UnknownOp { .. }), "{err}");
-    }
-
-    #[test]
-    fn a_future_format_version_is_refused() {
-        let (g, reg) = sample();
-        let mut p = Project::from_graph(&g, &reg, 60.0);
-        p.version = FORMAT_VERSION + 1;
-        assert!(matches!(
-            p.to_graph(&reg).unwrap_err(),
-            ProjectError::TooNew(_)
-        ));
-    }
 }

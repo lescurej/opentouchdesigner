@@ -12,6 +12,10 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     Str(String),
+    /// A menu choice. The string is the selected *value*; the labels live on
+    /// the parameter as [`crate::SelectOption`]s. This is its own type so a
+    /// select cannot collapse into a text field.
+    Select(String),
     Vec2([f64; 2]),
     Vec3([f64; 3]),
     Vec4([f64; 4]),
@@ -24,6 +28,7 @@ impl Value {
             Value::Int(_) => "int",
             Value::Bool(_) => "bool",
             Value::Str(_) => "str",
+            Value::Select(_) => "select",
             Value::Vec2(_) => "vec2",
             Value::Vec3(_) => "vec3",
             Value::Vec4(_) => "vec4",
@@ -43,7 +48,7 @@ impl Value {
                     0.0
                 }
             }
-            Value::Str(s) => s.trim().parse().unwrap_or(0.0),
+            Value::Str(s) | Value::Select(s) => s.trim().parse().unwrap_or(0.0),
             Value::Vec2(v) => v[0],
             Value::Vec3(v) => v[0],
             Value::Vec4(v) => v[0],
@@ -64,14 +69,14 @@ impl Value {
     pub fn as_bool(&self) -> bool {
         match self {
             Value::Bool(v) => *v,
-            Value::Str(s) => !s.is_empty() && s != "0" && s != "false",
+            Value::Str(s) | Value::Select(s) => !s.is_empty() && s != "0" && s != "false",
             other => other.as_f64() != 0.0,
         }
     }
 
     pub fn as_str(&self) -> String {
         match self {
-            Value::Str(s) => s.clone(),
+            Value::Str(s) | Value::Select(s) => s.clone(),
             Value::Float(v) => v.to_string(),
             Value::Int(v) => v.to_string(),
             Value::Bool(v) => v.to_string(),
@@ -108,6 +113,7 @@ impl Value {
             Value::Int(_) => Value::Int(v.round() as i64),
             Value::Bool(_) => Value::Bool(v != 0.0),
             Value::Str(_) => Value::Str(v.to_string()),
+            Value::Select(_) => Value::Select(v.to_string()),
             Value::Vec2(_) => Value::Vec2([v; 2]),
             Value::Vec3(_) => Value::Vec3([v; 3]),
             Value::Vec4(_) => Value::Vec4([v; 4]),

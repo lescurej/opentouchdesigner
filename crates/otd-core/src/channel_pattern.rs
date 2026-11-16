@@ -148,16 +148,12 @@ fn expand_single_token(token: &str, count: usize) -> Vec<String> {
         return expand_component_pattern(&p);
     }
     if let Some(NamePattern::Numbered(pat)) = parse_name_pattern(token) {
-        return (0..count)
-            .map(|i| channel_name_at(&pat, i))
-            .collect();
+        return (0..count).map(|i| channel_name_at(&pat, i)).collect();
     }
     if count == 1 {
         vec![token.to_string()]
     } else {
-        (0..count)
-            .map(|i| format!("{token}{}", i + 1))
-            .collect()
+        (0..count).map(|i| format!("{token}{}", i + 1)).collect()
     }
 }
 
@@ -273,102 +269,41 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn count_from_closed_range() {
-        assert_eq!(channel_count_from_name("chan[1-4]"), 4);
-        assert_eq!(channel_count_from_name("chan[1-16]"), 16);
-        assert_eq!(channel_count_from_name("wave[10]"), 1);
-        assert_eq!(channel_count_from_name("noise"), 1);
-        assert_eq!(channel_count_from_name("chan[1-]"), 1);
-        assert_eq!(channel_count_from_name("t[xyz]"), 3);
-    }
-
-    #[test]
-    fn component_pattern_expands_translate_channels() {
-        assert_eq!(
-            expand_channel_names("t[xyz]", 3),
-            vec!["tx", "ty", "tz"]
-        );
-        assert_eq!(
-            expand_channel_names("r[xyz]", 3),
-            vec!["rx", "ry", "rz"]
-        );
-        assert_eq!(expand_channel_names("s[xy]", 2), vec!["sx", "sy"]);
-        assert_eq!(
-            expand_channel_name_field("t[xyz]"),
-            vec!["tx", "ty", "tz"]
-        );
-    }
-
-    #[test]
-    fn expand_field_whitespace_and_range() {
-        assert_eq!(
-            expand_channel_name_field("chan[1-3]"),
-            vec!["chan1", "chan2", "chan3"]
-        );
-        assert_eq!(
-            expand_channel_name_field("tx ty tz"),
-            vec!["tx", "ty", "tz"]
-        );
-        assert_eq!(
-            expand_channel_name_field("chan[1-2] tail"),
-            vec!["chan1", "chan2", "tail"]
-        );
-        assert_eq!(
-            expand_channel_name_field("t[xyz] bass"),
-            vec!["tx", "ty", "tz", "bass"]
-        );
-    }
-
-    #[test]
-    fn expands_closed_range() {
-        assert_eq!(
-            expand_channel_names("chan[1-4]", 4),
-            vec!["chan1", "chan2", "chan3", "chan4"]
-        );
-    }
-
-    #[test]
-    fn expands_past_range_end_for_extra_channels() {
-        assert_eq!(
-            expand_channel_names("chan[1-3]", 5),
-            vec!["chan1", "chan2", "chan3", "chan4", "chan5"]
-        );
-    }
-
-    #[test]
-    fn select_pattern_matches_range() {
-        assert!(pattern_matches_channel("chan[1-3]", "chan2"));
-        assert!(!pattern_matches_channel("chan[1-3]", "chan4"));
-        assert!(pattern_matches_channel("tx*", "tx1"));
-        assert!(pattern_matches_channel("t[xyz]", "ty"));
-        assert!(!pattern_matches_channel("t[xyz]", "t1"));
-    }
-
-    #[test]
-    fn space_separates_channel_names() {
-        assert_eq!(channel_count_from_name("chan1 chan2"), 2);
-        assert_eq!(
-            expand_channel_names("chan1 chan2", 2),
-            vec!["chan1", "chan2"]
-        );
-        assert_eq!(
-            expand_channel_names("chan[1-2] bass", 3),
-            vec!["chan1", "chan2", "bass"]
-        );
-    }
-
-    #[test]
-    fn rename_to_at_numbered() {
-        assert_eq!(rename_to_at("out[1-]", 0, "x"), "out1");
-        assert_eq!(rename_to_at("out[1-]", 2, "x"), "out3");
-        assert_eq!(rename_to_at("a b", 1, "x"), "b");
-        assert_eq!(rename_to_at("", 0, "keep"), "keep");
-        assert_eq!(rename_to_at("t[xyz]", 0, "x"), "tx");
-        assert_eq!(rename_to_at("t[xyz]", 2, "x"), "tz");
-    }
+pub fn operator_reference_is_pattern(reference: &str) -> bool {
+    let reference = reference.trim();
+    reference.contains('*')
+        || reference.contains('?')
+        || reference.contains('[')
+        || reference.contains('^')
 }
+
+pub fn pattern_matches_operator(pattern: &str, name: &str, path: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() || pattern == "*" {
+        return false;
+    }
+    if pattern_matches_channel(pattern, name) {
+        return true;
+    }
+    let path_rel = path.trim_start_matches('/');
+    if glob_match(pattern, name) || glob_match(pattern, path_rel) {
+        return true;
+    }
+    if let Some(tail) = pattern.strip_prefix("*/") {
+        if tail.is_empty() {
+            return false;
+        }
+        if name == tail
+            || pattern_matches_channel(tail, name)
+            || path.ends_with(&format!("/{tail}"))
+            || glob_match(&format!("*{tail}"), name)
+        {
+            return true;
+        }
+    }
+    pattern_matches_channel(pattern, path_rel)
+}
+
+#[cfg(test)]
+#[path = "tests/channel_pattern__tests.rs"]
+mod tests;

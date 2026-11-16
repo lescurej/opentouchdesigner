@@ -33,8 +33,7 @@ pub enum WebSocketSend {
 
 impl ScriptQueue {
     pub fn queue_param(&mut self, path: impl Into<String>, param: impl Into<String>, value: Value) {
-        self.edits
-            .push(ParamEdit::new(path, param, value));
+        self.edits.push(ParamEdit::new(path, param, value));
     }
 
     pub fn queue_recook(&mut self, path: impl Into<String>, deferred: bool) {
@@ -83,8 +82,6 @@ pub trait ScriptActions {
 
 thread_local! {
     static SCRIPT_QUEUE: RefCell<ScriptQueue> = RefCell::new(ScriptQueue::default());
-    static SYNC_COOK_FLUSH: RefCell<Option<Box<dyn FnMut(&[String]) -> Result<(), String>>>> =
-        RefCell::new(None);
 }
 
 struct QueueScriptActions;
@@ -107,8 +104,7 @@ impl ScriptActions for QueueScriptActions {
 
     fn udp_send(&self, path: &str, payload: &[u8]) -> Result<(), String> {
         SCRIPT_QUEUE.with(|q| {
-            q.borrow_mut()
-                .queue_udp_send(path, payload.to_vec());
+            q.borrow_mut().queue_udp_send(path, payload.to_vec());
         });
         Ok(())
     }
@@ -188,24 +184,18 @@ pub fn take_queued_ws_sends_for(server_path: &str) -> Vec<WebSocketSend> {
     })
 }
 
-pub fn set_sync_cook_flush(f: Option<Box<dyn FnMut(&[String]) -> Result<(), String>>>) {
-    SYNC_COOK_FLUSH.with(|slot| *slot.borrow_mut() = f);
-}
-
 pub fn flush_pending_sync_recooks() -> Result<(), String> {
     let paths = SCRIPT_QUEUE.with(|q| q.borrow_mut().take_sync_recooks());
     if paths.is_empty() {
         return Ok(());
     }
-    SYNC_COOK_FLUSH.with(|slot| {
-        let mut guard = slot.borrow_mut();
-        if let Some(f) = guard.as_mut() {
-            f(&paths)
-        } else {
+    match crate::cook_session::flush_sync(&paths) {
+        Ok(()) => Ok(()),
+        Err(_) => {
             for path in paths {
                 SCRIPT_QUEUE.with(|q| q.borrow_mut().recooks_deferred.push(path));
             }
             Ok(())
         }
-    })
+    }
 }

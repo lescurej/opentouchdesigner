@@ -8,10 +8,10 @@
 //!    project stores a path and the settings of the instance; the file stores
 //!    the network. Two projects using the same component share one file, and
 //!    a change to it is a diff in one place.
-//!  * A **clone** tracks another component in the same project. Its contents
-//!    are replaced by copies of the master's whenever the master changes,
-//!    while its own parameter values are left alone — which is the point, or
-//!    every instance would be identical.
+//!  * A **clone** tracks another component in the same project. When the
+//!    master changes, only the network *inside* the clone is re-copied; the
+//!    clone COMP's own custom parameters stay on the instance and are not
+//!    re-synced from the master after the first expand.
 //!
 //! Both preserve the instance's own settings across a re-expansion. Losing
 //! the values an artist dialled in because a shared definition changed would
@@ -97,6 +97,18 @@ impl Component {
         comp: NodeId,
         registry: &OpRegistry,
     ) -> Result<(), ProjectError> {
+        self.expand_into_with(graph, comp, registry, true)
+    }
+
+    /// Like [`expand_into`], but when `sync_custom_params` is false only the
+    /// child network is replaced — used when a clone follows its master.
+    pub fn expand_into_with(
+        &self,
+        graph: &mut Graph,
+        comp: NodeId,
+        registry: &OpRegistry,
+        sync_custom_params: bool,
+    ) -> Result<(), ProjectError> {
         if self.format != COMPONENT_FORMAT_ID {
             return Err(ProjectError::NotAProject);
         }
@@ -104,11 +116,33 @@ impl Component {
             return Err(ProjectError::TooNew(self.version));
         }
 
-        let kept: Vec<(String, Param)> = graph
+        let kept: Vec<(String, Param)> = if sync_custom_params {
+            graph
+                .get(comp)
+                .map(|n| {
+                    n.custom_params()
+                        .map(|(k, p)| (k.clone(), p.clone()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Wires from the parent network into this component are not part of the
+        // saved snapshot. Removing In operators runs sync_connectors and can
+        // clear them while children are torn down, so remember them first.
+        let external: Vec<(String, Option<NodeId>, usize)> = graph
             .get(comp)
             .map(|n| {
-                n.custom_params()
-                    .map(|(k, p)| (k.clone(), p.clone()))
+                n.input_labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, label)| {
+                        let src = n.inputs.get(i).copied().flatten();
+                        let out = n.input_source_out.get(i).copied().unwrap_or(0);
+                        (label.clone(), src, out)
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -117,20 +151,21 @@ impl Component {
             let _ = graph.remove(child);
         }
 
-        // The API first, so expressions inside can resolve `parent.x` as soon
-        // as they are created.
-        for (key, param) in &self.params {
-            let mut param = param.clone();
-            if let Some((_, existing)) = kept.iter().find(|(k, _)| k == key) {
-                if existing.value.same_type_as(&param.value) {
-                    param.value = existing.value.clone();
-                    param.mode = existing.mode;
-                    param.expression = existing.expression.clone();
-                    param.source = existing.source.clone();
-                    param.recompile();
+        if sync_custom_params {
+            // The API first, so expressions inside can resolve `parent.x` as soon
+            // as they are created.
+            for (key, param) in &self.params {
+                let mut param = param.clone();
+                if let Some((_, existing)) = kept.iter().find(|(k, _)| k == key) {
+                    if existing.value.same_type_as(&param.value) {
+                        param.value = existing.value.clone();
+                        param.mode = existing.mode;
+                        param.expression = existing.expression.clone();
+                        param.recompile();
+                    }
                 }
+                graph.add_custom_param(comp, key, param);
             }
-            graph.add_custom_param(comp, key, param);
         }
 
         let mut by_path: BTreeMap<String, NodeId> = BTreeMap::new();
@@ -142,17 +177,18 @@ impl Component {
             let parent = *by_path
                 .get(&parent_path)
                 .ok_or_else(|| ProjectError::BadPath(entry.path.clone()))?;
-            let def = registry
-                .get(&entry.op)
-                .ok_or_else(|| ProjectError::UnknownOp {
-                    op: entry.op.clone(),
-                    path: entry.path.clone(),
-                })?
-                .clone();
+            let resolved =
+                crate::missing::resolve_op_def(registry, &entry.op).ok_or_else(|| {
+                    ProjectError::UnknownOp {
+                        op: entry.op.clone(),
+                        path: entry.path.clone(),
+                    }
+                })?;
             let id = graph
-                .create(parent, &def, Some(&name))
+                .create(parent, resolved.def, Some(&name))
                 .map_err(|_| ProjectError::BadPath(entry.path.clone()))?;
             restore_node(graph, id, entry);
+            crate::missing::finish_missing_substitution(graph, id, &resolved);
             by_path.insert(entry.path.clone(), id);
         }
 
@@ -174,6 +210,19 @@ impl Component {
                         path: entry.path.clone(),
                         input: src_path.clone(),
                     })?;
+            }
+        }
+
+        graph.sync_connectors(comp);
+        for (label, src, src_out) in external {
+            let Some(idx) = graph
+                .get(comp)
+                .and_then(|n| n.input_labels.iter().position(|l| l == &label))
+            else {
+                continue;
+            };
+            if let Some(src) = src {
+                let _ = graph.connect_from_output(src, src_out, comp, idx);
             }
         }
         Ok(())
@@ -243,8 +292,12 @@ impl Graph {
 
     /// Make `comp` track `master`.
     pub fn set_clone(&mut self, comp: NodeId, master_path: Option<&str>) {
+        let new = master_path.map(|s| s.to_string());
         if let Some(n) = self.get_mut_raw(comp) {
-            n.clone_of = master_path.map(|s| s.to_string());
+            if n.clone_of == new {
+                return;
+            }
+            n.clone_of = new;
             n.clone_synced_at = 0;
         }
     }
@@ -295,7 +348,13 @@ impl Graph {
             let Some(component) = Component::from_graph(self, master, registry) else {
                 continue;
             };
-            if component.expand_into(self, id, registry).is_ok() {
+            // First expand copies the master's API once; later syncs touch only
+            // the network inside the clone.
+            let sync_params = self.get(id).is_some_and(|n| n.clone_synced_at == 0);
+            if component
+                .expand_into_with(self, id, registry, sync_params)
+                .is_ok()
+            {
                 if let Some(n) = self.get_mut_raw(id) {
                     n.clone_synced_at = revision;
                 }
@@ -318,120 +377,5 @@ impl Graph {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_ops::registry as test_registry;
-    use crate::value::Value;
-
-    fn build(graph: &mut Graph, reg: &OpRegistry, parent: NodeId, op: &str, name: &str) -> NodeId {
-        let def = reg.get(op).unwrap().clone();
-        graph.create(parent, &def, Some(name)).unwrap()
-    }
-
-    fn master(graph: &mut Graph, reg: &OpRegistry, name: &str) -> NodeId {
-        let root = graph.root();
-        let comp = build(graph, reg, root, "container", name);
-        graph.add_custom_param(comp, "gain", Param::float(1.0));
-        let a = build(graph, reg, comp, "pass", "a");
-        let b = build(graph, reg, comp, "pass", "b");
-        graph.connect(a, b, 0).unwrap();
-        comp
-    }
-
-    #[test]
-    fn a_component_round_trips_through_its_own_file() {
-        let reg = test_registry();
-        let mut graph = Graph::new();
-        let comp = master(&mut graph, &reg, "rig");
-        graph.set_param(comp, "gain", Value::Float(2.0)).unwrap();
-
-        let saved = Component::from_graph(&graph, comp, &reg).unwrap();
-        let text = saved.to_ron().unwrap();
-        // Paths inside the file are relative, so the same component can be
-        // dropped in anywhere.
-        assert!(text.contains("\"/a\""), "{text}");
-        assert!(!text.contains("/rig/"), "{text}");
-
-        let reloaded = Component::from_ron(&text).unwrap();
-        let mut other = Graph::new();
-        let root = other.root();
-        let target = build(&mut other, &reg, root, "container", "elsewhere");
-        reloaded.expand_into(&mut other, target, &reg).unwrap();
-
-        assert!(other.find("/elsewhere/a").is_some());
-        assert_eq!(
-            other.node(other.find("/elsewhere/b").unwrap()).inputs[0],
-            other.find("/elsewhere/a")
-        );
-        assert_eq!(
-            other.node(target).param("gain").unwrap().value,
-            Value::Float(2.0)
-        );
-    }
-
-    #[test]
-    fn re_expanding_keeps_the_instance_settings() {
-        let reg = test_registry();
-        let mut graph = Graph::new();
-        let comp = master(&mut graph, &reg, "rig");
-        let saved = Component::from_graph(&graph, comp, &reg).unwrap();
-
-        // The artist dials in a value on this instance...
-        graph.set_param(comp, "gain", Value::Float(3.5)).unwrap();
-        // ...and the shared definition is re-read.
-        saved.expand_into(&mut graph, comp, &reg).unwrap();
-        assert_eq!(
-            graph.node(comp).param("gain").unwrap().value,
-            Value::Float(3.5),
-            "re-expanding must not reset the instance"
-        );
-    }
-
-    #[test]
-    fn a_clone_follows_its_master_but_keeps_its_own_settings() {
-        let reg = test_registry();
-        let mut graph = Graph::new();
-        let m = master(&mut graph, &reg, "master");
-        let root = graph.root();
-        let c = build(&mut graph, &reg, root, "container", "copy");
-        graph.set_clone(c, Some("/master"));
-
-        assert_eq!(graph.sync_clones(&reg), 1);
-        assert!(graph.find("/copy/a").is_some());
-        assert!(graph.find("/copy/b").is_some());
-
-        // Its own setting, then a change to the master's structure.
-        graph.set_param(c, "gain", Value::Float(9.0)).unwrap();
-        assert_eq!(graph.sync_clones(&reg), 0, "an unchanged master is free");
-
-        build(&mut graph, &reg, m, "pass", "c");
-        assert_eq!(graph.sync_clones(&reg), 1);
-        assert!(graph.find("/copy/c").is_some(), "the clone followed");
-        assert_eq!(
-            graph.node(c).param("gain").unwrap().value,
-            Value::Float(9.0),
-            "the clone kept its own value"
-        );
-    }
-
-    #[test]
-    fn a_clone_of_an_ancestor_is_refused_rather_than_expanding_forever() {
-        let reg = test_registry();
-        let mut graph = Graph::new();
-        let outer = master(&mut graph, &reg, "outer");
-        let inner = build(&mut graph, &reg, outer, "container", "inner");
-        graph.set_clone(inner, Some("/outer"));
-        assert_eq!(graph.sync_clones(&reg), 0);
-        assert!(graph.find("/outer/inner/inner").is_none());
-    }
-
-    #[test]
-    fn a_dangling_clone_reference_is_ignored() {
-        let reg = test_registry();
-        let mut graph = Graph::new();
-        let root = graph.root();
-        let c = build(&mut graph, &reg, root, "container", "copy");
-        graph.set_clone(c, Some("/nowhere"));
-        assert_eq!(graph.sync_clones(&reg), 0);
-    }
-}
+#[path = "tests/component__tests.rs"]
+mod tests;
