@@ -25,6 +25,7 @@
         0
       ],
       "params": {
+        "top": "analysis1",
         "layout": "image"
       }
     },
@@ -135,11 +136,6 @@
     {
       "from": "source1",
       "to": "analysis1",
-      "input": 0
-    },
-    {
-      "from": "analysis1",
-      "to": "pixels1",
       "input": 0
     },
     {

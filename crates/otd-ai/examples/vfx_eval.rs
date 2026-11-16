@@ -125,7 +125,7 @@ fn main() {
     let reg = registry();
 
     let mut provider = Provider::ClaudeCode;
-    let mut clip = String::from("/Users/ar9av/Downloads/0BF6E6AD-6C60-4D61-B765-7B355B75B8E3.MP4");
+    let mut clip = std::env::var("OTD_VFX_CLIP").unwrap_or_else(|_| String::from("clip.mp4"));
     let mut only: Vec<String> = Vec::new();
     let mut repeat = 1usize;
     let mut save: Option<String> = None;
@@ -436,8 +436,8 @@ fn grab(gpu: &GpuContext, graph: &mut Graph, node: NodeId) -> Option<(u32, u32, 
     for frame in 0..240 {
         engines.begin_frame();
         let _ = cook.cook_frame(graph, &[node], &time, &mut engines);
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(graph);
+        time.advance_nominal_frame();
         std::thread::sleep(std::time::Duration::from_millis(16));
         // Past the first second so a feedback loop has built up, as it
         // would have on screen.
@@ -512,8 +512,8 @@ fn measure(
     for _ in 0..200 {
         engines.begin_frame();
         let _ = cook.cook_frame(graph, &[watched, source], &time, &mut engines);
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(graph);
+        time.advance_nominal_frame();
         if let Some(p) = read(gpu, &engines, graph, source) {
             if mean_luma(&p) > 1.0 {
                 ready = true;
@@ -557,8 +557,8 @@ fn measure(
                 cook_error = Some(format!("{e}"));
             }
         }
-        engines.end_frame();
-        time.advance(1.0 / 60.0);
+        engines.end_frame(graph);
+        time.advance_nominal_frame();
 
         if frame == 24 {
             early = read(gpu, &engines, graph, watched);

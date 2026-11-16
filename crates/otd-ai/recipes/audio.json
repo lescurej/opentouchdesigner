@@ -6,9 +6,9 @@
   "notes": "Mic -> spectrum -> lag -> the bass band, scaled into a zoom factor and exported onto drift1.scale, inside a feedback loop over colour noise. lag1.lagdown is how slowly it settles; zoom.gain how hard it kicks.",
   "nodes": [
     {"name": "audioin1", "op": "audiodeviceinCHOP", "pos": [0, 300]},
-    {"name": "spectrum1", "op": "audiospectrumCHOP", "pos": [200, 300], "params": {"bands": 4, "gain": 30}},
+    {"name": "spectrum1", "op": "audiospectrumCHOP", "pos": [200, 300], "params": {"mode": "visual", "bands": 4, "gain": 30}},
     {"name": "lag1", "op": "lagCHOP", "pos": [400, 300], "params": {"lagup": 0.01, "lagdown": 0.2}},
-    {"name": "bass", "op": "selectCHOP", "pos": [600, 300], "params": {"channels": "band1", "rename": "bass"}},
+    {"name": "bass", "op": "selectCHOP", "pos": [600, 300], "params": {"channames": "band1", "renameto": "bass"}},
     {"name": "zoom", "op": "mathCHOP", "pos": [800, 300],
      "params": {"gain": 0.12, "offset": 1.0, "clamp": true, "clampmin": 1.0, "clampmax": 1.25}},
     {"name": "noise1", "op": "noiseTOP", "pos": [0, 0],

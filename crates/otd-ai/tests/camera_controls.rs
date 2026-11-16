@@ -39,9 +39,9 @@ impl Scene {
 
     fn step(&mut self) -> Vec<u8> {
         self.engine.begin_frame();
-        self.cook.cook_frame(&mut self.graph, &[self.out], &self.time, &mut self.engine).unwrap();
-        self.engine.end_frame();
-        self.time.advance(1.0 / 60.0);
+        self.cook.cook_frame(&self.graph, &[self.out], &self.time, &mut self.engine).unwrap();
+        self.engine.end_frame(&self.graph);
+        self.time.advance(self.time.dt);
         let tex = self.engine.top.output(&self.graph, self.out).unwrap();
         read_pixels_rgba8(&self.gpu, tex).unwrap().2
     }

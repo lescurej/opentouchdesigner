@@ -42,8 +42,8 @@
         240
       ],
       "params": {
-        "channels": "chan1",
-        "rename": "energy"
+        "channames": "chan1",
+        "renameto": "energy"
       }
     },
     {

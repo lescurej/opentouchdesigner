@@ -25,6 +25,7 @@
         180
       ],
       "params": {
+        "top": "analysis1",
         "threshold": 0.6,
         "minarea": 0.003
       }
@@ -59,11 +60,6 @@
     {
       "from": "source1",
       "to": "analysis1",
-      "input": 0
-    },
-    {
-      "from": "analysis1",
-      "to": "tracker1",
       "input": 0
     },
     {

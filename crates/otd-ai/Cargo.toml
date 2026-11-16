@@ -7,7 +7,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-otd-core = { version = "0.1.0", path = "../otd-core" }
+otd-core = { workspace = true }
+otd-dat = { workspace = true }
 # Reference images are decoded and shrunk before they are sent. Already in the
 # workspace for the renderer, so this costs a feature flag and not a build.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tga", "tiff", "ico", "pnm"] }
@@ -17,7 +18,9 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls", "jso
 log = "0.4.33"
 
 [dev-dependencies]
-otd-chop = { version = "0.1.0", path = "../otd-chop" }
-# The example wants the real operator set; the library must not depend on it.
-otd-engine = { version = "0.1.0", path = "../otd-engine" }
-otd-gpu = { version = "0.1.0", path = "../otd-gpu" }
+otd-chop = { workspace = true }
+otd-engine = { workspace = true }
+otd-gpu = { workspace = true }
+
+[lints]
+workspace = true

@@ -69,6 +69,7 @@
         180
       ],
       "params": {
+        "top": "gain1",
         "threshold": 0.12,
         "minarea": 0.001
       }
@@ -115,11 +116,6 @@
       "from": "previous1",
       "to": "motion1",
       "input": 1
-    },
-    {
-      "from": "gain1",
-      "to": "tracker1",
-      "input": 0
     },
     {
       "from": "source1",

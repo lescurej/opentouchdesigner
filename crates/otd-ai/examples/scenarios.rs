@@ -212,8 +212,7 @@ const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "media",
         asking: "a file path typed into the prompt — does it reach a file parameter",
-        prompt: "can u integratae \
-                 /Users/ar9av/Downloads/How_RFC_8693_secures_microservice_token_exchange.m4a",
+        prompt: "can u integratae /tmp/sample-audio.m4a",
         setup: tunnel_patch,
         wants_image: false,
     },
@@ -441,7 +440,7 @@ fn main() {
 
                     println!(
                         "  {:>5.1}s  {} nodes [{}], {} wires, {} expressions, \
-                         {} retuned, {} removed, {} EXPORTS{}{}{}",
+                         {} retuned, {} removed, {} EXPORTS{}{}{note}{tag}",
                         took,
                         applied.created.len(),
                         families.join(" "),
@@ -458,7 +457,6 @@ fn main() {
                             true => String::new(),
                             false => format!(", REBUILT [{}]", dedup(&duplicated).join(" ")),
                         },
-                        format!("{note}{tag}"),
                     );
                     println!("            ops: {}", ops.join(" "));
                     // The numbers it chose, not just the operator it chose.

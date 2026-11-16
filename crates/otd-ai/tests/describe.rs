@@ -7,6 +7,7 @@
 //! the feedback loop; "combine everything" added a fourth null.
 
 use otd_ai::patch::describe;
+use otd_core::param::channel_expression;
 use otd_core::{Graph, Value};
 use otd_engine::registry;
 
@@ -32,7 +33,11 @@ fn exports_loops_and_the_viewer_are_said_out_loud() {
         .set_param(fb, "target", Value::Str("out1".into()))
         .unwrap();
     graph
-        .set_export(decay, "brightness", "/lfo1", "lfo")
+        .set_expression(
+            decay,
+            "brightness",
+            &channel_expression("/lfo1", "lfo"),
+        )
         .unwrap();
 
     let text = describe(&graph, root, None, Some(out), &[], &reg);
@@ -43,7 +48,7 @@ fn exports_loops_and_the_viewer_are_said_out_loud() {
             .to_string()
     };
     assert!(
-        line("decay1").contains("brightness=export(lfo1:lfo)"),
+        line("decay1").contains("brightness=expr(ch('/lfo1', 'lfo')"),
         "{}",
         line("decay1")
     );
