@@ -273,9 +273,9 @@ symptom is a black texture.
 ## Reacting to something
 
 `expressions` animates on a clock, and a clock is not a reaction — the patch
-does the same thing whether anybody is in the room or not. Reacting is
-**Export**: a parameter reads a live channel off a CHOP, the same edit as
-dragging a channel onto a parameter row in the editor.
+does the same thing whether anybody is in the room or not. Reacting is a
+**channel expression** (`ch('/op', 'chan')`): the same edit as dragging a
+channel onto a parameter row in the editor.
 
 The plan format had no way to say that, which meant the assistant could not
 build a reactive patch at all. Asked to make a camera patch respond to

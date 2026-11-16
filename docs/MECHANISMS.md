@@ -2,7 +2,7 @@
 
 ## Parameters
 
-- **Constant** and **Expression** only in the UI. Legacy Export/Bind in `.otd` files migrate to expressions on load.
+- **Constant** and **Expression** only in the UI.
 - Expressions are **Python-shaped one-liners** evaluated by the Rust engine when possible; PyO3 is a temporary fallback for syntax outside the subset (`needs_python`).
 - Network refs: `ch('op', 'chan')`, `par('op', 'param')`, `op('op')['chan']`, `parent.custom`. Relative op names resolve from the parameter owner’s COMP.
 - Right-click a CHOP channel in the parameter panel → **Copy expression** (`op('/path')['chan']`).
@@ -35,7 +35,7 @@ CHOPs use `CookContext.dt` for sample counts on time-sliced operators. See `crat
 
 ## Viewers (network)
 
-- TOP texture, CHOP scope or **bars** (1 sample), DAT table vs text, SOP points/lines, COMP shows internal **Out** TOP when Display is on.
+- TOP texture, CHOP scope or **bars** (1 sample), DAT table vs text, SOP **3D preview** (wgpu; Viewer Active: orbit, wheel zoom; right-click: reset, perspective/ortho, shaded/wireframe, **origin & axes**; **W** toggles wireframe), COMP shows internal **Out** TOP when Display is on.
 - Flags: Bypass, Display, Cook, Lock, Viewer Active (output pane).
 - Interactive 3D gizmos on geo/SOP: **not implemented** (future phase).
 

@@ -2,16 +2,21 @@
 
 Generated from the operator registry — the same table the editor builds its menus and parameter pages from, so this cannot drift from what the operators actually do.
 
-186 operators.
+240 operators.
 
-**CHOP** (53)
+**CHOP** (77)
 
 - [analyzeCHOP](#analyze--analyzechop) — Reduce each channel to one number.
 - [animationCHOP](#animation--animationchop) — Keyframed curves over time.
 - [audiodeviceinCHOP](#audio-device-in--audiodeviceinchop) — Samples from an audio input, downmixed to mono.
-- [audiodeviceoutCHOP](#audio-device-out--audiodeviceoutchop) — Plays its first channel on an audio output.
+- [audiodeviceoutCHOP](#audio-device-out--audiodeviceoutchop) — Plays its input on an audio output; each CHOP channel maps to the matching device channel.
 - [audiofileinCHOP](#audio-file-in--audiofileinchop) — Plays an audio file, following the timeline.
-- [audiospectrumCHOP](#audio-spectrum--audiospectrumchop) — Energy per frequency band, log spaced.
+- [audiofileoutCHOP](#audio-file-out--audiofileoutchop) — Records its input to a WAV file while Record is on. Passes the audio through.
+- [audiofilterCHOP](#audio-filter--audiofilterchop) — Low-pass, high-pass, band-pass or band-reject IIR filter; 12 or 24 dB/octave.
+- [audiomovieCHOP](#audio-movie--audiomoviechop) — Plays a movie file's soundtrack, locked to a Movie File In TOP's playhead.
+- [audiooscillatorCHOP](#audio-oscillator--audiooscillatorchop) — Sine, triangle, ramp, square or pulse. Pitch, reset and playback inputs override the parameters.
+- [audiospectrumCHOP](#audio-spectrum--audiospectrumchop) — FFT magnitude (amplitude) and phase (degrees); linear frequency in hertz via sample index.
+- [audiovstCHOP](#audio-vst--audiovstchop) — Loads a VST3 plugin to generate or process audio; up to four multi-channel inputs.
 - [beatCHOP](#beat--beatchop) — A tempo clock: ramp, pulse, count and bar.
 - [blobtrackCHOP](#blob-track--blobtrackchop) — Largest connected bright region. Channels: present, count, x, y, area, width, height, vx, vy. Coordinates and sizes are 0..1, origin top-left; velocity is frame-fractions/second. CPU readback of last frame; downsample to 160x90 first. Not person recognition or persistent identity: switching largest regions can jump. A missing/empty input returns zero channels values.
 - [clockCHOP](#clock--clockchop) — Wall-clock time, which keeps running when the timeline is paused.
@@ -20,18 +25,25 @@ Generated from the operator registry — the same table the editor builds its me
 - [crossCHOP](#cross--crosschop) — Blend two inputs, with an equal-power option.
 - [dattochopCHOP](#dat-to-chop--dattochopchop) — Columns or rows of a table, as channels.
 - [delayCHOP](#delay--delaychop) — Play a channel back later, with optional feedback.
+- [dmxinCHOP](#dmx-in--dmxinchop) — Incoming DMX over Art-Net or sACN, one channel per slot.
 - [dmxoutCHOP](#dmx-out--dmxoutchop) — Sends its channels as DMX over Art-Net or sACN.
 - [expressionCHOP](#expression--expressionchop) — Apply an expression to every sample. `v` is the sample.
 - [fanCHOP](#fan--fanchop) — Fan out an index channel to one on/off channel per value (chan0..chanN-1), or fan many channels in to the index of the first one above zero (-1 if none).
+- [fileinCHOP](#file-in--fileinchop) — Load a .och or .bclip channel file.
+- [fileoutCHOP](#file-out--fileoutchop) — Write the input channels to a .och file.
 - [filterCHOP](#filter--filterchop) — Low-pass or moving-average smoothing.
 - [holdCHOP](#hold--holdchop) — Freeze input 1's value until input 2 fires.
 - [inCHOP](#in--inchop) — A channel input on this component's node.
 - [infoCHOP](#info--infochop) — Another operator's info channels (TouchDesigner Info CHOP).
 - [keyboardinCHOP](#keyboard-in--keyboardinchop) — One channel per named key, 1 while held.
 - [lagCHOP](#lag--lagchop) — Smooth a channel, with separate rise and fall times.
+- [lastCHOP](#last--lastchop) — One sample per channel: the most recent value.
+- [lengthCHOP](#length--lengthchop) — Change the sample count. The sample rate stays the same.
 - [lfoCHOP](#lfo--lfochop) — A repeating waveform over time.
 - [limitCHOP](#limit--limitchop) — Clamp, wrap, fold or quantise a channel.
 - [logicCHOP](#logic--logicchop) — Turn channels into on/off and combine them.
+- [ltcinCHOP](#ltc-in--ltcinchop) — Decode linear timecode audio into hour, minute, second and frame.
+- [ltcoutCHOP](#ltc-out--ltcoutchop) — Encode the timeline as linear timecode audio.
 - [mathCHOP](#math--mathchop) — Combine and scale channels.
 - [mergeCHOP](#merge--mergechop) — Put two CHOPs' channels side by side.
 - [midiinCHOP](#midi-in--midiinchop) — Notes, velocity, pitch bend and the controls you have moved.
@@ -46,21 +58,33 @@ Generated from the operator registry — the same table the editor builds its me
 - [parameterCHOP](#parameter--parameterchop) — Another operator's parameter values as channels (does not cook that operator).
 - [particleCHOP](#particle--particlechop) — Stateful 2D particle emitter with velocity, gravity, lifetime and respawn. tx/ty/tz are instance positions (6 scene units across); size/life fade to zero. Emitter coordinates are normalized, origin top-left. Connect via geometryCOMP.instancechop; set sx/sy/sz to size. Active stops births; existing particles finish. Reset clears the simulation. CPU, at most 4096 particles; dt capped at 0.1s; no collisions or flocking.
 - [patternCHOP](#pattern--patternchop) — A fixed-length waveform buffer.
+- [performCHOP](#perform--performchop) — Cook rate, frame time, and time-slice size (TouchDesigner Perform CHOP).
+- [performinCHOP](#perform-in--performinchop) — Perform panel pointer: u, v, lbutton, click, release, wheel, inside.
+- [reaperoutCHOP](#reaper-out--reaperoutchop) — Sends its input as ReaStream UDP audio (float32) for the Reaper ReaStream plugin.
+- [recordCHOP](#record--recordchop) — Appends each time slice while Record is on, until Clear or the length limit.
 - [renameCHOP](#rename--renamechop) — Rename channels by pattern.
+- [reorderCHOP](#reorder--reorderchop) — Sort channels by the number at the end of the name.
+- [replaceCHOP](#replace--replacechop) — Replace samples that match a value.
 - [resampleCHOP](#resample--resamplechop) — Change how many samples a buffer has, keeping its shape.
+- [samplerateCHOP](#sample-rate--sampleratechop) — Keep the samples and replace the sample-rate metadata.
 - [selectCHOP](#select--selectchop) — Pick and rename channels.
+- [serialCHOP](#serial--serialchop) — Read or write bytes on a serial port.
+- [shiftCHOP](#shift--shiftchop) — Slide samples left or right, holding or filling with zero.
 - [shuffleCHOP](#shuffle--shufflechop) — Rearrange the channel/sample grid — transpose, reverse, sequence.
 - [slopeCHOP](#slope--slopechop) — The rate of change of a channel.
 - [soptochopCHOP](#sop-to-chop--soptochopchop) — Point attributes as channels, one sample per point.
 - [speedCHOP](#speed--speedchop) — Integrate a channel: velocity becomes position.
 - [springCHOP](#spring--springchop) — Follow a channel like a mass on a spring: overshoot, wobble, then settle. Raise damping to stop the wobble; raise the spring constant to follow faster.
 - [switchCHOP](#switch--switchchop) — Choose one of two inputs.
+- [timecodeCHOP](#timecode--timecodechop) — Hour, minute, second and frame from the timeline or absolute time.
 - [timerCHOP](#timer--timerchop) — A running timer with fraction, seconds, cycles and done.
 - [toptochopCHOP](#top-to-chop--toptochopchop) — Pixels as channels r g b a. `image` reads every pixel (top row first, at most 128x128) and adds u/v positions, centred, v up — instance a Geometry COMP with tx=u ty=v tz=g for a camera point cloud. Reads last frame; costs a GPU sync, so put a Resolution TOP in front.
 - [trailCHOP](#trail--trailchop) — The last few seconds of each channel as one buffer, oldest sample first — draw a waveform, or lay out one instance per sample.
 - [triggerCHOP](#trigger--triggerchop) — An attack/decay/sustain/release envelope per channel.
+- [trimCHOP](#trim--trimchop) — Keep the samples between a start and an end.
+- [waveCHOP](#wave--wavechop) — One cycle of a sine, triangle, ramp, square, pulse or gaussian.
 
-**COMP** (18)
+**COMP** (20)
 
 - [baseCOMP](#base--basecomp) — Sub-network; In and Out operators inside define inputs and outputs.
 - [buttonCOMP](#button--buttoncomp) — Toggle or momentary control; interior textCOMP + textTOP draws the label.
@@ -68,43 +92,63 @@ Generated from the operator registry — the same table the editor builds its me
 - [containerCOMP](#container--containercomp) — Parent panel for buttons, sliders, text, OP viewers, and nested containers; Children page drives align/layout.
 - [fieldCOMP](#field--fieldcomp) — Editable string parameter with textCOMP/textTOP interior.
 - [geometryCOMP](#geometry--geometrycomp) — Places a SOP in the scene, optionally instanced.
+- [geotextCOMP](#geo-text--geotextcomp) — 3D text component with transform and alignment parameters (TouchDesigner geotext COMP).
 - [glslCOMP](#glsl--glslcomp) — Panel region filled from an interior glslTOP network (layout only until cook hook lands).
 - [lightCOMP](#light--lightcomp) — A directional light, aimed from its position at the origin.
 - [listCOMP](#list--listcomp) — Scrollable list panel — parameters match TD; rendering uses interior TOPs.
+- [missingCOMP](#missing--missingcomp) — Placeholder for an unknown or removed component type.
 - [opviewerCOMP](#op-viewer--opviewercomp) — Shows another operator's cooked TOP inside this panel rect.
 - [parameterCOMP](#parameter--parametercomp) — Auto-layout of another operator's custom parameters (stub — build from par + TOP).
 - [replicatorCOMP](#replicator--replicatorcomp) — Keeps one clone of a master component per row of a table.
 - [selectCOMP](#select--selectcomp) — Displays another panel COMP by path (stub — use opviewer + container for now).
 - [sliderCOMP](#slider--slidercomp) — Fader control; Value parameter is the state the network reads.
 - [tableCOMP](#table--tablecomp) — Tabular panel tied to a tableDAT (stub — interior TOP/DAT wiring).
-- [textCOMP](#text--textcomp) — Static or expression-driven text via interior textTOP.
+- [textCOMP](#text--textcomp) — Displays formatted text in a panel rect; interior textTOP reads parent Text parameters.
 - [widgetCOMP](#widget--widgetcomp) — Reusable panel asset hook (stub — same graph-in-COMP model as other panels).
 - [windowCOMP](#window--windowcomp) — Floating or external display for a cooked TOP (TouchDesigner Window COMP).
 
-**DAT** (22)
+**DAT** (40)
 
-- [chopexecuteDAT](#chop-execute--chopexecutedat) — Python callbacks when a watched channel changes or crosses a threshold.
-- [choptodatDAT](#chop-to-dat--choptodatdat) — Channels as a table of numbers.
-- [convertDAT](#convert--convertdat) — Between a table and a block of text.
-- [executeDAT](#execute--executedat) — Python callbacks at the start and end of a frame.
+- [chopexecuteDAT](#chop-execute--chopexecutedat) — CHOP change callbacks.
+- [choptodatDAT](#chop-to-dat--choptodatdat) — Channels as table.
+- [convertDAT](#convert--convertdat) — Table/text convert.
+- [executeDAT](#execute--executedat) — Frame Python callbacks.
+- [fileinDAT](#file-in--fileindat) — Read text file.
+- [fileoutDAT](#file-out--fileoutdat) — Write text file.
+- [folderDAT](#folder--folderdat) — List folder.
 - [inDAT](#in--indat) — A data input on this component's node.
+- [infoDAT](#info--infodat) — Operator metadata as a table.
+- [insertDAT](#insert--insertdat) — Insert rows/columns.
 - [jsonDAT](#json--jsondat) — Parse JSON text into a path/value table.
-- [mergeDAT](#merge--mergedat) — Join two DATs by rows or by columns.
-- [nullDAT](#null--nulldat) — Pass-through. A stable name to reference.
+- [keyboardinDAT](#keyboard-in--keyboardindat) — Key table.
+- [mergeDAT](#merge--mergedat) — Merge DATs by rows or columns.
+- [monitorDAT](#monitor--monitordat) — Network monitor.
+- [mqttclientDAT](#mqtt-client--mqttclientdat) — MQTT (stub).
+- [ndiDAT](#ndi--ndidat) — NDI metadata (stub).
+- [nullDAT](#null--nulldat) — Pass-through.
+- [oscinDAT](#osc-in--oscindat) — OSC receive table.
+- [oscoutDAT](#osc-out--oscoutdat) — OSC send.
+- [otd_core::MISSING_DAT](#missing--otd_core::missing_dat) — Placeholder DAT.
 - [outDAT](#out--outdat) — This component's data output.
-- [panelexecuteDAT](#panel-execute--panelexecutedat) — Python callbacks when a panel value changes.
-- [parameterexecuteDAT](#parameter-execute--parameterexecutedat) — Python callbacks when a watched parameter changes.
-- [scriptDAT](#script--scriptdat) — Rows produced by a Python script.
-- [selectDAT](#select--selectdat) — Pick rows and columns, by name or index.
-- [sortDAT](#sort--sortdat) — Sort rows by a column, numerically or as text.
-- [substituteDAT](#substitute--substitutedat) — Fill $name placeholders from a two-column lookup table.
+- [panelexecuteDAT](#panel-execute--panelexecutedat) — Panel value callbacks.
+- [paneltabletextDAT](#panel-table-text--paneltabletextdat) — Panel list/table as text.
+- [parameterexecuteDAT](#parameter-execute--parameterexecutedat) — Parameter change callbacks.
+- [reorderDAT](#reorder--reorderdat) — Reorder rows/columns.
+- [scriptDAT](#script--scriptdat) — Python table generator.
+- [selectDAT](#select--selectdat) — Select rows/columns.
+- [serialDAT](#serial--serialdat) — Serial lines.
+- [sortDAT](#sort--sortdat) — Sort rows.
+- [substituteDAT](#substitute--substitutedat) — Fill $name placeholders.
 - [tableDAT](#table--tabledat) — A table of text, stored in the project file.
+- [tcpipDAT](#tcp/ip--tcpipdat) — TCP client/server.
 - [textDAT](#text--textdat) — A block of text.
 - [transposeDAT](#transpose--transposedat) — Swap rows and columns.
-- [udpinDAT](#udp-in--udpindat) — Listens for datagrams; table columns address, port, message.
-- [udpoutDAT](#udp-out--udpoutdat) — Sends with send() / optional Send Input On Change; table shows incoming replies.
-- [webclientDAT](#web-client--webclientdat) — HTTP client: pulse Fetch to request in a background thread; response body is the DAT contents. WebSocket is not implemented yet.
-- [webserverDAT](#web-server--webserverdat) — HTTP server: onHTTPRequest and WebSocket callbacks in the Callbacks DAT; HTTP and WebSocket on the same port.
+- [udpinDAT](#udp-in--udpindat) — UDP listen table.
+- [udpoutDAT](#udp-out--udpoutdat) — UDP send/receive table.
+- [webclientDAT](#web-client--webclientdat) — HTTP client DAT.
+- [webserverDAT](#web-server--webserverdat) — HTTP server DAT.
+- [websocketDAT](#websocket--websocketdat) — WebSocket client.
+- [xmlDAT](#xml--xmldat) — Parse XML to table.
 
 **MAT** (5)
 
@@ -114,32 +158,37 @@ Generated from the operator registry — the same table the editor builds its me
 - [pointspriteMAT](#point-sprite--pointspritemat) — Draws every point as a camera-facing quad.
 - [wireframeMAT](#wireframe--wireframemat) — Draws the edges rather than the faces.
 
-**SOP** (18)
+**SOP** (22)
 
 - [blendSOP](#blend--blendsop) — Morph between two shapes by interpolating point positions.
 - [boxSOP](#box--boxsop) — A box with flat-shaded faces.
 - [circleSOP](#circle--circlesop) — A disc, ring or arc — filled, or a line to copy along.
 - [colorSOP](#color--colorsop) — Set the colour carried by every point.
 - [copySOP](#copy--copysop) — Stamp copies with a compounding transform.
-- [facetSOP](#facet--facetsop) — Recompute normals from the triangles — put after Noise or Twist so lighting follows the new shape. `unique` gives flat, faceted shading.
+- [facetSOP](#facet--facetsop) — Recompute normals from the triangles.
+- [fileinSOP](#file-in--fileinsop) — Load triangle mesh from a Wavefront .obj file.
 - [gridSOP](#grid--gridsop) — A flat grid of quads — the usual thing to displace.
+- [importselectSOP](#import-select--importselectsop) — Load one object/group from a .obj, optionally merged with the input.
 - [inSOP](#in--insop) — A geometry input on this component's node.
 - [lineSOP](#line--linesop) — A run of points between two positions.
+- [materialSOP](#material--materialsop) — Assign a MAT to geometry.
 - [mergeSOP](#merge--mergesop) — Combine two pieces of geometry.
 - [noiseSOP](#noise--noisesop) — Displace points by value noise, along their normals or freely.
 - [nullSOP](#null--nullsop) — Pass-through. A stable name to reference.
+- [otd_core::MISSING_SOP](#missing--otd_core::missing_sop) — Placeholder for an unknown or removed SOP.
 - [outSOP](#out--outsop) — This component's geometry output.
 - [sphereSOP](#sphere--spheresop) — A UV sphere.
 - [torusSOP](#torus--torussop) — A torus.
 - [transformSOP](#transform--transformsop) — Translate, rotate and scale points.
 - [tubeSOP](#tube--tubesop) — A cylinder, cone or tapered tube, with optional caps.
-- [twistSOP](#twist--twistsop) — Twist, bend or taper along one axis, growing with distance from the origin. Needs enough rows along that axis to curve smoothly.
+- [twistSOP](#twist--twistsop) — Twist, bend or taper along one axis, growing with distance from the origin.
 
-**TOP** (70)
+**TOP** (76)
 
 - [addTOP](#add--addtop) — The two inputs summed.
+- [analyzeTOP](#analyze--analyzetop) — Reduces the input to one pixel: average, minimum or maximum.
 - [antialiasTOP](#anti-alias--antialiastop) — Softens luminance edges in place — FXAA as a post pass.
-- [blurTOP](#blur--blurtop) — Separable Gaussian blur.
+- [blurTOP](#blur--blurtop) — Two-pass box blur with an optional pre-shrink.
 - [cacheTOP](#cache--cachetop) — Holds the last frame it saw when Active is off.
 - [channelmixTOP](#channel-mix--channelmixtop) — Each output channel is a weighted sum of the input's four.
 - [choptotopTOP](#chop-to-top--choptotoptop) — Channels as pixels: a row per channel, a column per sample.
@@ -167,7 +216,7 @@ Generated from the operator registry — the same table the editor builds its me
 - [inTOP](#in--intop) — A texture input on this component's node.
 - [insideTOP](#inside--insidetop) — Input 2, kept only where input 1 is opaque.
 - [lensdistortTOP](#lens-distort--lensdistorttop) — Bulge or pinch the frame. Negative Distort bulges (fisheye), positive corrects a bulge.
-- [levelTOP](#level--leveltop) — Brightness, contrast, gamma, black/white levels.
+- [levelTOP](#level--leveltop) — Brightness, contrast, gamma, levels and invert.
 - [limitTOP](#limit--limittop) — Clamp to a range, quantise to a step, or both.
 - [lookupTOP](#lookup--lookuptop) — Input 1's brightness reads a colour out of input 2.
 - [lumablurTOP](#luma-blur--lumablurtop) — Blur radius driven by input 2's brightness.
@@ -186,26 +235,31 @@ Generated from the operator registry — the same table the editor builds its me
 - [outTOP](#out--outtop) — This component's texture output.
 - [outsideTOP](#outside--outsidetop) — Input 2, kept only where input 1 is not.
 - [overTOP](#over--overtop) — Input 2 over input 1, by its alpha.
-- [rampTOP](#ramp--ramptop) — Linear or radial gradient between two colours.
+- [rampTOP](#ramp--ramptop) — Gradient from a DAT table or two colour stops — horizontal, vertical, radial or circular.
 - [rectangleTOP](#rectangle--rectangletop) — A rectangle, with rounded corners and an optional border.
 - [remapTOP](#remap--remaptop) — Input 2's red and green are the coordinates to read input 1 at.
-- [renderTOP](#render--rendertop) — Draws Geometry components through a Camera.
+- [renderTOP](#render--rendertop) — Draws the 3D scene referenced by Geometry, Camera and Light.
 - [reorderTOP](#reorder--reordertop) — Build each output channel from a channel of either input.
 - [resolutionTOP](#resolution--resolutiontop) — Resamples its input to an explicit resolution.
 - [rgbkeyTOP](#rgb-key--rgbkeytop) — Key out one colour by distance in RGB.
 - [rgbtohsvTOP](#rgb-to-hsv--rgbtohsvtop) — Hue, saturation and value land in the red, green and blue channels.
 - [screenTOP](#screen--screentop) — Multiply in the negative — lightens.
+- [screengrabTOP](#screen-grab--screengrabtop) — Captures the desktop through ffmpeg.
 - [selectTOP](#select--selecttop) — This frame's output of another TOP, by path.
 - [slopeTOP](#slope--slopetop) — The image's own gradient, as a vector, a magnitude or an angle.
 - [subtractTOP](#subtract--subtracttop) — Input 2 taken away from input 1.
-- [switchTOP](#switch--switchtop) — Select one of two inputs, optionally blending between them.
+- [switchTOP](#switch--switchtop) — Select one of its inputs by index, optionally blending.
+- [syphoninTOP](#syphon-in--syphonintop) — Receives a Syphon texture from another application.
+- [syphonoutTOP](#syphon-out--syphonouttop) — Publishes its input as a Syphon server.
 - [textTOP](#text--texttop) — Draws text, using a font file or the system's.
 - [thresholdTOP](#threshold--thresholdtop) — Split the image in two at a level, with a soft edge.
 - [tileTOP](#tile--tiletop) — Repeat the image across the frame, optionally mirrored.
 - [toonTOP](#toon--toontop) — Cel shading: flatten the luminance into bands and ink the edges.
-- [transformTOP](#transform--transformtop) — Translate, rotate and scale, with an extend mode.
+- [transformTOP](#transform--transformtop) — Translate, rotate and scale in UV space.
 - [underTOP](#under--undertop) — Input 1 over input 2 — Over, the other way up.
 - [videodeviceinTOP](#video-device-in--videodeviceintop) — Frames from a camera or capture device.
+- [videostreaminTOP](#video-stream-in--videostreamintop) — Reads a network stream (RTSP, HTTP, HLS) through ffmpeg.
+- [videostreamoutTOP](#video-stream-out--videostreamouttop) — Sends its input to a network stream URL.
 - [voronoiTOP](#voronoi--voronoitop) — Cellular noise, as flat cells, edges or a distance field.
 
 ---
@@ -252,12 +306,12 @@ Samples from an audio input, downmixed to mono.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Device (blank = default) | `device` | *(empty)* |  |
+| Device | `device` | `` | `(default)` |
 | Volume | `volume` | `1` | 0 … 8 |
 
 ### Audio Device Out — `audiodeviceoutCHOP`
 
-Plays its first channel on an audio output.
+Plays its input on an audio output; each CHOP channel maps to the matching device channel.
 
 **Inputs:** in
 
@@ -265,7 +319,7 @@ Plays its first channel on an audio output.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Device (blank = default) | `device` | *(empty)* |  |
+| Device | `device` | `` | `(default)` |
 | Volume | `volume` | `1` | 0 … 2 |
 | Active | `active` | `true` |  |
 
@@ -288,9 +342,9 @@ Playback is a function of the timeline, not a private play head: the sample at t
 | Speed | `speed` | `1` | -4 … 4 |
 | Volume | `volume` | `1` | 0 … 8 |
 
-### Audio Spectrum — `audiospectrumCHOP`
+### Audio File Out — `audiofileoutCHOP`
 
-Energy per frequency band, log spaced.
+Records its input to a WAV file while Record is on. Passes the audio through.
 
 **Inputs:** in
 
@@ -298,10 +352,110 @@ Energy per frequency band, log spaced.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| File (.wav) | `file` | `out.wav` |  |
+| Record | `record` | `false` |  |
+
+### Audio Filter — `audiofilterCHOP`
+
+Low-pass, high-pass, band-pass or band-reject IIR filter; 12 or 24 dB/octave.
+
+**Inputs:** in, cutoff
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Filter | `filter` | `lowpass` | `lowpass` · `highpass` · `bandpass` · `bandreject` |
+| Cutoff Units | `units` | `logarithmic` | `logarithmic` · `frequency` |
+| Filter Cutoff (Hz = 10**val) | `cutofflog` | `3` | 0 … 4.5 |
+| Filter Cutoff (Hz) | `cutofffrequency` | `1000` | 1 … 22000 |
+| Filter Resonance | `resonance` | `0` | 0 … 10 |
+| Roll-Off (dB per Octave) | `rolloff` | `24` | `12` · `24` |
+| Dry / Wet Mix | `drywet` | `1` | 0 … 1 |
+
+### Audio Movie — `audiomovieCHOP`
+
+Plays a movie file's soundtrack, locked to a Movie File In TOP's playhead.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Movie File In TOP | `top` | *(empty)* |  |
+| Volume | `volume` | `1` | 0 … 8 |
+
+### Audio Oscillator — `audiooscillatorCHOP`
+
+Sine, triangle, ramp, square or pulse. Pitch, reset and playback inputs override the parameters.
+
+**Inputs:** pitch, reset, playback
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Type | `type` | `sine` | `sine` · `triangle` · `ramp` · `square` · `pulse` |
+| Base Frequency (Hz) | `frequency` | `440` | 0 … 20000 |
+| Units per Octave | `unitsperoctave` | `1` | 0.01 … 1200 |
+| Amplitude | `amplitude` | `0.5` | 0 … 1 |
+| Phase | `phase` | `0` | 0 … 1 |
+| Pulse Width | `pulsewidth` | `0.5` | 0 … 1 |
+| Smooth Pitch Changes | `smooth` | `false` |  |
+| Channel Name | `name` | `chan1` |  |
+| Sample Rate | `rate` | `48000` | 8000 … 48000 |
+
+### Audio Spectrum — `audiospectrumCHOP`
+
+FFT magnitude (amplitude) and phase (degrees); linear frequency in hertz via sample index.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Mode | `mode` | `timetoraw` | `timetoraw` · `visual` |
 | FFT Size | `size` | `1024` | `256` · `512` · `1024` · `2048` · `4096` |
 | Bands | `bands` | `4` | 1 … 32 |
 | Gain | `gain` | `1` | 0 … 64 |
 | Decibels | `decibels` | `false` |  |
+
+### Audio VST — `audiovstCHOP`
+
+Loads a VST3 plugin to generate or process audio; up to four multi-channel inputs.
+
+**Inputs:** in, in2, in3, in4
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File | `file` | *(empty)* |  |
+| Reload | `reloadpulse` | `false` |  |
+| Load Plugin State on Start | `loadpluginstate` | `true` |  |
+| Plugin GUI Always on Top | `alwaysontop` | `false` |  |
+| Display Plugin GUI | `displaygui` | `false` |  |
+| Learn Parameters | `learnparms` | `false` |  |
+| Regular Parameters | `regularparms` | `false` |  |
+| Read-Only Parameters | `readonlyparms` | `false` |  |
+| Clear Learned Parameters | `clearlearnedparms` | `false` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Custom Bus Layout | `custombuslayout` | `false` |  |
+| Output Bus Layout | `outputbuslayout` | `auto` | `auto` · `mono` · `stereo` |
+| Main Input Bus Layout | `maininputlayout` | `auto` | `auto` · `mono` · `stereo` |
+| Enable | `aux0enable` | `false` |  |
+| Bus Layout | `aux0layout` | `mono` | `mono` · `stereo` |
+| Custom Playhead | `customplayhead` | `false` |  |
+| Timecode Object/ CHOP/ DAT | `timecodeop` | *(empty)* |  |
+| Tempo (bpm) | `tempo` | `120` | 20 … 300 |
+| Signature | `signature1` | `4` | 1 … 32 |
+| Signature | `signature2` | `4` | 1 … 32 |
+| Sample Rate | `rate` | `48000` | 8000 … 192000 |
+| Time Slice | `timeslice` | `false` |  |
+| Scope | `scope` | `*` |  |
+| Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |
 
 ### Beat — `beatCHOP`
 
@@ -321,12 +475,13 @@ A tempo clock: ramp, pulse, count and bar.
 
 Largest connected bright region. Channels: present, count, x, y, area, width, height, vx, vy. Coordinates and sizes are 0..1, origin top-left; velocity is frame-fractions/second. CPU readback of last frame; downsample to 160x90 first. Not person recognition or persistent identity: switching largest regions can jump. A missing/empty input returns zero channels values.
 
-**Inputs:** in
+*No inputs — this is a generator.*
 
 *Time dependent: cooks every frame, and everything downstream of it does too.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| TOP | `top` | *(empty)* |  |
 | Luminance Threshold | `threshold` | `0.5` | 0 … 1 |
 | Minimum Frame Fraction | `minarea` | `0.002` | 0 … 1 |
 
@@ -539,10 +694,11 @@ Blend two inputs, with an equal-power option.
 
 Columns or rows of a table, as channels.
 
-**Inputs:** in
+*No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| DAT | `dat` | *(empty)* |  |
 | Channels From | `layout` | `columns` | `columns` · `rows` |
 | First Row/Column Is Names | `names` | `true` |  |
 
@@ -559,6 +715,23 @@ Play a channel back later, with optional feedback.
 | Delay (s) | `delay` | `0.25` | 0 … 10 |
 | Mix | `mix` | `1` | 0 … 1 |
 | Feedback | `feedback` | `0` | 0 … 0.95 |
+
+### DMX In — `dmxinCHOP`
+
+Incoming DMX over Art-Net or sACN, one channel per slot.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Protocol | `protocol` | `artnet` | `artnet` · `sacn` |
+| Local Address (blank = all interfaces) | `address` | *(empty)* |  |
+| Universe | `universe` | `0` | 0 … 32767 |
+| Start Channel | `start` | `1` | 1 … 512 |
+| Channels | `channels` | `64` | 1 … 512 |
+| Active | `active` | `true` |  |
 
 ### DMX Out — `dmxoutCHOP`
 
@@ -602,6 +775,28 @@ Fan out an index channel to one on/off channel per value (chan0..chanN-1), or fa
 |---|---|---|---|
 | Operation | `operation` | `fanout` | `fanout` · `fanin` |
 | Channels (fan out) | `channels` | `4` | 1 … 64 |
+| Quantize Output | `quantize` | `on` | `off` · `on` |
+
+### File In — `fileinCHOP`
+
+Load a .och or .bclip channel file.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File (.och) | `file` | *(empty)* |  |
+
+### File Out — `fileoutCHOP`
+
+Write the input channels to a .och file.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File (.och) | `file` | `capture.och` |  |
+| Write | `write` | `true` |  |
 
 ### Filter — `filterCHOP`
 
@@ -656,7 +851,7 @@ One channel per named key, 1 while held.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Keys (space separated) | `keys` | `a s d f` |  |
+| Keys (space separated) | `keys` | `1 a s d f` |  |
 
 ### Lag — `lagCHOP`
 
@@ -670,6 +865,35 @@ Smooth a channel, with separate rise and fall times.
 |---|---|---|---|
 | Lag Up (s) | `lagup` | `0.1` | 0 … 2 |
 | Lag Down (s) | `lagdown` | `0.1` | 0 … 2 |
+
+### Last — `lastCHOP`
+
+One sample per channel: the most recent value.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Time Slice | `timeslice` | `false` |  |
+| Scope | `scope` | `*` |  |
+| Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |
+
+### Length — `lengthCHOP`
+
+Change the sample count. The sample rate stays the same.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Length (samples) | `length` | `64` | 1 … 65536 |
+| Interpolation | `interp` | `linear` | `nointerp` · `linear` · `cubic` · `edge` |
+| Constant Area | `constarea` | `false` |  |
+| Correct for Cycles | `correct` | `false` |  |
+| Cycle Length | `cyclelen` | `360` | 0.01 … 100000 |
+| Time Slice | `timeslice` | `false` |  |
+| Scope | `scope` | `*` |  |
+| Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |
 
 ### LFO — `lfoCHOP`
 
@@ -698,9 +922,10 @@ Clamp, wrap, fold or quantise a channel.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Type | `type` | `clamp` | `clamp` · `loop` · `zigzag` · `quantise` |
+| Type | `type` | `off` | `off` · `clamp` · `loop` · `zigzag` · `quantise` |
 | Minimum | `min` | `0` | -10 … 10 |
 | Maximum | `max` | `1` | -10 … 10 |
+| Norm Scale | `normscale` | `1` | 0 … 1 |
 | Quantise Step | `step` | `0.1` | 0 … 10 |
 
 ### Logic — `logicCHOP`
@@ -715,6 +940,53 @@ Turn channels into on/off and combine them.
 | Threshold | `threshold` | `0.5` |  |
 | Invert | `invert` | `false` |  |
 | Combine Channels | `combine` | `off` | `off` · `and` · `or` · `xor` |
+
+### LTC In — `ltcinCHOP`
+
+Decode linear timecode audio into hour, minute, second and frame.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| FPS | `ratemenu` | `30` | `24` · `25` · `29.97` · `30` · `60` |
+| Drop Frame | `dropframe` | `false` |  |
+| Output Rate | `rate` | `60` | 1 … 48000 |
+
+### LTC Out — `ltcoutCHOP`
+
+Encode the timeline as linear timecode audio.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Play Mode | `playmode` | `sequential` | `sequential` · `timecodeop` |
+| Play | `play` | `true` |  |
+| Cue | `cue` | `false` |  |
+| Cue Pulse | `cuepulse` | `false` |  |
+| Frame | `frame` | `0` | 0 … 59 |
+| Second | `second` | `0` | 0 … 59 |
+| Minute | `minute` | `0` | 0 … 59 |
+| Hour | `hour` | `0` | 0 … 23 |
+| Frame Rate | `framerate` | `30` | `24` · `25` · `29.97` · `30` · `60` |
+| Drop Frame Numbering | `dropframe` | `false` |  |
+| High FPS Behaviour | `highfpsbehaviour` | `cycleframes` | `cycleframes` · `duplicateframes` |
+| Timecode Object/CHOP/DAT | `timecodeop` | *(empty)* |  |
+| Audio Rate | `audiorate` | `48000` | 8000 … 192000 |
+| Level | `level` | `0.5` | 0 … 1 |
+| User Data 1 | `user1` | `0` | 0 … 15 |
+| User Data 2 | `user2` | `0` | 0 … 15 |
+| User Data 3 | `user3` | `0` | 0 … 15 |
+| User Data 4 | `user4` | `0` | 0 … 15 |
+| User Data 5 | `user5` | `0` | 0 … 15 |
+| User Data 6 | `user6` | `0` | 0 … 15 |
+| User Data 7 | `user7` | `0` | 0 … 15 |
+| User Data 8 | `user8` | `0` | 0 … 15 |
 
 ### Math — `mathCHOP`
 
@@ -839,6 +1111,7 @@ Incoming OSC messages, one channel per address argument.
 | OSC Address Scope | `oscaddressscope` | *(empty)* |  |
 | Use Global Rate | `useglobalrate` | `true` |  |
 | Default Sample Rate | `samplerate` | `60` | 1 … 48000 |
+| Reset | `reset` | `false` |  |
 
 ### OSC Out — `oscoutCHOP`
 
@@ -928,6 +1201,54 @@ A fixed-length waveform buffer.
 | Phase | `phase` | `0` | 0 … 1 |
 | Channel Name | `name` | `chan1` |  |
 
+### Perform — `performCHOP`
+
+Cook rate, frame time, and time-slice size (TouchDesigner Perform CHOP).
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Sample Rate | `rate` | `60` | 1 … 48000 |
+
+### Perform In — `performinCHOP`
+
+Perform panel pointer: u, v, lbutton, click, release, wheel, inside.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+### Reaper Out — `reaperoutCHOP`
+
+Sends its input as ReaStream UDP audio (float32) for the Reaper ReaStream plugin.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Network Address | `netaddress` | `127.0.0.1` |  |
+| Identifier | `identifier` | `default` |  |
+
+### Record — `recordCHOP`
+
+Appends each time slice while Record is on, until Clear or the length limit.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Record | `record` | `false` |  |
+| Clear | `clear` | `false` |  |
+| Length (seconds) | `maxlength` | `10` | 0.01 … 600 |
+
 ### Rename — `renameCHOP`
 
 Rename channels by pattern.
@@ -938,6 +1259,28 @@ Rename channels by pattern.
 |---|---|---|---|
 | Rename Channels | `from` | `*` |  |
 | To | `to` | `chan[1-]` |  |
+
+### Reorder — `reorderCHOP`
+
+Sort channels by the number at the end of the name.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Method | `method` | `numsuffix` | `numsuffix` |
+
+### Replace — `replaceCHOP`
+
+Replace samples that match a value.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Value | `value` | `0` |  |
+| Replace With | `replace` | `1` |  |
+| Tolerance | `tolerance` | `0` | 0 … 10 |
 
 ### Resample — `resampleCHOP`
 
@@ -950,6 +1293,19 @@ Change how many samples a buffer has, keeping its shape.
 | Length (samples) | `length` | `64` | 1 … 8192 |
 | Interpolate | `interp` | `linear` | `linear` · `nearest` |
 
+### Sample Rate — `samplerateCHOP`
+
+Keep the samples and replace the sample-rate metadata.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Sample Rate | `rate` | `60` | 1 … 48000 |
+| Time Slice | `timeslice` | `false` |  |
+| Scope | `scope` | `*` |  |
+| Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |
+
 ### Select — `selectCHOP`
 
 Pick and rename channels.
@@ -958,8 +1314,37 @@ Pick and rename channels.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Channel Names | `channels` | `*` |  |
-| Rename To | `rename` | *(empty)* |  |
+| CHOP | `chop` | *(empty)* |  |
+| Channel Names | `channames` | `*` |  |
+| Rename From | `renamefrom` | *(empty)* |  |
+| Rename To | `renameto` | *(empty)* |  |
+
+### Serial — `serialCHOP`
+
+Read or write bytes on a serial port.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Port (blank = first) | `port` | *(empty)* |  |
+| Baud | `baud` | `9600` | 300 … 921600 |
+| Direction | `direction` | `in` | `in` · `out` |
+| Active | `active` | `true` |  |
+| Sample Rate | `rate` | `60` | 1 … 48000 |
+
+### Shift — `shiftCHOP`
+
+Slide samples left or right, holding or filling with zero.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Shift (samples) | `samples` | `0` | -8192 … 8192 |
+| Extend | `extend` | `hold` | `hold` · `zero` |
 
 ### Shuffle — `shuffleCHOP`
 
@@ -987,10 +1372,11 @@ The rate of change of a channel.
 
 Point attributes as channels, one sample per point.
 
-**Inputs:** in
+*No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| SOP | `sop` | *(empty)* |  |
 | Attributes (P N uv Cd) | `attrs` | `P` |  |
 
 ### Speed — `speedCHOP`
@@ -1033,6 +1419,21 @@ Choose one of two inputs.
 |---|---|---|---|
 | Index | `index` | `0` | 0 … 1 |
 
+### Timecode — `timecodeCHOP`
+
+Hour, minute, second and frame from the timeline or absolute time.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| FPS | `ratemenu` | `60` | `24` · `25` · `30` · `60` |
+| Drop Frame | `dropframe` | `false` |  |
+| Source | `source` | `timeline` | `timeline` · `abs` |
+| Sample Rate | `rate` | `60` | 1 … 48000 |
+
 ### Timer — `timerCHOP`
 
 A running timer with fraction, seconds, cycles and done.
@@ -1052,12 +1453,13 @@ A running timer with fraction, seconds, cycles and done.
 
 Pixels as channels r g b a. `image` reads every pixel (top row first, at most 128x128) and adds u/v positions, centred, v up — instance a Geometry COMP with tx=u ty=v tz=g for a camera point cloud. Reads last frame; costs a GPU sync, so put a Resolution TOP in front.
 
-**Inputs:** in
+*No inputs — this is a generator.*
 
 *Time dependent: cooks every frame, and everything downstream of it does too.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| TOP | `top` | *(empty)* |  |
 | Active | `active` | `true` |  |
 | Read | `layout` | `rows` | `rows` · `columns` · `average` · `image` |
 | Row / Column | `index` | `0` | 0 … 4096 |
@@ -1073,6 +1475,8 @@ The last few seconds of each channel as one buffer, oldest sample first — draw
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Window (s) | `window` | `2` | 0.05 … 60 |
+| Reset | `reset` | `false` |  |
+| Reset Pulse | `resetpulse` | `false` |  |
 
 ### Trigger — `triggerCHOP`
 
@@ -1090,6 +1494,41 @@ An attack/decay/sustain/release envelope per channel.
 | Sustain Level | `sustain` | `0` | 0 … 1 |
 | Release (s) | `release` | `0.3` | 0 … 4 |
 
+### Trim — `trimCHOP`
+
+Keep the samples between a start and an end.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Unit Values | `relative` | `Absolute` | `Absolute` · `Relative to Start/End` · `Relative to Current Frame` |
+| Start | `start` | `0` |  |
+| Start Unit | `startunit` | `seconds` | `seconds` · `frames` · `samples` |
+| End | `end` | `1` |  |
+| End Unit | `endunit` | `seconds` | `seconds` · `frames` · `samples` |
+| Time Slice | `timeslice` | `false` |  |
+| Scope | `scope` | `*` |  |
+| Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |
+
+### Wave — `waveCHOP`
+
+One cycle of a sine, triangle, ramp, square, pulse or gaussian.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Type | `type` | `sine` | `sine` · `triangle` · `ramp` · `square` · `pulse` · `gaussian` |
+| Length (samples) | `length` | `64` | 1 … 65536 |
+| Periods | `periods` | `1` | 0.1 … 64 |
+| Amplitude | `amplitude` | `1` | 0 … 4 |
+| Offset | `offset` | `0` | -2 … 2 |
+| Phase | `phase` | `0` | 0 … 1 |
+| Pulse Width | `pulsewidth` | `0.5` | 0 … 1 |
+| Channel Name | `name` | `chan1` |  |
+| Sample Rate | `rate` | `60` | 1 … 48000 |
+
 ---
 
 ## COMP
@@ -1103,6 +1542,15 @@ A plain component: a network inside, with **In** and **Out** operators (TOP/CHOP
 Add `inTOP` / `outTOP` (or other family In/Out), wire internally, and the parent network sees one operator.
 
 *No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Width | `w` | `0.2` |  |
+| Height | `h` | `0.08` |  |
+| Background TOP | `top` | *(empty)* |  |
+| Border Over Children | `borderover` | `false` |  |
+| Parent Shortcut | `parentshortcut` | *(empty)* |  |
+| Display Mode | `displaymode` | `default` | `default` · `inside` · `viewer` · `mixed` |
 
 ### Button — `buttonCOMP`
 
@@ -1315,6 +1763,61 @@ Places a SOP in the scene, optionally instanced.
 | Blue Channel | `cb` | *(empty)* |  |
 | Alpha Channel | `ca` | *(empty)* |  |
 
+### Geo Text — `geotextCOMP`
+
+3D text component with transform and alignment parameters (TouchDesigner geotext COMP).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Text | `text` | *(empty)* |  |
+| Scale | `scale` | `1` | 0.01 … 200 |
+| Translate X | `tx` | `0` |  |
+| Translate Y | `ty` | `0` |  |
+| Translate Z | `tz` | `0` |  |
+| Rotate X | `rx` | `0` |  |
+| Rotate Y | `ry` | `0` |  |
+| Rotate Z | `rz` | `0` |  |
+| Vertical Align | `aligny` | `baseline` | `baseline` · `bottom` · `center` · `top` |
+| Vertical Align Mode | `alignymode` | `bbox` | `bbox` · `origin` |
+| X | `x` | `0.05` | 0 … 1 |
+| Y | `y` | `0.05` | 0 … 1 |
+| Width | `w` | `0.2` | 0 … 1 |
+| Height | `h` | `0.08` | 0 … 1 |
+| Fixed Aspect | `fixedaspect` | `off` | `off` · `horizontal` · `vertical` |
+| Aspect Ratio | `aspect` | `1` | 0.01 … 16 |
+| Depth Layer | `layer` | `0` |  |
+| Horizontal Mode | `hmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Left Anchor | `leftanchor` | `0` | 0 … 1 |
+| Left Offset | `leftoffset` | `0` |  |
+| Right Anchor | `rightanchor` | `1` | 0 … 1 |
+| Right Offset | `rightoffset` | `0` |  |
+| Horizontal Origin | `horigin` | `0` | 0 … 1 |
+| Horizontal Fill Weight | `hfillweight` | `1` | 0 … 8 |
+| Vertical Mode | `vmode` | `fixed` | `fixed` · `fill` · `anchors` |
+| Bottom Anchor | `bottomanchor` | `0` | 0 … 1 |
+| Bottom Offset | `bottomoffset` | `0` |  |
+| Top Anchor | `topanchor` | `1` | 0 … 1 |
+| Top Offset | `topoffset` | `0` |  |
+| Vertical Origin | `vorigin` | `0` | 0 … 1 |
+| Vertical Fill Weight | `vfillweight` | `1` | 0 … 8 |
+| Parent Alignment | `alignallow` | `allow` | `allow` · `ignore` · `ignoremargin` |
+| Align Order | `alignorder` | `0` |  |
+| Post Offset X | `postoffsetx` | `0` |  |
+| Post Offset Y | `postoffsety` | `0` |  |
+| Display | `display` | `true` |  |
+| Enable | `enable` | `true` |  |
+| Click Through | `clickthrough` | `false` |  |
+| Opacity | `opacity` | `1` | 0 … 1 |
+| Background R | `bgcolorr` | `0.22` | 0 … 1 |
+| Background G | `bgcolorg` | `0.24` | 0 … 1 |
+| Background B | `bgcolorb` | `0.3` | 0 … 1 |
+| Background Alpha | `bgalpha` | `1` | 0 … 1 |
+| TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
+| Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
+| Border Over Children | `borderover` | `false` |  |
+
 ### GLSL — `glslCOMP`
 
 Panel region filled from an interior glslTOP network (layout only until cook hook lands).
@@ -1416,6 +1919,16 @@ Scrollable list panel — parameters match TD; rendering uses interior TOPs.
 | TOP Fill | `topfill` | `best` | `off` · `horizontal` · `vertical` · `best` · `native` · `outside` |
 | Composite | `composite` | `over` | `over` · `under` · `inside` · `outside` · `add` · `subtract` · `multiply` |
 | Border Over Children | `borderover` | `false` |  |
+
+### Missing — `missingCOMP`
+
+Placeholder for an unknown or removed component type.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Missing Operator Type | `originaltype` | *(empty)* |  |
 
 ### OP Viewer — `opviewerCOMP`
 
@@ -1666,7 +2179,7 @@ Tabular panel tied to a tableDAT (stub — interior TOP/DAT wiring).
 
 ### Text — `textCOMP`
 
-Static or expression-driven text via interior textTOP.
+Displays formatted text in a panel rect; interior textTOP reads parent Text parameters.
 
 *No inputs — this is a generator.*
 
@@ -1674,6 +2187,10 @@ Static or expression-driven text via interior textTOP.
 |---|---|---|---|
 | Text | `text` | *(empty)* |  |
 | Font Size | `fontsize` | `0.5` | 0.05 … 2 |
+| Horizontal Align | `halign` | `left` | `left` · `centre` · `right` |
+| Vertical Align | `valign` | `centre` | `top` · `centre` · `bottom` |
+| Word Wrap | `wordwrap` | `true` |  |
+| Edit Mode | `editmode` | `locked` | `locked` · `editable` · `selectonly` |
 | X | `x` | `0.05` | 0 … 1 |
 | Y | `y` | `0.05` | 0 … 1 |
 | Width | `w` | `0.2` | 0 … 1 |
@@ -1796,7 +2313,7 @@ Panel UI lives in **containerCOMP** + Perform (F1), not here. **Performance** ma
 
 ### CHOP Execute — `chopexecuteDAT`
 
-Python callbacks when a watched channel changes or crosses a threshold.
+CHOP change callbacks.
 
 *No inputs — this is a generator.*
 
@@ -1813,19 +2330,20 @@ Python callbacks when a watched channel changes or crosses a threshold.
 
 ### CHOP to DAT — `choptodatDAT`
 
-Channels as a table of numbers.
+Channels as table.
 
-**Inputs:** in
+*No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| CHOP | `chop` | *(empty)* |  |
 | Channels As | `layout` | `columns` | `columns` · `rows` |
 | Include Names | `names` | `true` |  |
 | Number Format | `format` | `%.6g` |  |
 
 ### Convert — `convertDAT`
 
-Between a table and a block of text.
+Table/text convert.
 
 **Inputs:** in
 
@@ -1836,7 +2354,7 @@ Between a table and a block of text.
 
 ### Execute — `executeDAT`
 
-Python callbacks at the start and end of a frame.
+Frame Python callbacks.
 
 *No inputs — this is a generator.*
 
@@ -1848,11 +2366,86 @@ Python callbacks at the start and end of a frame.
 | Callbacks DAT | `callbacks` | *(empty)* |  |
 | Source | `source` | *(multi-line)* |  |
 
+### File In — `fileinDAT`
+
+Read text file.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File | `file` | *(empty)* |  |
+| Read As Table | `astable` | `false` |  |
+| Delimiter | `delimiter` | `tab` | `tab` · `comma` |
+
+### File Out — `fileoutDAT`
+
+Write text file.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File | `file` | `out.txt` |  |
+| Append | `append` | `false` |  |
+
+### Folder — `folderDAT`
+
+List folder.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Root Folder | `folder` | *(empty)* |  |
+| Names | `names` | `*` |  |
+| Type | `type` | `filesandfolders` | `files` · `folders` · `filesandfolders` |
+| Include Subfolders | `recursive` | `false` |  |
+| Minimum Depth | `mindepth` | `0` | 0 … 32 |
+| Limit Depth | `limitdepth` | `false` |  |
+| Maximum Depth | `maxdepth` | `1` | 0 … 32 |
+| Date Format | `dateformat` | `std` | `std` · `epoch` |
+| Name | `namecol` | `true` |  |
+| Base Name | `basenamecol` | `false` |  |
+| Extension | `extensioncol` | `false` |  |
+| Type | `typecol` | `true` |  |
+| Size | `sizecol` | `false` |  |
+| Depth | `depthcol` | `false` |  |
+| Folder | `foldercol` | `false` |  |
+| Path | `pathcol` | `false` |  |
+| Relative Path | `relpathcol` | `false` |  |
+| Date Created | `datecreatedcol` | `false` |  |
+| Date Modified | `datemodifiedcol` | `false` |  |
+| Date Accessed | `dateaccessedcol` | `false` |  |
+
 ### In — `inDAT`
 
 A data input on this component's node.
 
 *No inputs — this is a generator.*
+
+### Info — `infoDAT`
+
+Operator metadata as a table.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Operator | `op` | *(empty)* |  |
+| Language | `language` | `text` | `text` · `python` · `glsl` |
+
+### Insert — `insertDAT`
+
+Insert rows/columns.
+
+**Inputs:** base, insert
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Insert | `direction` | `rows` | `rows` · `columns` |
+| At Index | `index` | `0` | 0 … 10000 |
 
 ### JSON — `jsonDAT`
 
@@ -1864,21 +2457,105 @@ Parse JSON text into a path/value table.
 |---|---|---|---|
 | JSON Pointer (e.g. /items/0) | `pointer` | *(empty)* |  |
 
+### Keyboard In — `keyboardinDAT`
+
+Key table.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Keys (empty = all held keys) | `keys` | *(empty)* |  |
+
 ### Merge — `mergeDAT`
 
-Join two DATs by rows or by columns.
+Merge DATs by rows or columns.
 
-**Inputs:** a, b
+**Inputs:** in
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Merge By | `how` | `rows` | `rows` · `columns` |
 
+### Monitor — `monitorDAT`
+
+Network monitor.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+### MQTT Client — `mqttclientDAT`
+
+MQTT (stub).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Broker URL | `broker` | *(empty)* |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+
+### NDI — `ndiDAT`
+
+NDI metadata (stub).
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| NDI Source Name | `source` | *(empty)* |  |
+
 ### Null — `nullDAT`
 
-Pass-through. A stable name to reference.
+Pass-through.
 
 **Inputs:** in
+
+### OSC In — `oscinDAT`
+
+OSC receive table.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Protocol | `protocol` | `msging` | `msging` · `multicastmsging` |
+| Network Address | `netaddress` | `239.255.0.1` |  |
+| Port | `port` | `7000` | 1 … 65535 |
+| Local Address | `localaddress` | *(empty)* |  |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+
+### OSC Out — `oscoutDAT`
+
+OSC send.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Network Address | `address` | `127.0.0.1` |  |
+| Port | `port` | `7001` | 1 … 65535 |
+| OSC Address | `oscaddress` | `/test` |  |
+| Float Value | `value` | `0` |  |
+| Send Input On Change | `sendonchange` | `false` |  |
+
+### Missing — `otd_core::MISSING_DAT`
+
+Placeholder DAT.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Missing Operator Type | `originaltype` | *(empty)* |  |
 
 ### Out — `outDAT`
 
@@ -1888,7 +2565,7 @@ This component's data output.
 
 ### Panel Execute — `panelexecuteDAT`
 
-Python callbacks when a panel value changes.
+Panel value callbacks.
 
 *No inputs — this is a generator.*
 
@@ -1907,9 +2584,21 @@ Python callbacks when a panel value changes.
 | Callbacks DAT | `callbacks` | *(empty)* |  |
 | Source | `source` | *(multi-line)* |  |
 
+### Panel Table Text — `paneltabletextDAT`
+
+Panel list/table as text.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Panel COMP | `component` | `..` |  |
+| Mode | `mode` | `list` | `list` · `table` |
+| Visible Rows | `visible` | `24` | 1 … 128 |
+
 ### Parameter Execute — `parameterexecuteDAT`
 
-Python callbacks when a watched parameter changes.
+Parameter change callbacks.
 
 *No inputs — this is a generator.*
 
@@ -1924,13 +2613,22 @@ Python callbacks when a watched parameter changes.
 | Callbacks DAT | `callbacks` | *(empty)* |  |
 | Source | `source` | *(multi-line)* |  |
 
-### Script — `scriptDAT`
+### Reorder — `reorderDAT`
 
-Rows produced by a Python script.
+Reorder rows/columns.
 
 **Inputs:** in
 
-*Time dependent: cooks every frame, and everything downstream of it does too.*
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Reorder | `direction` | `rows` | `rows` · `columns` |
+| Order (indices or names) | `order` | `*` |  |
+
+### Script — `scriptDAT`
+
+Python table generator.
+
+*No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
@@ -1938,7 +2636,7 @@ Rows produced by a Python script.
 
 ### Select — `selectDAT`
 
-Pick rows and columns, by name or index.
+Select rows/columns.
 
 **Inputs:** in
 
@@ -1948,9 +2646,26 @@ Pick rows and columns, by name or index.
 | Columns | `cols` | `*` |  |
 | First Row/Column Are Names | `byname` | `true` |  |
 
+### Serial — `serialDAT`
+
+Serial lines.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Port | `port` | `/dev/ttyUSB0` |  |
+| Baud Rate | `baudrate` | `9600` |  |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+
 ### Sort — `sortDAT`
 
-Sort rows by a column, numerically or as text.
+Sort rows.
 
 **Inputs:** in
 
@@ -1963,7 +2678,7 @@ Sort rows by a column, numerically or as text.
 
 ### Substitute — `substituteDAT`
 
-Fill $name placeholders from a two-column lookup table.
+Fill $name placeholders.
 
 **Inputs:** in
 
@@ -1983,6 +2698,26 @@ A table of text, stored in the project file.
 | Contents | `text` | *(multi-line)* |  |
 | Delimiter | `delimiter` | `tab` | `tab` · `comma` |
 
+### TCP/IP — `tcpipDAT`
+
+TCP client/server.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| Mode | `mode` | `client` | `client` · `server` |
+| Network Address | `address` | `127.0.0.1` |  |
+| Port | `port` | `9000` | 1 … 65535 |
+| Local Address | `localaddress` | *(empty)* |  |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+| Send Input On Change | `sendonchange` | `false` |  |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+
 ### Text — `textDAT`
 
 A block of text.
@@ -1992,6 +2727,8 @@ A block of text.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Text | `text` | *(empty)* |  |
+| Language | `language` | `text` | `text` · `python` · `glsl` |
+| Extension | `extension` | *(empty)* |  |
 
 ### Transpose — `transposeDAT`
 
@@ -2001,7 +2738,7 @@ Swap rows and columns.
 
 ### UDP In — `udpinDAT`
 
-Listens for datagrams; table columns address, port, message.
+UDP listen table.
 
 *No inputs — this is a generator.*
 
@@ -2020,7 +2757,7 @@ Listens for datagrams; table columns address, port, message.
 
 ### UDP Out — `udpoutDAT`
 
-Sends with send() / optional Send Input On Change; table shows incoming replies.
+UDP send/receive table.
 
 **Inputs:** in
 
@@ -2041,7 +2778,7 @@ Sends with send() / optional Send Input On Change; table shows incoming replies.
 
 ### Web Client — `webclientDAT`
 
-HTTP client: pulse Fetch to request in a background thread; response body is the DAT contents. WebSocket is not implemented yet.
+HTTP client DAT.
 
 *No inputs — this is a generator.*
 
@@ -2060,7 +2797,7 @@ HTTP client: pulse Fetch to request in a background thread; response body is the
 
 ### Web Server — `webserverDAT`
 
-HTTP server: onHTTPRequest and WebSocket callbacks in the Callbacks DAT; HTTP and WebSocket on the same port.
+HTTP server DAT.
 
 *No inputs — this is a generator.*
 
@@ -2073,6 +2810,32 @@ HTTP server: onHTTPRequest and WebSocket callbacks in the Callbacks DAT; HTTP an
 | Local Address | `localaddress` | *(empty)* |  |
 | Callbacks DAT | `callbacks` | *(empty)* |  |
 | Source | `source` | *(multi-line)* |  |
+
+### WebSocket — `websocketDAT`
+
+WebSocket client.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Active | `active` | `true` |  |
+| URL | `url` | `ws://127.0.0.1:9980/` |  |
+| Maximum Lines | `maxlines` | `20` | 1 … 1000 |
+| Callbacks DAT | `callbacks` | *(empty)* |  |
+| Source | `source` | *(multi-line)* |  |
+
+### XML — `xmlDAT`
+
+Parse XML to table.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Element Path Filter | `root` | *(empty)* |  |
 
 ---
 
@@ -2211,13 +2974,23 @@ Stamp copies with a compounding transform.
 
 ### Facet — `facetSOP`
 
-Recompute normals from the triangles — put after Noise or Twist so lighting follows the new shape. `unique` gives flat, faceted shading.
+Recompute normals from the triangles.
 
 **Inputs:** in
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Normals | `mode` | `smooth` | `smooth` · `unique` |
+
+### File In — `fileinSOP`
+
+Load triangle mesh from a Wavefront .obj file.
+
+*No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File (.obj / .data) | `file` | *(empty)* |  |
 
 ### Grid — `gridSOP`
 
@@ -2229,8 +3002,21 @@ A flat grid of quads — the usual thing to displace.
 |---|---|---|---|
 | Size | `size` | `[2.0, 2.0]` |  |
 | Rows | `rows` | `10` | 2 … 512 |
+| Cols | `cols` | `10` | 2 … 512 |
 | Columns | `columns` | `10` | 2 … 512 |
 | Orientation | `orientation` | `xy` | `xy` · `xz` · `yz` |
+
+### Import Select — `importselectSOP`
+
+Load one object/group from a .obj, optionally merged with the input.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| File (.obj / .data) | `file` | *(empty)* |  |
+| Geometry | `geometry` | *(empty)* |  |
+| Merge Input | `mergeinput` | `false` |  |
 
 ### In — `inSOP`
 
@@ -2249,6 +3035,16 @@ A run of points between two positions.
 | From | `from` | `[-1.0, 0.0, 0.0]` |  |
 | To | `to` | `[1.0, 0.0, 0.0]` |  |
 | Points | `points` | `2` | 2 … 4096 |
+
+### Material — `materialSOP`
+
+Assign a MAT to geometry.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Material | `mat` | *(empty)* |  |
 
 ### Merge — `mergeSOP`
 
@@ -2274,6 +3070,16 @@ Displace points by value noise, along their normals or freely.
 Pass-through. A stable name to reference.
 
 **Inputs:** in
+
+### Missing — `otd_core::MISSING_SOP`
+
+Placeholder for an unknown or removed SOP.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Missing Operator Type | `originaltype` | *(empty)* |  |
 
 ### Out — `outSOP`
 
@@ -2338,7 +3144,7 @@ A cylinder, cone or tapered tube, with optional caps.
 
 ### Twist — `twistSOP`
 
-Twist, bend or taper along one axis, growing with distance from the origin. Needs enough rows along that axis to curve smoothly.
+Twist, bend or taper along one axis, growing with distance from the origin.
 
 **Inputs:** in
 
@@ -2362,6 +3168,45 @@ The two inputs summed.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
+
+### Analyze — `analyzeTOP`
+
+Reduces the input to one pixel: average, minimum or maximum.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Function | `function` | `average` | `average` · `minimum` · `maximum` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Anti Alias — `antialiasTOP`
 
@@ -2372,16 +3217,43 @@ Softens luminance edges in place — FXAA as a post pass.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Strength | `strength` | `1` | 0 … 2 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Blur — `blurTOP`
 
-Separable Gaussian blur.
+Two-pass box blur with an optional pre-shrink.
 
 **Inputs:** in
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Size (px) | `size` | `8` | 0 … 128 |
+| Size (px) | `size` | `8` | 0 … 512 |
+| Pre-Shrink | `preshrink` | `1` | 1 … 16 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Cache — `cacheTOP`
 
@@ -2394,6 +3266,19 @@ Freezes its input. Turn `Active` off and the texture stops updating, which is ho
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Active | `active` | `true` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Channel Mix — `channelmixTOP`
 
@@ -2407,6 +3292,19 @@ Each output channel is a weighted sum of the input's four.
 | Green From RGBA | `green` | `[0.0, 1.0, 0.0, 0.0]` |  |
 | Blue From RGBA | `blue` | `[0.0, 0.0, 1.0, 0.0]` |  |
 | Alpha From RGBA | `alpha` | `[0.0, 0.0, 0.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### CHOP to TOP — `choptotopTOP`
 
@@ -2418,7 +3316,21 @@ Channels as pixels: a row per channel, a column per sample.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| CHOP | `chop` | *(empty)* |  |
 | Channel Layout | `layout` | `mono` | `mono` · `rgba` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Chroma Key — `chromakeyTOP`
 
@@ -2434,6 +3346,19 @@ Key out one colour, matching on hue rather than brightness.
 | Despill | `despill` | `1` | 0 … 1 |
 | Replace Rather Than Cut | `replace` | `false` |  |
 | Replacement | `replacement` | `[0.0, 0.0, 0.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Circle — `circleTOP`
 
@@ -2449,6 +3374,19 @@ An antialiased disc or ellipse.
 | Correct Aspect | `aspect` | `true` |  |
 | Fill | `fill` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Background | `background` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -2462,6 +3400,20 @@ Blend two inputs. Input 2 is composited over input 1.
 |---|---|---|---|
 | Operation | `operation` | `over` | `over` · `add` · `multiply` · `screen` · `difference` · `subtract` · `maximum` · `minimum` · `under` · `inside` · `outside` · `cross` |
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Constant — `constantTOP`
 
@@ -2472,6 +3424,19 @@ A flat colour at a chosen resolution.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Color | `color` | `[0.0, 0.0, 0.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -2490,6 +3455,19 @@ An arbitrary 3x3 kernel: sharpen, blur, edge detect.
 | Normalize | `normalize` | `true` |  |
 | Scale | `scale` | `1` | -4 … 4 |
 | Offset | `offset` | `0` | -1 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Corner Pin — `cornerpinTOP`
 
@@ -2504,6 +3482,19 @@ Drag the image's four corners anywhere — a perspective warp.
 | Top Left | `topleft` | `[0.0, 1.0]` |  |
 | Top Right | `topright` | `[1.0, 1.0]` |  |
 | Extend | `extend` | `zero` | `zero` · `hold` · `repeat` · `mirror` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Crop — `cropTOP`
 
@@ -2519,6 +3510,19 @@ The region you keep is resampled to `Resolution W`/`H`, so this is a crop *and* 
 | Right | `right` | `1` | 0 … 1 |
 | Bottom | `bottom` | `0` | 0 … 1 |
 | Top | `top` | `1` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -2531,6 +3535,20 @@ Each input survives where the other is not.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Difference — `differenceTOP`
 
@@ -2541,6 +3559,20 @@ The absolute difference between the inputs.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Displace — `displaceTOP`
 
@@ -2555,6 +3587,19 @@ Offsets input 1's lookup by channels of input 2.
 | Source Y | `sourcey` | `g` | `r` · `g` · `b` · `a` · `luminance` |
 | Offset | `offset` | `-0.5` | -1 … 1 |
 | Extend | `extend` | `hold` | `zero` · `hold` · `repeat` · `mirror` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Dither — `ditherTOP`
 
@@ -2573,6 +3618,19 @@ Which pattern is the whole look: `bayer4` and `bayer8` are the ordered crosshatc
 | Strength | `strength` | `1` | 0 … 1 |
 | Pixel Size | `scale` | `1` | 1 … 32 |
 | Monochrome | `monochrome` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Edge — `edgeTOP`
 
@@ -2587,6 +3645,19 @@ Sobel edge detection.
 | Direction | `direction` | `both` | `both` · `horizontal` · `vertical` |
 | Keep Colour | `keepcolor` | `0` | 0 … 1 |
 | Edge Colour | `color` | `[1.0, 1.0, 1.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Emboss — `embossTOP`
 
@@ -2600,6 +3671,19 @@ A directional difference, sat at mid grey.
 | Width (px) | `width` | `1` | 0 … 32 |
 | Strength | `strength` | `4` | 0 … 32 |
 | Mix With Source | `mix` | `0` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Feedback — `feedbackTOP`
 
@@ -2616,6 +3700,19 @@ Point `Target TOP` at the node whose output you want to feed back, wire this nod
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Target TOP | `target` | *(empty)* |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Fit — `fitTOP`
 
@@ -2627,6 +3724,19 @@ Resample into a new resolution: fill, fit, stretch or native.
 |---|---|---|---|
 | Fit | `mode` | `fit` | `fill` · `fit` · `stretch` · `native` |
 | Background | `background` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -2641,6 +3751,19 @@ Mirror the image about an axis, or transpose it.
 | Flip Horizontally | `flipx` | `true` |  |
 | Flip Vertically | `flipy` | `false` |  |
 | Transpose | `transpose` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Flow — `flowTOP`
 
@@ -2663,6 +3786,19 @@ The field is the curl of a noise field rather than the noise itself, and that is
 | Field Speed | `speed` | `0.3` | 0 … 8 |
 | Steer From Input 2 | `usefield` | `false` |  |
 | Field Mix | `fieldmix` | `1` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Function — `functionTOP`
 
@@ -2678,6 +3814,19 @@ One unary function per pixel, with a scale and offset either side.
 | Post Multiply | `postmultiply` | `1` | -4 … 4 |
 | Post Add | `postadd` | `0` | -4 … 4 |
 | Include Alpha | `alpha` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### GLSL — `glslTOP`
 
@@ -2695,12 +3844,64 @@ Sources are validated before the GPU sees them, so a typo gives a line number an
 |---|---|---|---|
 | Language | `language` | `wgsl` | `wgsl` · `glsl` |
 | Source | `source` | *(multi-line)* |  |
+| Pixel Shader | `pixeldat` | *(empty)* |  |
+| Compute Shader | `computedat` | *(empty)* |  |
+| GLSL Version | `glslversion` | `glsl450` | `glsl120` · `glsl330` · `glsl450` · `glsl460` |
 | Uniform 1 | `uniform1` | `[1.0, 0.6, 0.2, 1.0]` |  |
 | Uniform 2 | `uniform2` | `[0.0, 0.0, 0.0, 0.0]` |  |
 | Uniform 3 | `uniform3` | `[0.0, 0.0, 0.0, 0.0]` |  |
 | Uniform 4 | `uniform4` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
+| Vector 0 Name | `vec0name` | *(empty)* |  |
+| Vector 0 X | `vec0valuex` | `0` |  |
+| Vector 0 Y | `vec0valuey` | `0` |  |
+| Vector 0 Z | `vec0valuez` | `0` |  |
+| Vector 0 W | `vec0valuew` | `0` |  |
+| Vector 1 Name | `vec1name` | *(empty)* |  |
+| Vector 1 X | `vec1valuex` | `0` |  |
+| Vector 1 Y | `vec1valuey` | `0` |  |
+| Vector 1 Z | `vec1valuez` | `0` |  |
+| Vector 1 W | `vec1valuew` | `0` |  |
+| Vector 2 Name | `vec2name` | *(empty)* |  |
+| Vector 2 X | `vec2valuex` | `0` |  |
+| Vector 2 Y | `vec2valuey` | `0` |  |
+| Vector 2 Z | `vec2valuez` | `0` |  |
+| Vector 2 W | `vec2valuew` | `0` |  |
+| Vector 3 Name | `vec3name` | *(empty)* |  |
+| Vector 3 X | `vec3valuex` | `0` |  |
+| Vector 3 Y | `vec3valuey` | `0` |  |
+| Vector 3 Z | `vec3valuez` | `0` |  |
+| Vector 3 W | `vec3valuew` | `0` |  |
+| Constant 0 Name | `const0name` | *(empty)* |  |
+| Constant 0 Value | `const0value` | `0` |  |
+| Constant 1 Name | `const1name` | *(empty)* |  |
+| Constant 1 Value | `const1value` | `0` |  |
+| Constant 2 Name | `const2name` | *(empty)* |  |
+| Constant 2 Value | `const2value` | `0` |  |
+| Constant 3 Name | `const3name` | *(empty)* |  |
+| Constant 3 Value | `const3value` | `0` |  |
+| Constant 4 Name | `const4name` | *(empty)* |  |
+| Constant 4 Value | `const4value` | `0` |  |
+| Constant 5 Name | `const5name` | *(empty)* |  |
+| Constant 5 Value | `const5value` | `0` |  |
+| Constant 6 Name | `const6name` | *(empty)* |  |
+| Constant 6 Value | `const6value` | `0` |  |
+| Constant 7 Name | `const7name` | *(empty)* |  |
+| Constant 7 Value | `const7value` | `0` |  |
 
 ### HSV Adjust — `hsvadjustTOP`
 
@@ -2716,6 +3917,19 @@ Hue, saturation and value, optionally over one band of the wheel.
 | Contrast | `contrast` | `1` | 0 … 4 |
 | Range Centre | `rangecentre` | `0` | 0 … 1 |
 | Range Width | `rangewidth` | `1` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### HSV to RGB — `hsvtorgbTOP`
 
@@ -2723,11 +3937,43 @@ The inverse of the RGB to HSV TOP.
 
 **Inputs:** in
 
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
+
 ### In — `inTOP`
 
 A texture input on this component's node.
 
 *No inputs — this is a generator.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Inside — `insideTOP`
 
@@ -2738,6 +3984,20 @@ Input 2, kept only where input 1 is opaque.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Lens Distort — `lensdistortTOP`
 
@@ -2756,10 +4016,23 @@ The sign of `Distort` is the whole operator and is easy to get backwards. NEGATI
 | Scale | `scale` | `1` | 0.1 … 4 |
 | Center | `center` | `[0.5, 0.5]` |  |
 | Extend | `extend` | `zero` | `zero` · `hold` · `repeat` · `mirror` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Level — `levelTOP`
 
-Brightness, contrast, gamma, black/white levels.
+Brightness, contrast, gamma, levels and invert.
 
 **Inputs:** in
 
@@ -2772,6 +4045,19 @@ Brightness, contrast, gamma, black/white levels.
 | Black Level | `blacklevel` | `0` | 0 … 1 |
 | White Level | `whitelevel` | `1` | 0 … 1 |
 | Invert | `invert` | `0` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Limit — `limitTOP`
 
@@ -2786,6 +4072,19 @@ Clamp to a range, quantise to a step, or both.
 | Maximum | `max` | `1` | -2 … 2 |
 | Quantize Step | `step` | `0.25` | 0.001 … 1 |
 | Include Alpha | `alpha` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Lookup — `lookupTOP`
 
@@ -2796,6 +4095,19 @@ Input 1's brightness reads a colour out of input 2.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Index By | `source` | `luminance` | `luminance` · `red` · `green` · `blue` · `alpha` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Luma Blur — `lumablurTOP`
 
@@ -2808,6 +4120,19 @@ Blur radius driven by input 2's brightness.
 | White Radius (px) | `white` | `16` | 0 … 128 |
 | Black Radius (px) | `black` | `0` | 0 … 128 |
 | Radius From | `source` | `luminance` | `luminance` · `alpha` · `red` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Luma Level — `lumalevelTOP`
 
@@ -2823,6 +4148,19 @@ Brightness, contrast and gamma on luminance alone, keeping hue.
 | Opacity | `opacity` | `1` | 0 … 1 |
 | Black Level | `blacklevel` | `0` | 0 … 1 |
 | White Level | `whitelevel` | `1` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Math — `mathTOP`
 
@@ -2836,6 +4174,19 @@ Arithmetic on two inputs, per channel.
 | Input 1 Gain | `gain1` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Input 2 Gain | `gain2` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Offset | `offset` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Matte — `matteTOP`
 
@@ -2848,6 +4199,19 @@ Colour from input 1, alpha from input 2.
 | Matte From | `source` | `alpha` | `alpha` · `luminance` · `red` |
 | Invert | `invert` | `false` |  |
 | Premultiply | `premultiply` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Mirror — `mirrorTOP`
 
@@ -2861,6 +4225,19 @@ Fold the image onto itself, including a radial kaleidoscope.
 | Segments | `segments` | `6` | 2 … 32 |
 | Angle | `angle` | `0` | -180 … 180 |
 | Centre | `centre` | `[0.5, 0.5]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Monochrome — `monochromeTOP`
 
@@ -2872,6 +4249,19 @@ Colour to grey, by a choice of weighting.
 |---|---|---|---|
 | Mode | `mode` | `luminance` | `luminance` · `average` · `maximum` · `minimum` · `red` · `green` · `blue` · `alpha` |
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Movie File In — `moviefileinTOP`
 
@@ -2998,6 +4388,20 @@ The two inputs multiplied — darkens.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Noise — `noiseTOP`
 
@@ -3007,14 +4411,30 @@ Fractal value noise. Animate Translate Z to make it move.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Period | `period` | `0.25` | 0.01 … 4 |
-| Harmonics | `harmonics` | `3` | 1 … 10 |
-| Roughness | `roughness` | `0.5` | 0 … 1 |
-| Exponent | `exponent` | `1` | 0.1 … 8 |
+| Period | `period` | `0.25` | 0.001 … 64 |
+| Harmonics | `harmonics` | `3` | 0 … 10 |
+| Harmonic Spread | `spread` | `2` | 1 … 64 |
+| Roughness | `roughness` | `0.5` | 0 … 8 |
+| Harmonic Gain | `gain` | `1` | 0 … 8 |
+| Exponent | `exponent` | `1` | 0.01 … 8 |
+| Seed | `seed` | `0` |  |
 | Translate | `translate` | `[0.0, 0.0, 0.0]` |  |
 | Monochrome | `monochrome` | `true` |  |
-| Amplitude | `amplitude` | `1` | 0 … 4 |
-| Offset | `offset` | `0` | -1 … 1 |
+| Amplitude | `amplitude` | `1` | 0 … 8 |
+| Offset | `offset` | `0.5` | -4 … 4 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3029,12 +4449,41 @@ A height field becomes a tangent-space normal map.
 | Height From | `source` | `luminance` | `luminance` · `alpha` · `red` |
 | Strength | `strength` | `4` | 0 … 64 |
 | Flip Green | `flipgreen` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Null — `nullTOP`
 
 Pass-through. A stable name to reference and to view.
 
 **Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Optical Flow — `opticalflowTOP`
 
@@ -3047,12 +4496,41 @@ Local Lucas-Kanade motion from previous (input 2) to current (input 1). RG = 0.5
 | Vector Gain | `gain` | `1` | 0 … 20 |
 | Noise Regularization | `regularization` | `0.0001` | 0.000001 … 0.1 |
 | Maximum Motion (px/frame) | `maxmotion` | `4` | 0.1 … 16 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Out — `outTOP`
 
 This component's texture output.
 
 **Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Outside — `outsideTOP`
 
@@ -3063,6 +4541,20 @@ Input 2, kept only where input 1 is not.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Over — `overTOP`
 
@@ -3073,19 +4565,55 @@ Input 2 over input 1, by its alpha.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Ramp — `rampTOP`
 
-Linear or radial gradient between two colours.
+Gradient from a DAT table or two colour stops — horizontal, vertical, radial or circular.
 
 *No inputs — this is a generator.*
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Type | `type` | `horizontal` | `horizontal` · `vertical` · `radial` |
+| DAT | `dat` | *(empty)* |  |
+| Type | `type` | `horizontal` | `horizontal` · `vertical` · `radial` · `circular` |
 | Phase | `phase` | `0` | 0 … 1 |
+| Period | `period` | `1` | 0.001 … 32 |
+| Position | `position` | `[0.5, 0.5]` |  |
+| Extend Left | `extendleft` | `hold` | `hold` · `repeat` · `mirror` · `black` · `zero` |
+| Extend Right | `extendright` | `hold` | `hold` · `repeat` · `mirror` · `black` · `zero` |
+| Interpolate Notches | `interp` | `linear` | `step` · `linear` · `easeineaseout` · `hermite` |
+| Curve Tension | `tension` | `0` | 0 … 1 |
+| Anti-Alias | `antialias` | `1` | 0 … 4 |
+| Fit Aspect | `fitaspect` | `fill` | `fill` · `fithorz` · `fitvert` · `fitbest` |
 | Color 1 | `color1` | `[0.0, 0.0, 0.0, 1.0]` |  |
 | Color 2 | `color2` | `[1.0, 1.0, 1.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3105,6 +4633,19 @@ A rectangle, with rounded corners and an optional border.
 | Border Grey | `bordercolor` | `0` | 0 … 1 |
 | Fill | `fill` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Background | `background` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3119,10 +4660,23 @@ Input 2's red and green are the coordinates to read input 1 at.
 | Amount | `amount` | `1` | 0 … 1 |
 | Extend | `extend` | `zero` | `zero` · `hold` · `repeat` · `mirror` |
 | Flip V | `flipv` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Render — `renderTOP`
 
-Draws Geometry components through a Camera.
+Draws the 3D scene referenced by Geometry, Camera and Light.
 
 Depth output is the same draw with the shading skipped, writing distance from the camera as grey — near white, far black, so an unwritten background is black and the result multiplies straight into a composite as a mask.
 
@@ -3144,6 +4698,19 @@ It is metric distance between Depth Near and Depth Far, not the depth buffer's o
 | Output | `output` | `color` | `color` · `depth` |
 | Depth Near | `depthnear` | `0.1` | 0 … 1000 |
 | Depth Far | `depthfar` | `20` | 0.01 … 10000 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3159,6 +4726,19 @@ Build each output channel from a channel of either input.
 | Green | `green` | `input1 g` | `input1 r` · `input1 g` · `input1 b` · `input1 a` · `input2 r` · `input2 g` · `input2 b` · `input2 a` · `input1 luma` · `input2 luma` · `one` · `zero` |
 | Blue | `blue` | `input1 b` | `input1 r` · `input1 g` · `input1 b` · `input1 a` · `input2 r` · `input2 g` · `input2 b` · `input2 a` · `input1 luma` · `input2 luma` · `one` · `zero` |
 | Alpha | `alpha` | `input1 a` | `input1 r` · `input1 g` · `input1 b` · `input1 a` · `input2 r` · `input2 g` · `input2 b` · `input2 a` · `input1 luma` · `input2 luma` · `one` · `zero` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Resolution — `resolutionTOP`
 
@@ -3169,6 +4749,19 @@ Resamples its input to an explicit resolution.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Filter | `filter` | `linear` | `linear` · `nearest` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3184,12 +4777,41 @@ Key out one colour by distance in RGB.
 | Tolerance | `tolerance` | `0.2` | 0 … 1.732 |
 | Softness | `softness` | `0.1` | 0 … 1 |
 | Output | `output` | `keyed` | `keyed` · `matte` · `inverted matte` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### RGB to HSV — `rgbtohsvTOP`
 
 Hue, saturation and value land in the red, green and blue channels.
 
 **Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Screen — `screenTOP`
 
@@ -3200,6 +4822,36 @@ Multiply in the negative — lightens.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
+
+### Screen Grab — `screengrabTOP`
+
+Captures the desktop through ffmpeg.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Screen Index | `screen` | `0` | 0 … 8 |
+| Requested W | `resw` | `1280` | 1 … 16384 |
+| Requested H | `resh` | `720` | 1 … 16384 |
+| Requested Frame Rate | `fps` | `30` | 1 … 120 |
+| Active | `active` | `true` |  |
 
 ### Select — `selectTOP`
 
@@ -3212,6 +4864,19 @@ Reads another TOP's output from the **current** frame, so the source cooks first
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | TOP | `top` | *(empty)* |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Slope — `slopeTOP`
 
@@ -3227,6 +4892,19 @@ The `xy` output is red = d/dx, green = d/dy, centred on 0.5 — which is exactly
 |---|---|---|---|
 | Output | `mode` | `xy` | `xy` · `magnitude` · `direction` |
 | Strength | `strength` | `1` | 0 … 32 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Subtract — `subtractTOP`
 
@@ -3237,17 +4915,70 @@ Input 2 taken away from input 1.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Switch — `switchTOP`
 
-Select one of two inputs, optionally blending between them.
+Select one of its inputs by index, optionally blending.
 
-**Inputs:** 0, 1
+**Inputs:** in1, in2, in3, in4
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Index | `index` | `0` | 0 … 1 |
+| Index | `index` | `0` | 0 … 31 |
 | Blend | `blend` | `false` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
+
+### Syphon In — `syphoninTOP`
+
+Receives a Syphon texture from another application.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Server Name | `name` | *(empty)* |  |
+| Active | `active` | `true` |  |
+
+### Syphon Out — `syphonoutTOP`
+
+Publishes its input as a Syphon server.
+
+**Inputs:** in
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Server Name | `name` | `OpenTouchDesigner` |  |
+| Active | `active` | `true` |  |
 
 ### Text — `textTOP`
 
@@ -3257,6 +4988,8 @@ Draws text, using a font file or the system's.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
+| Field Component | `field` | *(empty)* |  |
+| DAT | `dat` | *(empty)* |  |
 | Text | `text` | `OpenTouchDesigner` |  |
 | Font File | `font` | *(empty)* |  |
 | Size (px) | `size` | `48` | 4 … 512 |
@@ -3266,6 +4999,19 @@ Draws text, using a font file or the system's.
 | Word Wrap | `wrap` | `true` |  |
 | Color | `color` | `[1.0, 1.0, 1.0, 1.0]` |  |
 | Background | `background` | `[0.0, 0.0, 0.0, 0.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 
@@ -3277,12 +5023,25 @@ Split the image in two at a level, with a soft edge.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Threshold | `threshold` | `0.5` | 0 … 1 |
-| Softness | `softness` | `0.02` | 0 … 1 |
+| Threshold | `threshold` | `0.5` | 0 … 4 |
+| Softness | `softness` | `0` | 0 … 1 |
 | Compare | `source` | `luminance` | `luminance` · `maximum` · `alpha` |
 | Invert | `invert` | `false` |  |
 | Below Colour | `below` | `[0.0, 0.0, 0.0, 1.0]` |  |
 | Above Colour | `above` | `[1.0, 1.0, 1.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Tile — `tileTOP`
 
@@ -3297,6 +5056,19 @@ Repeat the image across the frame, optionally mirrored.
 | Mirror | `mirror` | `false` |  |
 | Row Shift | `rowshift` | `0` | 0 … 1 |
 | Column Shift | `columnshift` | `0` | 0 … 1 |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Toon — `toonTOP`
 
@@ -3318,7 +5090,7 @@ Posterising the *luminance*, and only the luminance, collapses a smooth gradient
 
 ### Transform — `transformTOP`
 
-Translate, rotate and scale, with an extend mode.
+Translate, rotate and scale in UV space.
 
 **Inputs:** in
 
@@ -3328,6 +5100,19 @@ Translate, rotate and scale, with an extend mode.
 | Rotate | `rotate` | `0` | -180 … 180 |
 | Scale | `scale` | `[1.0, 1.0]` |  |
 | Extend | `extend` | `zero` | `zero` · `hold` · `repeat` · `mirror` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Under — `underTOP`
 
@@ -3338,6 +5123,20 @@ Input 1 over input 2 — Over, the other way up.
 | Parameter | Name | Default | Range |
 |---|---|---|---|
 | Opacity | `opacity` | `1` | 0 … 1 |
+| Fixed Layer | `size` | `input1` | `input1` · `input2` |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 
 ### Video Device In — `videodeviceinTOP`
 
@@ -3359,6 +5158,30 @@ On macOS the first use raises the system camera-permission prompt, and nothing a
 | Requested Frame Rate | `fps` | `30` | 1 … 240 |
 | Active | `active` | `true` |  |
 
+### Video Stream In — `videostreaminTOP`
+
+Reads a network stream (RTSP, HTTP, HLS) through ffmpeg.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| URL | `url` | *(empty)* |  |
+| Active | `active` | `true` |  |
+
+### Video Stream Out — `videostreamoutTOP`
+
+Sends its input to a network stream URL.
+
+**Inputs:** in
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| URL | `url` | *(empty)* |  |
+| Active | `active` | `false` |  |
+
 ### Voronoi — `voronoiTOP`
 
 Cellular noise, as flat cells, edges or a distance field.
@@ -3379,6 +5202,19 @@ A generator, so nothing is wired in. Jitter at 0 is a regular grid and at 1 the 
 | Output | `output` | `cells` | `cells` · `edges` · `distance` |
 | Color 1 | `color1` | `[0.0, 0.0, 0.0, 1.0]` |  |
 | Color 2 | `color2` | `[1.0, 1.0, 1.0, 1.0]` |  |
+| Output Resolution | `outputresolution` | `useinput` | `useinput` · `eighth` · `quarter` · `half` · `2x` · `4x` · `8x` · `fit` · `limit` · `custom` |
+| W | `resolutionw` | `1280` | 1 … 16384 |
+| H | `resolutionh` | `720` | 1 … 16384 |
+| Use Global Res Multiplier | `resmult` | `true` |  |
+| Output Aspect | `outputaspect` | `useinput` | `useinput` · `resolution` · `custom` |
+| Aspect1 | `aspect1` | `1` |  |
+| Aspect2 | `aspect2` | `1` |  |
+| Aspect Menu | `armenu` | `16:9` | `16:9` · `4:3` · `1:1` · `2.39:1` |
+| Viewer Smoothness | `filtertype` | `linear` | `nearest` · `linear` · `mipmap` |
+| Fill Viewer | `fillmode` | `nativeres` | `useinput` · `fill` · `width` · `height` · `best` · `outside` · `nativeres` |
+| Passes | `npasses` | `1` | 1 … 32 |
+| Channel Mask | `chanmask` | `rgba` |  |
+| Pixel Format | `format` | `useinput` | `useinput` · `rgba8fixed` · `srgba8fixed` · `rgba16float` · `rgba32float` · `rgb10a2fixed` · `rgba16fixed` · `rgba11float` · `rgb16float` |
 | Resolution W | `resw` | `1280` | 1 … 4096 |
 | Resolution H | `resh` | `720` | 1 … 4096 |
 

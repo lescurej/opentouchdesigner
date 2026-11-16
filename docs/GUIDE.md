@@ -141,7 +141,8 @@ trails themselves start flowing.
 *Recipes → Audio → audio, or beat for a clock instead of a microphone.*
 
 A visual that reacts is the difference between a wallpaper and a performance.
-Any CHOP channel can drive any parameter — that is what **Export** mode is.
+Any CHOP channel can drive any parameter with a **`ch()` expression** (drag a
+channel onto the parameter row to set one).
 
 1. Add an **Audio Device In** CHOP and an **Audio Spectrum** CHOP after it
    (or take `audiolevel` from **File → Palette**, which is those two plus
