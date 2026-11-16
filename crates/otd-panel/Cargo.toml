@@ -1,0 +1,19 @@
+[package]
+name = "otd-panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Panel COMP definitions, layout, and touch UI templates"
+
+[dependencies]
+otd-core = { workspace = true }
+
+[dev-dependencies]
+otd-chop = { workspace = true }
+otd-dat = { workspace = true }
+otd-gpu = { workspace = true }
+
+[lints]
+workspace = true
