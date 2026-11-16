@@ -11,11 +11,16 @@ cpal = "0.18.1"
 log = "0.4.33"
 midir = "0.11.0"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std", "now"] }
-otd-core = { version = "0.1.0", path = "../otd-core" }
+otd-core = { workspace = true }
+otd-audio = { workspace = true }
 rosc = "0.11.4"
+rtrb = "0.3.2"
 rustfft = "6.4.1"
 slotmap = "1.1.1"
-thiserror = "2.0.19"
+serialport = "4.7.2"
 
 [dev-dependencies]
 rosc = "0.11.4"
+
+[lints]
+workspace = true

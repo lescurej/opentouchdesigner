@@ -9,7 +9,8 @@
 
 use otd_core::CookContext;
 
-/// Control-rate CHOPs default to this; audio CHOPs carry the device rate.
+/// Control CHOP sample rate (Hz). Matches TD's default; independent of
+/// project timeline fps — a 24 fps show still time-slices control CHOPs here.
 pub const CONTROL_RATE: f64 = 60.0;
 
 /// A safety bound on one frame's slice, so a stalled frame cannot allocate
@@ -136,47 +137,13 @@ pub fn slice_times(ctx: &CookContext, n: usize) -> impl Iterator<Item = f64> + u
     (0..n).map(move |i| start + step * (i + 1) as f64)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_slice_tracks_real_elapsed_time_not_the_nominal_rate() {
-        let mut ctx = CookContext {
-            dt: 1.0 / 60.0,
-            ..Default::default()
-        };
-        assert_eq!(slice_len(60.0, &ctx), 1);
-        assert_eq!(slice_len(44100.0, &ctx), 735);
-
-        // A frame that took twice as long produces twice the samples, which
-        // is the whole point: the signal stays continuous.
-        ctx.dt = 2.0 / 60.0;
-        assert_eq!(slice_len(60.0, &ctx), 2);
-        assert_eq!(slice_len(44100.0, &ctx), 1470);
-    }
-
-    #[test]
-    fn a_slice_is_never_empty() {
-        let mut ctx = CookContext {
-            dt: 0.0,
-            ..Default::default()
-        };
-        assert_eq!(slice_len(60.0, &ctx), 1);
-        ctx.dt = 1e9;
-        assert_eq!(slice_len(44100.0, &ctx), MAX_SLICE);
-    }
-
-    #[test]
-    fn the_last_sample_of_a_slice_is_now() {
-        let ctx = CookContext {
-            time: 10.0,
-            dt: 0.1,
-            ..Default::default()
-        };
-        let times: Vec<f64> = slice_times(&ctx, 4).collect();
-        assert_eq!(times.len(), 4);
-        assert!((times[3] - 10.0).abs() < 1e-12);
-        assert!((times[0] - 9.925).abs() < 1e-12);
-    }
+/// Absolute transport time for each sample in a slice (pairs with [`slice_times`]).
+pub fn slice_abs_times(ctx: &CookContext, n: usize) -> impl Iterator<Item = f64> + use<> {
+    let step = if n > 0 { ctx.dt / n as f64 } else { 0.0 };
+    let start = ctx.abs_time - ctx.dt;
+    (0..n).map(move |i| start + step * (i + 1) as f64)
 }
+
+#[cfg(test)]
+#[path = "tests/data__tests.rs"]
+mod tests;

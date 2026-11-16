@@ -3,10 +3,10 @@
 //! Same shape as the TOP table in `otd-gpu`: one cook function and one entry
 //! per operator, so breadth stays cheap (PLAN.md §6).
 //!
-//! Layout: `helpers`, `operators` (params + cook), `table` (registry entries).
-//! Device I/O operators live in `crate::io` and are appended in `table`.
+//! Layout: `helpers`, `ops/<slug>/mod.rs` (build.rs registry), `table` (rt marks).
+//! Device I/O operators live in `crate::io`; `ops/<slug>/mod.rs` wires `spec()` to `crate::io`.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use otd_core::indexmap::IndexMap;
 use otd_core::{
@@ -15,14 +15,25 @@ use otd_core::{
 
 #[macro_use]
 mod helpers;
-mod operators;
+#[allow(dead_code)]
+mod resample_elemental;
+mod shared;
 mod table;
 
-pub use operators::{CONSTANT, CONSTANT_MAX_ROWS, INFO, PARAMETER};
+include!(concat!(env!("OUT_DIR"), "/registry_generated.rs"));
+
+pub(crate) use filein::cook_file_in_shared;
+
+pub(crate) use lfo::wave;
+pub use constant::{CONSTANT, CONSTANT_MAX_ROWS};
+pub use info::INFO;
+pub use parameter::PARAMETER;
+pub use perform::PERFORM;
+pub(crate) use null::cook as cook_null;
 
 use crate::data::ChopData;
+use crate::engine::ChannelStore;
 use helpers::no_params;
-use operators::cook_null;
 
 /// Per-node scratch that survives between cooks.
 #[derive(Clone, Debug, Default)]
@@ -46,11 +57,15 @@ pub struct ChopCtx<'a> {
     pub node: &'a Node,
     pub eval: &'a EvalContext<'a>,
     pub time: &'a CookContext,
-    pub inputs: Vec<crate::data::ChopData>,
+    pub inputs: Vec<Arc<crate::data::ChopData>>,
     pub foreign: Crossings,
     pub state: &'a mut OpState,
     pub io: &'a mut crate::io::Io,
     pub path: &'a str,
+    pub store: &'a ChannelStore,
+    /// Set by the audio worker: every CHOP in a compiled audio plan runs at
+    /// the device rate, whatever its own Sample Rate parameter says.
+    pub rate_override: Option<f64>,
 }
 
 impl ChopCtx<'_> {
@@ -77,39 +92,69 @@ impl ChopCtx<'_> {
             return 0;
         };
         let chosen = param.eval(self.eval).as_str();
-        param
-            .menu
-            .as_ref()
-            .and_then(|items| items.iter().position(|i| *i == chosen))
-            .unwrap_or(0)
+        param.menu_index(&chosen)
     }
     pub fn foreign(&self, index: usize) -> Option<&otd_core::Crossing> {
         self.foreign.get(index).and_then(|c| c.as_ref())
     }
     pub fn input(&self, index: usize) -> &crate::data::ChopData {
-        static EMPTY: OnceLock<crate::data::ChopData> = OnceLock::new();
+        static EMPTY: OnceLock<Arc<crate::data::ChopData>> = OnceLock::new();
         self.inputs
             .get(index)
-            .unwrap_or_else(|| EMPTY.get_or_init(crate::data::ChopData::empty))
+            .map(|a| a.as_ref())
+            .unwrap_or_else(|| {
+                EMPTY
+                    .get_or_init(|| Arc::new(crate::data::ChopData::empty()))
+                    .as_ref()
+            })
     }
     pub fn rate(&self) -> f64 {
+        if let Some(r) = self.rate_override {
+            return r;
+        }
         let r = self.f("rate") as f64;
-        if r > 0.0 { r } else { crate::data::CONTROL_RATE }
+        if r > 0.0 {
+            r
+        } else {
+            crate::data::CONTROL_RATE
+        }
     }
 }
 
 pub struct ChopSpec {
     pub def: OpDef,
     pub cook: fn(&mut ChopCtx) -> crate::data::ChopData,
+    pub rt_safe: bool,
+    /// Side-effect audio sink (Reaper Out, …) — always frame-cooked.
+    pub rt_audio_sink: bool,
+    /// Lower wins when several worker sinks exist; walk order breaks ties.
+    pub rt_audio_sink_priority: u8,
+}
+
+/// `Audio Device Out` — the only sink the RT worker drives.
+pub const RT_AUDIO_SINK_DEVICE: u8 = 0;
+/// `Reaper Out` — frame-cooked ReaStream; not an RT worker terminal.
+pub const RT_AUDIO_SINK_REAPER: u8 = 1;
+
+pub(crate) fn mark_rt_audio_sink(mut s: ChopSpec, priority: u8) -> ChopSpec {
+    s.rt_audio_sink = true;
+    s.rt_audio_sink_priority = priority;
+    s
 }
 
 pub const NULL: &str = "nullCHOP";
-pub const IN: &str = "inCHOP";
-pub const OUT: &str = "outCHOP";
+pub use connector_in::TYPE_NAME as IN;
+pub use out::TYPE_NAME as OUT;
+
+fn all_specs_vec() -> Vec<ChopSpec> {
+    let mut v = folder_specs();
+    table::mark_rt_safe_chops(&mut v);
+    v
+}
 
 fn specs() -> &'static Vec<ChopSpec> {
     static SPECS: OnceLock<Vec<ChopSpec>> = OnceLock::new();
-    SPECS.get_or_init(table::core_specs)
+    SPECS.get_or_init(all_specs_vec)
 }
 
 /// Small helper so the table above reads as a table.
@@ -134,7 +179,71 @@ pub(crate) fn spec(
             connector: Connector::None,
         },
         cook,
+        rt_safe: false,
+        rt_audio_sink: false,
+        rt_audio_sink_priority: u8::MAX,
     }
+}
+
+pub(crate) fn spec_animated_rt(
+    type_name: &'static str,
+    label: &'static str,
+    inputs: &'static [&'static str],
+    summary: &'static str,
+    params: fn() -> IndexMap<String, Param>,
+    cook: fn(&mut ChopCtx) -> ChopData,
+) -> ChopSpec {
+    let mut s = spec_animated(type_name, label, inputs, summary, params, cook);
+    s.rt_safe = true;
+    s
+}
+
+pub fn is_rt_safe_chop(type_name: &str) -> bool {
+    spec_for(type_name).is_some_and(|s| s.rt_safe)
+}
+
+pub fn is_rt_audio_sink(type_name: &str) -> bool {
+    spec_for(type_name).is_some_and(|s| s.rt_audio_sink)
+}
+
+pub fn is_rt_worker_sink(type_name: &str) -> bool {
+    spec_for(type_name).is_some_and(|s| {
+        s.rt_audio_sink && s.rt_audio_sink_priority == RT_AUDIO_SINK_DEVICE
+    })
+}
+
+fn rt_audio_sink_priority(type_name: &str) -> Option<u8> {
+    spec_for(type_name)
+        .filter(|s| s.rt_audio_sink && s.rt_audio_sink_priority == RT_AUDIO_SINK_DEVICE)
+        .map(|s| s.rt_audio_sink_priority)
+}
+
+/// The `Audio Device Out` the RT worker drives (walk order if several).
+pub fn primary_rt_audio_sink(
+    graph: &otd_core::Graph,
+    audio_nodes: &std::collections::HashSet<otd_core::NodeId>,
+) -> Option<otd_core::NodeId> {
+    let mut best: Option<(otd_core::NodeId, u8)> = None;
+    for id in graph.walk() {
+        if !audio_nodes.contains(&id) {
+            continue;
+        }
+        if graph.node(id).flags.bypass {
+            continue;
+        }
+        let op = graph.node(id).op_type.as_str();
+        let Some(priority) = rt_audio_sink_priority(op) else {
+            continue;
+        };
+        let replace = match best {
+            None => true,
+            Some((_, bp)) => priority < bp,
+        };
+        if replace {
+            best = Some((id, priority));
+        }
+    }
+    best.map(|(id, _)| id)
 }
 
 /// The In and Out operators that give a component its channel connectors.
@@ -151,29 +260,15 @@ pub(crate) fn connector_spec(
     s
 }
 
-/// A converter: one input, of somebody else's family.
-///
-/// The input is called `in` like any other, because from the patch's point of
-/// view it is one — the only thing that differs is which wires will land on
-/// it, and the graph enforces that from [`OpDef::input_families`].
+/// Cross-family source is named on a parameter (TouchDesigner-style), not wired.
 pub(crate) fn converter_spec(
     type_name: &'static str,
     label: &'static str,
-    from: Family,
     summary: &'static str,
     params: fn() -> IndexMap<String, Param>,
     cook: fn(&mut ChopCtx) -> ChopData,
 ) -> ChopSpec {
-    let mut s = spec(type_name, label, &["in"], summary, params, cook);
-    s.def.input_families = match from {
-        Family::Dat => &[Family::Dat],
-        Family::Sop => &[Family::Sop],
-        Family::Top => &[Family::Top],
-        Family::Mat => &[Family::Mat],
-        Family::Comp => &[Family::Comp],
-        Family::Chop => &[Family::Chop],
-    };
-    s
+    spec(type_name, label, &[], summary, params, cook)
 }
 
 /// Same, for operators that must cook every frame — generators over time and
@@ -199,10 +294,14 @@ pub fn all() -> impl Iterator<Item = &'static ChopSpec> {
     specs().iter()
 }
 
+pub fn register_all(registry: &mut OpRegistry) {
+    for s in specs() {
+        registry.register(s.def.clone());
+    }
+}
+
 pub fn registry() -> OpRegistry {
     let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
+    register_all(&mut r);
     r
 }

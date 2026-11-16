@@ -1,10 +1,12 @@
 //! The CHOP cook backend.
 //!
 //! The cooked channels live in a [`ChannelStore`] that is deliberately kept
-//! *outside* the engine. Parameters in Export mode read from it while the
+//! *outside* the engine. Parameter expressions read from it while the
 //! engine is mutating operator state, and splitting the two apart is what
 //! lets both happen in the same frame without fighting the borrow checker —
 //! or worse, without a lock in the cook path.
+
+use std::sync::Arc;
 
 use otd_core::{
     ChannelSource, CookContext, CookError, Cooker, Crossings, EvalContext, Family, Graph, NodeId,
@@ -13,13 +15,13 @@ use otd_core::{
 use slotmap::SecondaryMap;
 
 use crate::data::ChopData;
-use crate::io::Io;
+use crate::io::{Io, PanelInteractionStore, is_panel_widget_op};
 use crate::ops::{self, ChopCtx, OpState};
 
 /// Every CHOP's most recent output.
 #[derive(Default)]
 pub struct ChannelStore {
-    data: SecondaryMap<NodeId, ChopData>,
+    data: SecondaryMap<NodeId, Arc<ChopData>>,
 }
 
 impl ChannelStore {
@@ -27,13 +29,22 @@ impl ChannelStore {
         Self::default()
     }
     pub fn get(&self, id: NodeId) -> Option<&ChopData> {
-        self.data.get(id)
+        self.data.get(id).map(|a| a.as_ref())
     }
-    pub fn insert(&mut self, id: NodeId, data: ChopData) {
+    pub fn arc(&self, id: NodeId) -> Option<Arc<ChopData>> {
+        self.data.get(id).cloned()
+    }
+    pub fn insert(&mut self, id: NodeId, data: Arc<ChopData>) {
         self.data.insert(id, data);
+    }
+    pub fn insert_owned(&mut self, id: NodeId, data: ChopData) {
+        self.data.insert(id, Arc::new(data));
     }
     pub fn remove(&mut self, id: NodeId) {
         self.data.remove(id);
+    }
+    pub fn retain_graph(&mut self, graph: &Graph) {
+        self.data.retain(|id, _| graph.contains(id));
     }
     pub fn clear(&mut self) {
         self.data.clear();
@@ -46,10 +57,33 @@ impl ChannelStore {
     }
 }
 
-/// A read-only view of the network for parameters in Export or Bind mode.
+/// A read-only view of the network for parameter expressions.
 pub struct Network<'a> {
     pub graph: &'a Graph,
     pub chops: &'a ChannelStore,
+    pub panel: Option<&'a PanelInteractionStore>,
+}
+
+impl<'a> Network<'a> {
+    pub fn new(graph: &'a Graph, chops: &'a ChannelStore) -> Self {
+        Self {
+            graph,
+            chops,
+            panel: None,
+        }
+    }
+
+    pub fn with_panel(
+        graph: &'a Graph,
+        chops: &'a ChannelStore,
+        panel: &'a PanelInteractionStore,
+    ) -> Self {
+        Self {
+            graph,
+            chops,
+            panel: Some(panel),
+        }
+    }
 }
 
 impl ChannelSource for Network<'_> {
@@ -81,17 +115,24 @@ impl ChannelSource for Network<'_> {
 
     fn param_value(&self, op_path: &str, param: &str) -> Option<Value> {
         let id = self.graph.find(op_path)?;
-        let p = self.graph.get(id)?.param(param)?;
-        // Evaluated without a network of its own: a Bind reads a value, it
-        // does not chain into another Bind. That keeps the resolution
-        // finite and the failure mode obvious.
+        let node = self.graph.get(id)?;
+        if let Some(panel) = self.panel {
+            if is_panel_widget_op(&node.op_type) {
+                if let Some(v) = panel.panel_param(op_path, param) {
+                    return Some(Value::Float(v as f64));
+                }
+            }
+        }
+        let p = node.param_flexible(param)?;
+        // Evaluated without a network of its own: `par()` reads a value without
+        // chaining further parameter lookups.
         Some(p.eval(&EvalContext::default()))
     }
 
     fn parent_param(&self, node_path: &str, param: &str) -> Option<Value> {
         let id = self.graph.find(node_path)?;
         let parent_id = self.graph.get(id)?.parent?;
-        let p = self.graph.get(parent_id)?.param(param)?;
+        let p = self.graph.get(parent_id)?.param_flexible(param)?;
         let parent_path = self.graph.path(parent_id);
         Some(p.eval(&EvalContext {
             channels: Some(self),
@@ -123,7 +164,26 @@ pub struct ChopEngine {
 
 impl ChopEngine {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: Default::default(),
+            io: Io::new(),
+        }
+    }
+
+    /// Drop operator state and record buffers for ids no longer in the graph;
+    /// recreate vacant slots for nodes an undo brought back (deleting bumps
+    /// the secondary-map version).
+    pub fn sync_with_graph(&mut self, graph: &Graph) {
+        self.state.retain(|id, _| graph.contains(id));
+        self.io.record_buffers.retain(|id, _| graph.contains(*id));
+        for (id, node) in graph.iter() {
+            if node.family != Family::Chop {
+                continue;
+            }
+            if !self.state.contains_key(id) {
+                self.state.insert(id, OpState::default());
+            }
+        }
     }
 
     /// Cook one CHOP and return its channels. The caller stores them — see
@@ -136,7 +196,7 @@ impl ChopEngine {
         eval: &EvalContext,
         chops: &ChannelStore,
         foreign: Crossings,
-    ) -> Result<ChopData, CookError> {
+    ) -> Result<Arc<ChopData>, CookError> {
         let node = graph.get(id).ok_or(CookError::NoSuchNode)?;
         let path = graph.path(id);
 
@@ -151,25 +211,22 @@ impl ChopEngine {
         if node.connector == otd_core::Connector::In {
             return Ok(graph
                 .connector_source(id)
-                .and_then(|src| chops.get(src))
-                .cloned()
-                .unwrap_or_else(ChopData::empty));
+                .and_then(|src| chops.arc(src))
+                .unwrap_or_else(|| Arc::new(ChopData::empty())));
         }
 
         let spec = ops::spec_for(&node.op_type)
             .ok_or_else(|| CookError::op(&path, format!("unknown CHOP `{}`", node.op_type)))?;
 
-        // Inputs are copied rather than borrowed: at control rate that is a
-        // handful of floats, and at audio rate it is one frame of mono.
-        let inputs: Vec<ChopData> = node
+        // Wires share [`Arc`] handles — cloning a static File In clip is cheap.
+        let inputs: Vec<Arc<ChopData>> = node
             .inputs
             .iter()
             .enumerate()
             .map(|(i, slot)| {
                 slot.and_then(|_| graph.resolve_input_source(id, i))
-                    .and_then(|src| chops.get(src))
-                    .cloned()
-                    .unwrap_or_else(ChopData::empty)
+                    .and_then(|src| chops.arc(src))
+                    .unwrap_or_else(|| Arc::new(ChopData::empty()))
             })
             .collect();
 
@@ -179,6 +236,11 @@ impl ChopEngine {
             path: Some(&path),
             ..*eval
         };
+        if !self.state.contains_key(id) {
+            self.state.insert(id, OpState::default());
+        }
+        let st = self.state.get_mut(id).ok_or(CookError::NoSuchNode)?;
+        let io = &mut self.io;
         let mut cctx = ChopCtx {
             graph,
             id,
@@ -187,11 +249,18 @@ impl ChopEngine {
             time: ctx,
             inputs,
             foreign,
-            state: self.state.entry(id).unwrap().or_default(),
-            io: &mut self.io,
+            state: st,
+            io,
             path: &path,
+            store: chops,
+            rate_override: None,
         };
-        Ok((spec.cook)(&mut cctx))
+        let out = if node.op_type == crate::io::FILE_IN {
+            crate::ops::cook_file_in_shared(&mut cctx)
+        } else {
+            Arc::new((spec.cook)(&mut cctx))
+        };
+        Ok(out)
     }
 
     /// A device or network message for this node, shown on the node body.
@@ -201,6 +270,7 @@ impl ChopEngine {
 
     pub fn forget(&mut self, id: NodeId) {
         self.state.remove(id);
+        self.io.record_buffers.remove(&id);
     }
 
     pub fn reset(&mut self) {
@@ -230,25 +300,23 @@ impl ChopHost {
 
     /// The current value of a channel, by node and channel name.
     pub fn value(&self, graph: &Graph, path: &str, channel: &str) -> Option<f32> {
-        Network {
-            graph,
-            chops: &self.channels,
-        }
-        .channel(path, channel)
+        Network::new(graph, &self.channels).channel(path, channel)
     }
 }
 
 impl Cooker for ChopHost {
-    fn cook(&mut self, graph: &Graph, id: NodeId, ctx: &CookContext) -> Result<otd_core::CookOutput, CookError> {
+    fn cook(
+        &mut self,
+        graph: &Graph,
+        id: NodeId,
+        ctx: &CookContext,
+    ) -> Result<otd_core::CookOutput, CookError> {
         if graph.get(id).map(|n| n.family) != Some(Family::Chop) {
             return Ok(otd_core::CookOutput::Updated);
         }
         let ChopHost { engine, channels } = self;
         let data = {
-            let net = Network {
-                graph,
-                chops: channels,
-            };
+            let net = Network::new(graph, channels);
             let path = graph.path(id);
             let eval = ctx.eval_for_node(graph, id, &net, &path);
             engine.cook_node(graph, id, ctx, &eval, channels, Crossings::new())?
