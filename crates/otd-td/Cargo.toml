@@ -1,0 +1,21 @@
+[package]
+name = "otd-td"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "TouchDesigner .toe / .tox container decode and TD→OTD parity reports"
+
+[dependencies]
+flate2 = "1.1.8"
+otd-core = { workspace = true }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+otd-engine = { workspace = true }
+otd-gpu = { workspace = true }
+otd-sop = { workspace = true }
+
+[lints]
+workspace = true
