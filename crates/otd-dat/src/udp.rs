@@ -1,8 +1,10 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use otd_core::Node;
+use otd_core::stop_io;
 
 use crate::DatData;
 
@@ -19,15 +21,16 @@ pub struct UdpDatagram {
 pub struct UdpListener {
     socket: UdpSocket,
     pub inbox: Arc<Mutex<Vec<UdpDatagram>>>,
-    pub pending: Arc<Mutex<Vec<UdpDatagram>>>,
+    pub display: Vec<UdpDatagram>,
     stop: Arc<AtomicBool>,
+    _thread: Option<JoinHandle<()>>,
     pub port: u16,
     pub local_address: String,
 }
 
 impl Drop for UdpListener {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        stop_io(&self.stop, &mut self._thread);
     }
 }
 
@@ -51,16 +54,14 @@ impl UdpListener {
         let bound_port = socket.local_addr().map(|a| a.port()).unwrap_or(port);
 
         let inbox: Arc<Mutex<Vec<UdpDatagram>>> = Arc::new(Mutex::new(Vec::new()));
-        let pending: Arc<Mutex<Vec<UdpDatagram>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = inbox.clone();
-        let pending_sink = pending.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
         let recv = socket
             .try_clone()
             .map_err(|e| format!("UDP socket clone: {e}"))?;
 
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name(format!("otd-udp-{bound_port}"))
             .spawn(move || {
                 let mut buf = [0u8; 65536];
@@ -81,14 +82,10 @@ impl UdpListener {
                     let Ok(mut inbox) = sink.lock() else {
                         break;
                     };
-                    inbox.push(dg.clone());
+                    inbox.push(dg);
                     if inbox.len() > KEEP_CAP {
                         let excess = inbox.len() - KEEP_CAP;
                         inbox.drain(..excess);
-                    }
-                    drop(inbox);
-                    if let Ok(mut pend) = pending_sink.lock() {
-                        pend.push(dg);
                     }
                 }
             })
@@ -97,8 +94,9 @@ impl UdpListener {
         Ok(UdpListener {
             socket,
             inbox,
-            pending,
+            display: Vec::new(),
             stop,
+            _thread: Some(thread),
             port: bound_port,
             local_address: local.to_string(),
         })
@@ -200,13 +198,6 @@ fn bytes_display(raw: &[u8]) -> String {
         .map(|b| b.to_string())
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-pub fn drain_pending(pending: &Arc<Mutex<Vec<UdpDatagram>>>) -> Vec<UdpDatagram> {
-    pending
-        .lock()
-        .map(|mut p| std::mem::take(&mut *p))
-        .unwrap_or_default()
 }
 
 pub fn peer_label(d: &UdpDatagram) -> String {

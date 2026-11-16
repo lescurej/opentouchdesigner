@@ -1,9 +1,14 @@
-//! Network DATs: UDP in/out and HTTP for the Web Client DAT.
+//! Network DATs: UDP, HTTP, OSC, TCP, serial, WebSocket, and the monitor log.
 
 use std::collections::HashMap;
 
+use crate::monitor::MonitorLog;
+use crate::osc::OscListener;
+use crate::serial_io::SerialLink;
+use crate::tcp::{TcpClient, TcpServer};
 use crate::udp::{UdpListener, UdpOutConnection};
 use crate::webserver::WebServer;
+use crate::ws::WsClient;
 
 #[derive(Default)]
 pub struct Net {
@@ -11,6 +16,12 @@ pub struct Net {
     pub(crate) udp_out: HashMap<String, UdpOutConnection>,
     pub(crate) webclient: HashMap<String, WebClient>,
     pub(crate) webserver: HashMap<String, WebServer>,
+    pub(crate) osc_in: HashMap<String, OscListener>,
+    pub(crate) tcp_client: HashMap<String, TcpClient>,
+    pub(crate) tcp_server: HashMap<String, TcpServer>,
+    pub(crate) serial: HashMap<String, SerialLink>,
+    pub(crate) ws_client: HashMap<String, WsClient>,
+    pub monitor: MonitorLog,
 }
 
 impl Net {
@@ -19,6 +30,12 @@ impl Net {
         self.udp_out.clear();
         self.webclient.clear();
         self.webserver.clear();
+        self.osc_in.clear();
+        self.tcp_client.clear();
+        self.tcp_server.clear();
+        self.serial.clear();
+        self.ws_client.clear();
+        self.monitor = MonitorLog::default();
     }
 }
 
@@ -58,11 +75,7 @@ impl Default for WebClient {
 }
 
 pub(crate) fn webclient_poll(slot: &mut WebClient) {
-    let done = slot
-        .result
-        .lock()
-        .ok()
-        .and_then(|mut g| g.take());
+    let done = slot.result.lock().ok().and_then(|mut g| g.take());
     let Some(done) = done else {
         return;
     };

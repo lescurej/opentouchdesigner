@@ -27,6 +27,10 @@ pub fn operator_uses_callbacks_dat(op_type: &str) -> bool {
             | ops::WEBSERVER
             | ops::UDP_IN
             | ops::UDP_OUT
+            | ops::TCPIP
+            | ops::SERIAL
+            | ops::WEBSOCKET
+            | ops::MQTT_CLIENT
     )
 }
 
@@ -39,6 +43,10 @@ pub fn default_inline_script(op_type: &str) -> &'static str {
         ops::WEBCLIENT => ops::WEBCLIENT_CALLBACKS,
         ops::WEBSERVER => ops::WEBSERVER_CALLBACKS,
         ops::UDP_IN | ops::UDP_OUT => ops::UDP_RECEIVE_CALLBACKS,
+        ops::TCPIP => ops::TCPIP_RECEIVE_CALLBACKS,
+        ops::SERIAL => ops::SERIAL_RECEIVE_CALLBACKS,
+        ops::WEBSOCKET => ops::WEBSOCKET_CALLBACKS,
+        ops::MQTT_CLIENT => ops::MQTT_CLIENT_CALLBACKS,
         _ => "",
     }
 }
@@ -233,17 +241,7 @@ pub fn detach_callbacks_before_delete(graph: &mut Graph, doomed: &[NodeId]) {
 }
 
 pub fn callback_dats_owned_by(graph: &Graph, owners: &[NodeId]) -> Vec<NodeId> {
-    let set: std::collections::HashSet<_> = owners.iter().copied().collect();
-    graph
-        .walk()
-        .into_iter()
-        .filter(|id| {
-            graph
-                .node(*id)
-                .callback_owner
-                .is_some_and(|o| set.contains(&o))
-        })
-        .collect()
+    graph.owned_callback_dats(owners)
 }
 
 impl DatCtx<'_> {

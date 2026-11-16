@@ -11,7 +11,9 @@ fn external_callbacks_dat_overrides_inline_source() {
     let ex_def = reg.get("executeDAT").unwrap().clone();
     let text_def = reg.get("textDAT").unwrap().clone();
     let ex = graph.create(root, &ex_def, Some("exec1")).unwrap();
-    let cb = graph.create(root, &text_def, Some("exec1_callbacks")).unwrap();
+    let cb = graph
+        .create(root, &text_def, Some("exec1_callbacks"))
+        .unwrap();
     graph
         .set_param(
             cb,
@@ -48,9 +50,33 @@ fn install_creates_sibling_and_wires_param() {
     let path = graph.node(id).params["callbacks"].value.as_str();
     assert_eq!(path, "./webclient1_callbacks");
     assert_eq!(graph.node(cb).callback_owner, Some(id));
-    assert!(graph.node(id).params["source"].value.as_str().trim().is_empty());
+    assert!(
+        graph.node(id).params["source"]
+            .value
+            .as_str()
+            .trim()
+            .is_empty()
+    );
     let owner_pos = graph.node(id).pos;
     assert_eq!(graph.node(cb).pos, default_callbacks_dat_pos(owner_pos));
+}
+
+#[test]
+fn deleting_owner_removes_installed_callback_dat() {
+    let reg = otd_dat::ops::registry();
+    let mut graph = Graph::new();
+    let root = graph.root();
+    let def = reg.get("webclientDAT").unwrap().clone();
+    let id = graph.create(root, &def, Some("webclient1")).unwrap();
+    let cb = install_callbacks_dat(&mut graph, &reg, id).expect("installed");
+    assert!(graph.contains(cb));
+
+    graph.remove(id).unwrap();
+    assert!(!graph.contains(id));
+    assert!(
+        !graph.contains(cb),
+        "owned callback DAT should be removed with its operator"
+    );
 }
 
 #[test]
@@ -61,7 +87,9 @@ fn link_updates_callback_owner_field() {
     let ex_def = reg.get("executeDAT").unwrap().clone();
     let text_def = reg.get("textDAT").unwrap().clone();
     let ex = graph.create(root, &ex_def, Some("exec1")).unwrap();
-    let cb = graph.create(root, &text_def, Some("exec1_callbacks")).unwrap();
+    let cb = graph
+        .create(root, &text_def, Some("exec1_callbacks"))
+        .unwrap();
     otd_dat::callbacks::link_callbacks_dat(&mut graph, ex, cb);
     assert_eq!(graph.node(cb).callback_owner, Some(ex));
 }

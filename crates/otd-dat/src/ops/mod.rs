@@ -1,21 +1,20 @@
 //! The DAT operator table.
 //!
-//! Layout: `helpers`, `operators`, `constants`, `table`.
+//! Layout: `helpers`, `ops/<slug>/mod.rs` (build.rs registry), `constants`.
 
 use std::sync::OnceLock;
 
 use otd_core::indexmap::IndexMap;
-use otd_core::{
-    Connector, Crossings, EvalContext, Family, Node, OpDef, OpRegistry, Param, Value,
-};
+use otd_core::{Connector, Crossings, EvalContext, Family, Node, OpDef, OpRegistry, Param, Value};
 
 use crate::{DatData, ScriptHost};
 
 #[macro_use]
 mod helpers;
-mod operators;
+mod callbacks;
 mod constants;
-mod table;
+mod shared;
+include!(concat!(env!("OUT_DIR"), "/registry_generated.rs"));
 
 pub use constants::*;
 
@@ -31,6 +30,9 @@ pub struct DatCtx<'a> {
     pub watched: &'a mut Watched,
     pub path: &'a str,
     pub error: Option<String>,
+    pub input_keys: Option<&'a [String]>,
+    /// Resolved CHOP for `choptodatDAT`: absolute path and dimensions.
+    pub chop_table_src: Option<(String, usize, usize)>,
 }
 
 impl DatCtx<'_> {
@@ -51,16 +53,13 @@ impl DatCtx<'_> {
             return 0;
         };
         let chosen = p.eval(self.eval).as_str();
-        p.menu
-            .as_ref()
-            .and_then(|m| m.iter().position(|i| *i == chosen))
-            .unwrap_or(0)
-    }
-    pub(crate) fn foreign(&self, i: usize) -> Option<&otd_core::Crossing> {
-        self.foreign.get(i).and_then(|c| c.as_ref())
+        p.menu_index(&chosen)
     }
     pub(crate) fn input(&self, i: usize) -> DatData {
         self.inputs.get(i).cloned().unwrap_or_default()
+    }
+    pub(crate) fn foreign(&self, i: usize) -> Option<&otd_core::Crossing> {
+        self.foreign.get(i).and_then(|c| c.as_ref())
     }
 }
 
@@ -75,7 +74,7 @@ pub struct DatSpec {
     pub cook: fn(&mut DatCtx) -> DatData,
 }
 
-fn spec(
+pub(crate) fn spec(
     type_name: &'static str,
     label: &'static str,
     inputs: &'static [&'static str],
@@ -101,7 +100,7 @@ fn spec(
 
 fn specs() -> &'static Vec<DatSpec> {
     static SPECS: OnceLock<Vec<DatSpec>> = OnceLock::new();
-    SPECS.get_or_init(table::core_specs)
+    SPECS.get_or_init(folder_specs)
 }
 
 pub fn spec_for(type_name: &str) -> Option<&'static DatSpec> {
@@ -112,10 +111,14 @@ pub fn all() -> impl Iterator<Item = &'static DatSpec> {
     specs().iter()
 }
 
+pub fn register_all(registry: &mut OpRegistry) {
+    for s in specs() {
+        registry.register(s.def.clone());
+    }
+}
+
 pub fn registry() -> OpRegistry {
     let mut r = OpRegistry::new();
-    for s in specs() {
-        r.register(s.def.clone());
-    }
+    register_all(&mut r);
     r
 }

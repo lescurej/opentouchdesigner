@@ -1,5 +1,6 @@
 [package]
 name = "otd-dat"
+build = "build.rs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,11 +8,18 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-otd-core = { version = "0.1.0", path = "../otd-core" }
+otd-core = { workspace = true }
 serde_json = "1.0.151"
 slotmap = "1.1.1"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 httparse = "1.10.1"
-tungstenite = { version = "0.26.2", default-features = false }
+tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"] }
 sha1 = "0.11.0"
 base64 = "0.22.1"
+rosc = "0.11.4"
+quick-xml = "0.37.5"
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+serialport = "4.6.1"
+
+[lints]
+workspace = true

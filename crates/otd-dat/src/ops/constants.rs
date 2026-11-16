@@ -17,8 +17,61 @@ pub const UDP_RECEIVE_CALLBACKS: &str = "\
 def onReceive(dat, rowIndex, message, bytes, peer):
     pass
 ";
-pub const IN: &str = "inDAT";
-pub const OUT: &str = "outDAT";
+
+pub const TCPIP_RECEIVE_CALLBACKS: &str = "\
+# dat — this operator; rowIndex — table row (1 = first message row)
+def onConnect(dat):
+    pass
+
+def onDisconnect(dat):
+    pass
+
+def onReceive(dat, rowIndex, message, peer):
+    pass
+";
+
+pub const SERIAL_RECEIVE_CALLBACKS: &str = "\
+def onReceive(dat, rowIndex, message):
+    pass
+";
+
+pub const WEBSOCKET_CALLBACKS: &str = "\
+def onOpen(dat):
+    pass
+
+def onClose(dat):
+    pass
+
+def onReceiveText(dat, rowIndex, message):
+    pass
+";
+
+pub const MQTT_CLIENT_CALLBACKS: &str = "\
+def onConnect(dat):
+    pass
+
+def onDisconnect(dat):
+    pass
+
+def onMessage(dat, topic, payload):
+    pass
+";
+
+pub const FILE_IN: &str = "fileinDAT";
+pub const FILE_OUT: &str = "fileoutDAT";
+pub const FOLDER: &str = "folderDAT";
+pub const INSERT: &str = "insertDAT";
+pub const REORDER: &str = "reorderDAT";
+pub const XML: &str = "xmlDAT";
+pub const KEYBOARD_IN: &str = "keyboardinDAT";
+pub const MONITOR: &str = "monitorDAT";
+pub const MQTT_CLIENT: &str = "mqttclientDAT";
+pub const NDI: &str = "ndiDAT";
+pub const OSC_IN: &str = "oscinDAT";
+pub const OSC_OUT: &str = "oscoutDAT";
+pub const SERIAL: &str = "serialDAT";
+pub const TCPIP: &str = "tcpipDAT";
+pub const WEBSOCKET: &str = "websocketDAT";
 
 pub const WEBCLIENT_CALLBACKS: &str = "\
 \"\"\"webclientDAT callbacks\"\"\"
@@ -87,15 +140,28 @@ def onFrameEnd(frame):
 ";
 
 pub const CHOP_EXECUTE_SOURCE: &str = "\
-# A watched channel changed value.
-def onValueChange(channel, value, prev):
+# me - this DAT
+#
+# channel - the Channel object which has changed
+# sampleIndex - the index of the changed sample
+# val - the numeric value of the changed sample
+# prev - the previous sample value
+#
+# Make sure the corresponding toggle is enabled in the CHOP Execute DAT.
+
+def onOffToOn(channel, sampleIndex, val, prev):
     pass
 
-# It crossed the threshold upwards, or downwards.
-def onOffToOn(channel, value):
+def whileOn(channel, sampleIndex, val, prev):
     pass
 
-def onOnToOff(channel, value):
+def onOnToOff(channel, sampleIndex, val, prev):
+    pass
+
+def whileOff(channel, sampleIndex, val, prev):
+    pass
+
+def onValueChange(channel, sampleIndex, val, prev):
     pass
 ";
 
@@ -118,3 +184,4 @@ def onOnToOff(panelValue):
 ";
 
 pub const PANEL_EXECUTE: &str = "panelexecuteDAT";
+pub const PANEL_TABLE_TEXT: &str = "paneltabletextDAT";
