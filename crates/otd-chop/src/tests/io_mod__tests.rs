@@ -154,3 +154,28 @@ use super::*;
         assert_eq!(out.len(), 3);
         assert_eq!(out[1], ("xy_1".to_string(), 0.9));
     }
+
+    #[test]
+    fn touchdesigner_samplerate_is_not_a_channel() {
+        let mut out = Vec::new();
+        collect_osc(
+            &rosc::OscPacket::Bundle(rosc::OscBundle {
+                timetag: rosc::OscTime {
+                    seconds: 0,
+                    fractional: 0,
+                },
+                content: vec![
+                    rosc::OscPacket::Message(rosc::OscMessage {
+                        addr: "/chan1".into(),
+                        args: vec![rosc::OscType::Float(0.25)],
+                    }),
+                    rosc::OscPacket::Message(rosc::OscMessage {
+                        addr: "/_samplerate".into(),
+                        args: vec![rosc::OscType::Int(60), rosc::OscType::Float(60.0)],
+                    }),
+                ],
+            }),
+            &mut out,
+        );
+        assert_eq!(out, vec![("chan1".to_string(), 0.25)]);
+    }

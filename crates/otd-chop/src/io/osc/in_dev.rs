@@ -96,6 +96,7 @@ impl OscIn {
 /// Flatten a packet into `(channel name, value)` pairs. Only the leading
 /// `/` is dropped; the rest of the address, including `/`, is the channel
 /// name (`/test/1` → `test/1`). Several arguments become `path_1`, `path_2`, ...
+/// `/_samplerate` is TouchDesigner sender metadata and is not a channel.
 pub(crate) fn collect_osc(packet: &rosc::OscPacket, out: &mut Vec<(String, f32)>) {
     match packet {
         rosc::OscPacket::Bundle(b) => {
@@ -105,6 +106,9 @@ pub(crate) fn collect_osc(packet: &rosc::OscPacket, out: &mut Vec<(String, f32)>
         }
         rosc::OscPacket::Message(m) => {
             let base = m.addr.strip_prefix('/').unwrap_or(m.addr.as_str());
+            if base == "_samplerate" {
+                return;
+            }
             for (i, arg) in m.args.iter().enumerate() {
                 let value = match arg {
                     rosc::OscType::Float(f) => *f,
