@@ -128,6 +128,7 @@ impl Engines {
     }
 
     pub fn end_frame(&mut self, graph: &Graph) {
+        self.chop.end_frame(&self.channels);
         self.top.end_frame();
         self.top.schedule_chop_pixel_readbacks(graph);
     }

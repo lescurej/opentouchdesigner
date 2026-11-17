@@ -36,7 +36,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     for (ci, ch) in input.channels.iter().enumerate() {
         let ring = &mut c.state.f[ci * len..(ci + 1) * len];
         let mut head = c.state.i[ci] as usize;
-        for x in &ch.samples {
+        for x in ch.as_slice() {
             ring[head] = *x;
             head = (head + 1) % len;
         }

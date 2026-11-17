@@ -22,7 +22,7 @@ fn buffer_fingerprint(input: &ChopData) -> u64 {
     mix(&mut hash, input.channels.len() as u64);
     for ch in &input.channels {
         mix(&mut hash, ch.samples.len() as u64);
-        for sample in &ch.samples {
+        for sample in ch.as_slice() {
             mix(&mut hash, u64::from(sample.to_bits()));
         }
     }

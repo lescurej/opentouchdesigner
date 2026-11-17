@@ -66,7 +66,7 @@ fn cook_frames(graph: &Graph, roots: &[NodeId], watch: NodeId, frames: i64) -> O
         cook.cook_frame(graph, roots, &time, &mut engines).unwrap();
         engines.end_frame(graph);
         let data = engines.channels.get(watch)?;
-        out.push(data.channels.iter().flat_map(|c| c.samples.clone()).collect());
+        out.push(data.channels.iter().flat_map(|c| c.copy_samples()).collect());
         time.advance(time.dt);
     }
     Some(out)

@@ -123,10 +123,10 @@ pub fn describe(
     out
 }
 
-/// Which nodes sit inside a feedback loop, and which Feedback TOP owns them.
+/// Which nodes sit inside a feedback loop, and which Feedback node owns them.
 ///
 /// The loop is the target and everything upstream of it back to the Feedback
-/// TOP: `fb -> decay -> drift -> mix -> out`, with `fb.target = out`. A node
+/// node: `fb -> decay -> drift -> mix -> out`, with `fb.target = out`. A node
 /// inserted anywhere on that path is applied to the picture every lap, which
 /// is what a decay is for and what a hue shift is not — one degree a frame
 /// is a colour wheel spinning, and a ramp multiplied in each lap kills the

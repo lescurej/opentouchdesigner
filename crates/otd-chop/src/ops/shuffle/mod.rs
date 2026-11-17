@@ -42,7 +42,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
             .channels
             .iter()
             .map(|ch| {
-                let mut s = ch.samples.clone();
+                let mut s = ch.as_slice().to_vec();
                 s.reverse();
                 Channel::new(ch.name.clone(), s)
             })

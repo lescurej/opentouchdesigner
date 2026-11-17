@@ -49,7 +49,7 @@ fn a_low_cutoff_audio_filter_stays_finite_at_48k() {
     p.set(flt, "drywet", Value::Float(1.0));
     for _ in 0..60 {
         p.run(flt, 1);
-        let samples = p.data(flt).channel("chan1").expect("chan1").samples.clone();
+        let samples = p.data(flt).channel("chan1").expect("chan1").copy_samples();
         assert!(
             samples.iter().all(|s| s.is_finite()),
             "low cutoff must not blow up the biquad state"
@@ -78,7 +78,7 @@ fn a_low_cutoff_audio_filter_survives_max_resonance() {
     p.set(flt, "drywet", Value::Float(1.0));
     for _ in 0..120 {
         p.run(flt, 1);
-        let samples = p.data(flt).channel("chan1").expect("chan1").samples.clone();
+        let samples = p.data(flt).channel("chan1").expect("chan1").copy_samples();
         assert!(
             samples.iter().all(|s| s.is_finite() && s.abs() <= 8.5),
             "max resonance at 1 Hz must remain stable"
@@ -99,7 +99,7 @@ fn an_audio_filter_accepts_a_control_rate_chop() {
     for rate in [1.0, 60.0] {
         p.set(src, "rate", Value::Float(rate));
         p.run(flt, 4);
-        let samples = p.data(flt).channel("chan1").expect("chan1").samples.clone();
+        let samples = p.data(flt).channel("chan1").expect("chan1").copy_samples();
         assert!(!samples.is_empty(), "rate {rate} produced no samples");
         assert!(
             samples.iter().all(|s| s.is_finite()),

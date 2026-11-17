@@ -2,9 +2,9 @@
 
 Generated from the operator registry — the same table the editor builds its menus and parameter pages from, so this cannot drift from what the operators actually do.
 
-240 operators.
+241 operators.
 
-**CHOP** (77)
+**CHOP** (78)
 
 - [analyzeCHOP](#analyze--analyzechop) — Reduce each channel to one number.
 - [animationCHOP](#animation--animationchop) — Keyframed curves over time.
@@ -29,9 +29,10 @@ Generated from the operator registry — the same table the editor builds its me
 - [dmxoutCHOP](#dmx-out--dmxoutchop) — Sends its channels as DMX over Art-Net or sACN.
 - [expressionCHOP](#expression--expressionchop) — Apply an expression to every sample. `v` is the sample.
 - [fanCHOP](#fan--fanchop) — Fan out an index channel to one on/off channel per value (chan0..chanN-1), or fan many channels in to the index of the first one above zero (-1 if none).
+- [feedbackCHOP](#feedback--feedbackchop) — Last frame's channels of the Target CHOP.
 - [fileinCHOP](#file-in--fileinchop) — Load a .och or .bclip channel file.
 - [fileoutCHOP](#file-out--fileoutchop) — Write the input channels to a .och file.
-- [filterCHOP](#filter--filterchop) — Low-pass or moving-average smoothing.
+- [filterCHOP](#filter--filterchop) — Low-pass, high-pass or moving-average smoothing.
 - [holdCHOP](#hold--holdchop) — Freeze input 1's value until input 2 fires.
 - [inCHOP](#in--inchop) — A channel input on this component's node.
 - [infoCHOP](#info--infochop) — Another operator's info channels (TouchDesigner Info CHOP).
@@ -40,7 +41,7 @@ Generated from the operator registry — the same table the editor builds its me
 - [lastCHOP](#last--lastchop) — One sample per channel: the most recent value.
 - [lengthCHOP](#length--lengthchop) — Change the sample count. The sample rate stays the same.
 - [lfoCHOP](#lfo--lfochop) — A repeating waveform over time.
-- [limitCHOP](#limit--limitchop) — Clamp, wrap, fold or quantise a channel.
+- [limitCHOP](#limit--limitchop) — Clamp, wrap, fold, quantise or normalise a channel.
 - [logicCHOP](#logic--logicchop) — Turn channels into on/off and combine them.
 - [ltcinCHOP](#ltc-in--ltcinchop) — Decode linear timecode audio into hour, minute, second and frame.
 - [ltcoutCHOP](#ltc-out--ltcoutchop) — Encode the timeline as linear timecode audio.
@@ -75,13 +76,13 @@ Generated from the operator registry — the same table the editor builds its me
 - [soptochopCHOP](#sop-to-chop--soptochopchop) — Point attributes as channels, one sample per point.
 - [speedCHOP](#speed--speedchop) — Integrate a channel: velocity becomes position.
 - [springCHOP](#spring--springchop) — Follow a channel like a mass on a spring: overshoot, wobble, then settle. Raise damping to stop the wobble; raise the spring constant to follow faster.
-- [switchCHOP](#switch--switchchop) — Choose one of two inputs.
+- [switchCHOP](#switch--switchchop) — Choose one input by index.
 - [timecodeCHOP](#timecode--timecodechop) — Hour, minute, second and frame from the timeline or absolute time.
 - [timerCHOP](#timer--timerchop) — A running timer with fraction, seconds, cycles and done.
 - [toptochopCHOP](#top-to-chop--toptochopchop) — Pixels as channels r g b a. `image` reads every pixel (top row first, at most 128x128) and adds u/v positions, centred, v up — instance a Geometry COMP with tx=u ty=v tz=g for a camera point cloud. Reads last frame; costs a GPU sync, so put a Resolution TOP in front.
 - [trailCHOP](#trail--trailchop) — The last few seconds of each channel as one buffer, oldest sample first — draw a waveform, or lay out one instance per sample.
 - [triggerCHOP](#trigger--triggerchop) — An attack/decay/sustain/release envelope per channel.
-- [trimCHOP](#trim--trimchop) — Keep the samples between a start and an end.
+- [trimCHOP](#trim--trimchop) — Keep or drop a time range. Relative trims from each end and holds past them.
 - [waveCHOP](#wave--wavechop) — One cycle of a sine, triangle, ramp, square, pulse or gaussian.
 
 **COMP** (20)
@@ -777,6 +778,24 @@ Fan out an index channel to one on/off channel per value (chan0..chanN-1), or fa
 | Channels (fan out) | `channels` | `4` | 1 … 64 |
 | Quantize Output | `quantize` | `on` | `off` · `on` |
 
+### Feedback — `feedbackCHOP`
+
+Last frame's channels of the Target CHOP.
+
+Reads the target CHOP's channels from the **previous** frame. That is what lets a feedback loop exist without a cycle in the cook graph — a Select CHOP, which reads the current frame, would be a cycle and is refused.
+
+Point `Target CHOP` at the node whose output you want to feed back and wire this node's output into that chain. `Reset` clears the held channels.
+
+*No inputs — this is a generator.*
+
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
+| Parameter | Name | Default | Range |
+|---|---|---|---|
+| Target CHOP | `target` | *(empty)* |  |
+| Reset | `reset` | `false` |  |
+| Reset Pulse | `resetpulse` | `false` |  |
+
 ### File In — `fileinCHOP`
 
 Load a .och or .bclip channel file.
@@ -800,7 +819,7 @@ Write the input channels to a .och file.
 
 ### Filter — `filterCHOP`
 
-Low-pass or moving-average smoothing.
+Low-pass, high-pass or moving-average smoothing.
 
 **Inputs:** in
 
@@ -808,8 +827,8 @@ Low-pass or moving-average smoothing.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Type | `type` | `lowpass` | `lowpass` · `movingaverage` |
-| Width (s) | `width` | `0.2` | 0 … 4 |
+| Type | `type` | `lowpass` | `lowpass` · `highpass` · `movingaverage` |
+| Width (s) | `width` | `0.2` | 0 … 60 |
 
 ### Hold — `holdCHOP`
 
@@ -863,8 +882,8 @@ Smooth a channel, with separate rise and fall times.
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Lag Up (s) | `lagup` | `0.1` | 0 … 2 |
-| Lag Down (s) | `lagdown` | `0.1` | 0 … 2 |
+| Lag Up (s) | `lagup` | `0.1` | 0 … 60 |
+| Lag Down (s) | `lagdown` | `0.1` | 0 … 60 |
 
 ### Last — `lastCHOP`
 
@@ -916,7 +935,7 @@ A repeating waveform over time.
 
 ### Limit — `limitCHOP`
 
-Clamp, wrap, fold or quantise a channel.
+Clamp, wrap, fold, quantise or normalise a channel.
 
 **Inputs:** in
 
@@ -925,7 +944,7 @@ Clamp, wrap, fold or quantise a channel.
 | Type | `type` | `off` | `off` · `clamp` · `loop` · `zigzag` · `quantise` |
 | Minimum | `min` | `0` | -10 … 10 |
 | Maximum | `max` | `1` | -10 … 10 |
-| Norm Scale | `normscale` | `1` | 0 … 1 |
+| Normalize | `norm` | `false` |  |
 | Quantise Step | `step` | `0.1` | 0 … 10 |
 
 ### Logic — `logicCHOP`
@@ -1411,13 +1430,13 @@ Follow a channel like a mass on a spring: overshoot, wobble, then settle. Raise 
 
 ### Switch — `switchCHOP`
 
-Choose one of two inputs.
+Choose one input by index.
 
 **Inputs:** 0, 1
 
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Index | `index` | `0` | 0 … 1 |
+| Index | `index` | `0` | 0 … 32 |
 
 ### Timecode — `timecodeCHOP`
 
@@ -1496,17 +1515,20 @@ An attack/decay/sustain/release envelope per channel.
 
 ### Trim — `trimCHOP`
 
-Keep the samples between a start and an end.
+Keep or drop a time range. Relative trims from each end and holds past them.
 
 **Inputs:** in
 
+*Time dependent: cooks every frame, and everything downstream of it does too.*
+
 | Parameter | Name | Default | Range |
 |---|---|---|---|
-| Unit Values | `relative` | `Absolute` | `Absolute` · `Relative to Start/End` · `Relative to Current Frame` |
+| Unit Values | `relative` | `rel` | `Absolute` · `Relative to Start/End` · `Relative to Current Frame` · `Current Time Slice` |
 | Start | `start` | `0` |  |
 | Start Unit | `startunit` | `seconds` | `seconds` · `frames` · `samples` |
-| End | `end` | `1` |  |
+| End | `end` | `0` |  |
 | End Unit | `endunit` | `seconds` | `seconds` · `frames` · `samples` |
+| Discard | `discard` | `exterior` | `Exterior` · `Interior` |
 | Time Slice | `timeslice` | `false` |  |
 | Scope | `scope` | `*` |  |
 | Sample Rate Match | `srselect` | `max` | `first` · `max` · `min` · `err` |

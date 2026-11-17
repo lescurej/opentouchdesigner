@@ -13,5 +13,5 @@ use super::*;
         let text = serialize(&data);
         let back = parse(&text).unwrap();
         assert_eq!(back.sample_rate, 48000.0);
-        assert_eq!(back.channels[0].samples, vec![0.0, 0.5]);
+        assert_eq!(back.channels[0].as_slice(), &[0.0, 0.5]);
     }

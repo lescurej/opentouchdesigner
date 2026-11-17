@@ -53,7 +53,7 @@ fn crossings(
                     let data = channels.get(src)?;
                     Some(otd_core::Crossing::Channels {
                         names: data.channels.iter().map(|c| c.name.clone()).collect(),
-                        samples: data.channels.iter().map(|c| c.samples.clone()).collect(),
+                        samples: data.channels.iter().map(|c| c.copy_samples()).collect(),
                         sample_rate: data.sample_rate,
                     })
                 }

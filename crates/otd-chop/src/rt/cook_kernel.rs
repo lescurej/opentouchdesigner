@@ -133,6 +133,10 @@ impl AudioKernel for CookWrapKernel {
             path: &self.path,
             store: &self.store,
             rate_override: Some(ctx.sample_rate),
+            prev_frame: None,
+            capture: None,
+            clear_prev: false,
+            passthrough_input: None,
         };
         let cooked = (self.cook)(&mut chop_ctx);
         self.inputs = std::mem::take(&mut chop_ctx.inputs);
@@ -177,11 +181,11 @@ fn fill_chop(slot: &mut Arc<ChopData>, buf: &[f32], frames: usize, rate: f64) {
     data.channels.truncate(ch);
     while data.channels.len() < ch {
         let name = format!("chan{}", data.channels.len() + 1);
-        data.channels.push(Channel::new(name, Vec::with_capacity(frames)));
+        data.channels.push(Channel::new(name, vec![0.0; frames]));
     }
     for (c, channel) in data.channels.iter_mut().enumerate() {
-        channel.samples.resize(frames, 0.0);
-        for (fi, s) in channel.samples.iter_mut().enumerate() {
+        channel.samples_mut().resize(frames, 0.0);
+        for (fi, s) in channel.samples_mut().iter_mut().enumerate() {
             *s = buf.get(fi * ch + c).copied().unwrap_or(0.0);
         }
     }

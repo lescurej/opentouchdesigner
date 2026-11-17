@@ -160,6 +160,10 @@ impl ChannelSource for Network<'_> {
 pub struct ChopEngine {
     state: SecondaryMap<NodeId, OpState>,
     pub io: Io,
+    /// Feedback nodes cooked this frame, with the target to copy at `end_frame`.
+    pending_feedback: Vec<(NodeId, NodeId)>,
+    /// Target channels from the end of the previous frame.
+    feedback_hold: SecondaryMap<NodeId, Arc<ChopData>>,
 }
 
 impl ChopEngine {
@@ -167,6 +171,8 @@ impl ChopEngine {
         Self {
             state: Default::default(),
             io: Io::new(),
+            pending_feedback: Vec::new(),
+            feedback_hold: SecondaryMap::new(),
         }
     }
 
@@ -176,6 +182,9 @@ impl ChopEngine {
     pub fn sync_with_graph(&mut self, graph: &Graph) {
         self.state.retain(|id, _| graph.contains(id));
         self.io.record_buffers.retain(|id, _| graph.contains(*id));
+        self.feedback_hold.retain(|id, _| graph.contains(id));
+        self.pending_feedback
+            .retain(|(id, target)| graph.contains(*id) && graph.contains(*target));
         for (id, node) in graph.iter() {
             if node.family != Family::Chop {
                 continue;
@@ -239,6 +248,7 @@ impl ChopEngine {
         if !self.state.contains_key(id) {
             self.state.insert(id, OpState::default());
         }
+        let prev_frame = self.feedback_hold.get(id).cloned();
         let st = self.state.get_mut(id).ok_or(CookError::NoSuchNode)?;
         let io = &mut self.io;
         let mut cctx = ChopCtx {
@@ -254,13 +264,50 @@ impl ChopEngine {
             path: &path,
             store: chops,
             rate_override: None,
+            prev_frame,
+            capture: None,
+            clear_prev: false,
+            passthrough_input: None,
         };
+        let feedback = node.op_type == "feedbackCHOP";
         let out = if node.op_type == crate::io::FILE_IN {
             crate::ops::cook_file_in_shared(&mut cctx)
         } else {
-            Arc::new((spec.cook)(&mut cctx))
+            let data = (spec.cook)(&mut cctx);
+            if let Some(i) = cctx.passthrough_input {
+                cctx.inputs
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| Arc::new(ChopData::empty()))
+            } else {
+                Arc::new(data)
+            }
         };
+        if feedback {
+            let clear_prev = cctx.clear_prev;
+            let capture = cctx.capture;
+            drop(cctx);
+            self.pending_feedback.retain(|(i, _)| *i != id);
+            if clear_prev {
+                self.feedback_hold.remove(id);
+            } else if let Some(target) = capture {
+                self.pending_feedback.push((id, target));
+            }
+        }
         Ok(out)
+    }
+
+    /// Copy each Feedback target's channels for the next frame.
+    ///
+    /// Done after the frame, not during the Feedback cook: a target upstream
+    /// of the Feedback node has already cooked, and reading it then would
+    /// drop the one-frame delay.
+    pub fn end_frame(&mut self, channels: &ChannelStore) {
+        for (id, target) in std::mem::take(&mut self.pending_feedback) {
+            if let Some(data) = channels.arc(target) {
+                self.feedback_hold.insert(id, data);
+            }
+        }
     }
 
     /// A device or network message for this node, shown on the node body.
@@ -271,11 +318,15 @@ impl ChopEngine {
     pub fn forget(&mut self, id: NodeId) {
         self.state.remove(id);
         self.io.record_buffers.remove(&id);
+        self.feedback_hold.remove(id);
+        self.pending_feedback.retain(|(i, _)| *i != id);
     }
 
     pub fn reset(&mut self) {
         self.state.clear();
         self.io.reset();
+        self.feedback_hold.clear();
+        self.pending_feedback.clear();
     }
 }
 
@@ -301,6 +352,11 @@ impl ChopHost {
     /// The current value of a channel, by node and channel name.
     pub fn value(&self, graph: &Graph, path: &str, channel: &str) -> Option<f32> {
         Network::new(graph, &self.channels).channel(path, channel)
+    }
+
+    pub fn end_frame(&mut self) {
+        let ChopHost { engine, channels } = self;
+        engine.end_frame(channels);
     }
 }
 

@@ -160,7 +160,7 @@ fn math_prepare_input(data: ChopData, preop: usize, chanop: usize) -> ChopData {
         .channels
         .into_iter()
         .map(|mut ch| {
-            for s in &mut ch.samples {
+            for s in ch.samples_mut() {
                 *s = math_unary(preop, *s);
             }
             ch
@@ -190,10 +190,10 @@ fn math_align_inputs(mut a: ChopData, mut b: ChopData, align: usize) -> (ChopDat
     };
     if trim {
         for ch in &mut a.channels {
-            ch.samples.truncate(len);
+            ch.samples_mut().truncate(len);
         }
         for ch in &mut b.channels {
-            ch.samples.truncate(len);
+            ch.samples_mut().truncate(len);
         }
     } else {
         a.pad_to(len);
@@ -325,40 +325,78 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     let (do_clamp, clo, chi) = (c.b("clamp"), c.f("clampmin"), c.f("clampmax"));
     let scope = c.s("scope");
 
-    let a_raw = c.input(0).clone();
-    let b_raw = c.input(1).clone();
-    let has_a = !a_raw.channels.is_empty();
-    let has_b = !b_raw.channels.is_empty();
-    if !has_a && !has_b {
+    let raws: Vec<ChopData> = (0..c.inputs.len())
+        .map(|i| c.input(i).clone())
+        .filter(|d| !d.channels.is_empty())
+        .collect();
+    if raws.is_empty() {
         return ChopData::empty();
     }
 
-    let (a_in, b_in) = if has_a && has_b {
-        math_align_inputs(a_raw.clone(), b_raw.clone(), align)
-    } else if has_a {
-        (a_raw.clone(), ChopData::empty())
+    let (mut channels, rate, sliced) = if raws.len() <= 2 {
+        let a_raw = raws[0].clone();
+        let b_raw = raws.get(1).cloned().unwrap_or_else(ChopData::empty);
+        let has_b = raws.len() == 2;
+        let (a_in, b_in) = if has_b {
+            math_align_inputs(a_raw.clone(), b_raw.clone(), align)
+        } else {
+            (a_raw.clone(), ChopData::empty())
+        };
+        let a = math_prepare_input(a_in, preop, chanop);
+        let b = math_prepare_input(b_in, preop, chanop);
+        let len = a.num_samples().max(b.num_samples()).max(1);
+        let channels = if chopop == 0 || !has_b {
+            let mut merged = a.channels;
+            merged.extend(b.channels);
+            merged
+        } else if match_by == 1 {
+            math_combine_chops_by_name(&a, &b, chopop, len)
+        } else {
+            math_combine_chops_by_index(&a, &b, chopop, len)
+        };
+        let rate = if a_raw.sample_rate > 0.0 {
+            a_raw.sample_rate
+        } else {
+            b_raw.sample_rate.max(CONTROL_RATE)
+        };
+        (channels, rate, a_raw.time_sliced || b_raw.time_sliced)
+    } else if chopop == 0 {
+        let max_len = raws.iter().map(|d| d.num_samples()).max().unwrap_or(1).max(1);
+        let mut channels = Vec::new();
+        let mut rate = CONTROL_RATE;
+        let mut sliced = false;
+        for d in &raws {
+            rate = rate.max(d.sample_rate);
+            sliced |= d.time_sliced;
+            let mut padded = d.clone();
+            padded.pad_to(max_len);
+            channels.extend(math_prepare_input(padded, preop, chanop).channels);
+        }
+        (channels, rate, sliced)
     } else {
-        (ChopData::empty(), b_raw.clone())
-    };
-
-    let a = math_prepare_input(a_in, preop, chanop);
-    let b = math_prepare_input(b_in, preop, chanop);
-    let len = a.num_samples().max(b.num_samples()).max(1);
-
-    let mut channels = if chopop == 0 || !has_a || !has_b {
-        let mut merged = a.channels;
-        merged.extend(b.channels);
-        merged
-    } else if match_by == 1 {
-        math_combine_chops_by_name(&a, &b, chopop, len)
-    } else {
-        math_combine_chops_by_index(&a, &b, chopop, len)
+        let mut acc = math_prepare_input(raws[0].clone(), preop, chanop);
+        for next_raw in raws.iter().skip(1) {
+            let next = math_prepare_input(next_raw.clone(), preop, chanop);
+            let (a, b) = math_align_inputs(acc, next, align);
+            let len = a.num_samples().max(b.num_samples()).max(1);
+            let combined = if match_by == 1 {
+                math_combine_chops_by_name(&a, &b, chopop, len)
+            } else {
+                math_combine_chops_by_index(&a, &b, chopop, len)
+            };
+            acc = ChopData::new(
+                combined,
+                a.sample_rate.max(b.sample_rate),
+                a.time_sliced || b.time_sliced,
+            );
+        }
+        (acc.channels, acc.sample_rate, acc.time_sliced)
     };
 
     for ch in &mut channels {
-        let pass = a_raw.channel(&ch.name).or_else(|| b_raw.channel(&ch.name));
+        let pass = raws.iter().find_map(|d| d.channel(&ch.name));
         let scoped = otd_core::pattern_matches_channel(&scope, &ch.name);
-        for (si, s) in ch.samples.iter_mut().enumerate() {
+        for (si, s) in ch.samples_mut().iter_mut().enumerate() {
             if scoped {
                 *s = math_finish_sample(
                     *s, postop, preoff, gain, postoff, from1, from2, to1, to2, integer, do_clamp,
@@ -370,12 +408,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
         }
     }
 
-    let rate = if a_raw.sample_rate > 0.0 {
-        a_raw.sample_rate
-    } else {
-        b_raw.sample_rate.max(CONTROL_RATE)
-    };
-    ChopData::new(channels, rate, a_raw.time_sliced || b_raw.time_sliced)
+    ChopData::new(channels, rate, sliced)
 }
 
 

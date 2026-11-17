@@ -8,6 +8,14 @@
 /// discover by being surprised by it.
 pub(crate) const NOTES: &[(&str, &str)] = &[
     (
+        "feedbackCHOP",
+        "Reads the target CHOP's channels from the **previous** frame. That is what \
+         lets a feedback loop exist without a cycle in the cook graph — a Select \
+         CHOP, which reads the current frame, would be a cycle and is refused.\n\n\
+         Point `Target CHOP` at the node whose output you want to feed back and wire \
+         this node's output into that chain. `Reset` clears the held channels.",
+    ),
+    (
         "feedbackTOP",
         "Reads the target TOP's output from the **previous** frame. That is what \
          lets a feedback loop exist without a cycle in the cook graph — the Select \

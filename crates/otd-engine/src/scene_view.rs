@@ -24,7 +24,7 @@ impl otd_gpu::scene::Scene for SceneView<'_> {
         Some(
             data.channels
                 .iter()
-                .map(|c| (c.name.clone(), c.samples.clone()))
+                .map(|c| (c.name.clone(), c.copy_samples()))
                 .collect(),
         )
     }

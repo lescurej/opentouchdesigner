@@ -37,7 +37,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
             } else {
                 to.clone()
             };
-            Channel::new(name, ch.samples.clone())
+            Channel::new(name, ch.as_slice().to_vec())
         })
         .collect();
     ChopData::new(channels, input.sample_rate, input.time_sliced)

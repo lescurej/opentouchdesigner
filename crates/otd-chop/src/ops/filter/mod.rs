@@ -7,8 +7,8 @@ use super::{ChopCtx, ChopSpec};
 
 pub(crate) fn params() -> IndexMap<String, Param> {
     params! {
-        "type" => Param::menu("lowpass", &["lowpass", "movingaverage"]).with_label("Type"),
-        "width" => Param::float(0.2).with_label("Width (s)").with_range(0.0, 4.0),
+        "type" => Param::menu("lowpass", &["lowpass", "highpass", "movingaverage"]).with_label("Type"),
+        "width" => Param::float(0.2).with_label("Width (s)").with_range(0.0, 60.0),
     }
 }
 
@@ -19,7 +19,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     let width = c.f("width").max(0.0);
     c.state.fit(input.num_channels());
 
-    if kind == 1 {
+    if kind == 2 {
         // Moving average over the window, using the running value as the
         // history that predates this slice.
         let window = ((width as f64 * rate).round() as usize).max(1);
@@ -43,6 +43,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     }
 
     let alpha = crate::ops::lag::lag_alpha(width, rate);
+    let highpass = kind == 1;
     let mut channels = Vec::with_capacity(input.num_channels());
     for (ci, ch) in input.channels.iter().enumerate() {
         let mut y = c.state.f[ci];
@@ -51,7 +52,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
             .iter()
             .map(|x| {
                 y += (x - y) * alpha;
-                y
+                if highpass { *x - y } else { y }
             })
             .collect();
         c.state.f[ci] = y;
@@ -69,7 +70,7 @@ pub fn spec() -> ChopSpec {
                 TYPE_NAME,
                 "Filter",
                 &["in"],
-                "Low-pass or moving-average smoothing.",
+                "Low-pass, high-pass or moving-average smoothing.",
                 params,
                 cook,
             )

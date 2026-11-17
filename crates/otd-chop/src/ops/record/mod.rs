@@ -1,6 +1,8 @@
 use otd_core::indexmap::IndexMap;
 use otd_core::Param;
 
+use std::sync::Arc;
+
 use crate::data::{Channel, ChopData, CONTROL_RATE, MAX_SLICE};
 use crate::io::RecordBuffer;
 use crate::ops::ChopCtx;
@@ -93,24 +95,26 @@ fn append_record(buf: &mut RecordBuffer, input: &ChopData) {
     for (name, _) in &incoming {
         if !buf.channels.iter().any(|c| &c.name == name) {
             buf.channels
-                .push(Channel::new(name.clone(), vec![0.0; have]));
+                .push(Channel::from_vec(name.clone(), vec![0.0; have]));
         }
     }
     for ch in &mut buf.channels {
         if let Some((_, samples)) = incoming.iter().find(|(name, _)| name == &ch.name) {
-            ch.samples.extend_from_slice(samples);
+            ch.samples_mut().extend_from_slice(samples);
         } else {
-            let hold = ch.samples.last().copied().unwrap_or(0.0);
-            ch.samples.resize(ch.samples.len() + add, hold);
+            let hold = ch.last();
+            let new_len = ch.samples.len() + add;
+            ch.samples_mut().resize(new_len, hold);
         }
     }
 }
 
 fn trim_record(buf: &mut RecordBuffer, max: usize) {
     for ch in &mut buf.channels {
-        if ch.samples.len() > max {
-            let drop = ch.samples.len() - max;
-            ch.samples.drain(..drop);
+        let len = ch.samples.len();
+        if len > max {
+            let drop = len - max;
+            ch.samples_mut().drain(..drop);
         }
     }
 }
@@ -162,9 +166,14 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     }
 
     match c.io.record_buffers.get(&id) {
-        Some(buf) if !buf.channels.is_empty() => {
-            ChopData::new(buf.channels.clone(), positive_rate(buf.sample_rate), false)
-        }
+        Some(buf) if !buf.channels.is_empty() => ChopData::new(
+            buf.channels
+                .iter()
+                .map(|ch| Channel::shared(ch.name.clone(), Arc::clone(&ch.samples)))
+                .collect(),
+            positive_rate(buf.sample_rate),
+            false,
+        ),
         _ => input,
     }
 }

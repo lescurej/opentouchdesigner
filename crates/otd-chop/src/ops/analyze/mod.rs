@@ -26,7 +26,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
         .channels
         .iter()
         .map(|ch| {
-            let s = &ch.samples;
+            let s = ch.as_slice();
             let n = s.len().max(1) as f32;
             let v = match func {
                 0 => s.iter().sum::<f32>() / n,
@@ -36,7 +36,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
                 4 => s.iter().sum::<f32>(),
                 5 => s.len() as f32,
                 _ => {
-                    let mut sorted = s.clone();
+                    let mut sorted = s.to_vec();
                     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     sorted.get(sorted.len() / 2).copied().unwrap_or(0.0)
                 }

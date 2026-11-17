@@ -15,6 +15,8 @@ mod channels;
 mod cook;
 #[path = "chops/expression.rs"]
 mod expression;
+#[path = "chops/feedback.rs"]
+mod feedback;
 #[path = "chops/filters.rs"]
 mod filters;
 #[path = "chops/generators.rs"]

@@ -125,7 +125,7 @@ pub fn cook_serial(c: &mut ChopCtx) -> ChopData {
         let input = c.input(0).clone();
         if let Some(link) = c.io.serial.get_mut(&path) {
             if let Some(ch) = input.channels.first() {
-                for s in &ch.samples {
+                for s in ch.as_slice() {
                     let byte = (s.clamp(0.0, 1.0) * 255.0).round() as u8;
                     let _ = link.port_handle.write_all(&[byte]);
                 }

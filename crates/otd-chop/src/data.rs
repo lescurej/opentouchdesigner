@@ -7,7 +7,11 @@
 //! produces twice the samples of one that takes 16 ms, so an LFO stays on
 //! pitch and audio stays continuous when the renderer stutters.
 
+use std::sync::Arc;
+
 use otd_core::CookContext;
+
+pub type SampleBuf = Arc<Vec<f32>>;
 
 /// Control CHOP sample rate (Hz). Matches TD's default; independent of
 /// project timeline fps — a 24 fps show still time-slices control CHOPs here.
@@ -17,23 +21,52 @@ pub const CONTROL_RATE: f64 = 60.0;
 /// unboundedly.
 pub const MAX_SLICE: usize = 1 << 16;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Channel {
     pub name: String,
-    pub samples: Vec<f32>,
+    pub samples: SampleBuf,
+}
+
+impl PartialEq for Channel {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.samples.as_slice() == other.samples.as_slice()
+    }
 }
 
 impl Channel {
     pub fn new(name: impl Into<String>, samples: Vec<f32>) -> Self {
         Channel {
             name: name.into(),
+            samples: Arc::new(samples),
+        }
+    }
+
+    pub fn shared(name: impl Into<String>, samples: SampleBuf) -> Self {
+        Channel {
+            name: name.into(),
             samples,
         }
     }
 
+    pub fn from_vec(name: impl Into<String>, samples: Vec<f32>) -> Self {
+        Channel::new(name, samples)
+    }
+
     /// A channel holding one repeated value.
     pub fn constant(name: impl Into<String>, value: f32, len: usize) -> Self {
-        Channel::new(name, vec![value; len.max(1)])
+        Channel::from_vec(name, vec![value; len.max(1)])
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        self.samples.as_slice()
+    }
+
+    pub fn copy_samples(&self) -> Vec<f32> {
+        self.as_slice().to_vec()
+    }
+
+    pub fn samples_mut(&mut self) -> &mut Vec<f32> {
+        Arc::make_mut(&mut self.samples)
     }
 
     /// The most recent sample — what a parameter export reads.
@@ -42,11 +75,11 @@ impl Channel {
     }
 
     pub fn min(&self) -> f32 {
-        self.samples.iter().copied().fold(f32::INFINITY, f32::min)
+        self.as_slice().iter().copied().fold(f32::INFINITY, f32::min)
     }
 
     pub fn max(&self) -> f32 {
-        self.samples
+        self.as_slice()
             .iter()
             .copied()
             .fold(f32::NEG_INFINITY, f32::max)
@@ -112,8 +145,20 @@ impl ChopData {
         for c in &mut self.channels {
             let last = c.last();
             if c.samples.len() < len {
-                c.samples.resize(len, last);
+                c.samples_mut().resize(len, last);
             }
+        }
+    }
+
+    pub fn shared_from(input: &ChopData) -> Self {
+        ChopData {
+            channels: input
+                .channels
+                .iter()
+                .map(|ch| Channel::shared(ch.name.clone(), Arc::clone(&ch.samples)))
+                .collect(),
+            sample_rate: input.sample_rate,
+            time_sliced: input.time_sliced,
         }
     }
 }

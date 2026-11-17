@@ -77,7 +77,15 @@ impl Graph {
             return;
         };
         let op = node.op_type.as_str();
-        if !matches!(op, "mergeCHOP" | "selectCHOP" | "mergeDAT" | "selectDAT") {
+        if !matches!(
+            op,
+            "mergeCHOP"
+                | "mathCHOP"
+                | "switchCHOP"
+                | "selectCHOP"
+                | "mergeDAT"
+                | "selectDAT"
+        ) {
             return;
         }
         let max_used = node
@@ -93,9 +101,12 @@ impl Graph {
         if node.inputs.len() >= want {
             return;
         }
+        let numeric = node.input_labels.first().is_some_and(|s| s == "0");
         while node.input_labels.len() < want {
             let i = node.input_labels.len();
-            let label = if i < 26 {
+            let label = if numeric {
+                i.to_string()
+            } else if i < 26 {
                 ((b'a' + i as u8) as char).to_string()
             } else {
                 format!("in{i}")
@@ -201,6 +212,7 @@ impl Graph {
         n.input_source_out[input_index] = src_out;
         n.revision += 1;
         self.audio_topology_gen = self.audio_topology_gen.wrapping_add(1);
+        self.sync_multi_inputs(dst);
         Ok(())
     }
 

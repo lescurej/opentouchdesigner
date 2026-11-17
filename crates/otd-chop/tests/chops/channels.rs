@@ -86,6 +86,34 @@ fn math_range_and_mult_add() {
 }
 
 #[test]
+fn math_and_switch_accept_a_third_input() {
+    let mut p = Patch::new();
+    let a = p.add("constantCHOP", "a");
+    let b = p.add("constantCHOP", "b");
+    let c = p.add("constantCHOP", "c");
+    let math = p.add("mathCHOP", "math1");
+    let switch = p.add("switchCHOP", "switch1");
+    for (id, v) in [(a, 2.0), (b, 3.0), (c, 4.0)] {
+        p.set(id, "value0", Value::Float(v));
+    }
+    p.graph.connect(a, math, 0).unwrap();
+    p.graph.connect(b, math, 1).unwrap();
+    assert!(p.graph.node(math).inputs.len() >= 3);
+    p.graph.connect(c, math, 2).unwrap();
+    p.set(math, "combine", Value::Str("multiply".into()));
+    p.run(math, 1);
+    assert_eq!(p.value(math, "chan1"), 24.0);
+
+    p.graph.connect(a, switch, 0).unwrap();
+    p.graph.connect(b, switch, 1).unwrap();
+    assert!(p.graph.node(switch).inputs.len() >= 3);
+    p.graph.connect(c, switch, 2).unwrap();
+    p.set(switch, "index", Value::Float(2.0));
+    p.run(switch, 1);
+    assert_eq!(p.value(switch, "chan1"), 4.0);
+}
+
+#[test]
 fn a_math_chop_broadcasts_a_single_channel_across_many() {
     let mut p = Patch::new();
     let many = p.add("constantCHOP", "many");
@@ -156,6 +184,10 @@ fn merge_chop_accepts_more_than_two_inputs() {
     p.set(c, "value0", Value::Float(3.0));
     p.graph.connect(a, merge, 0).unwrap();
     p.graph.connect(b, merge, 1).unwrap();
+    assert!(
+        p.graph.node(merge).inputs.len() >= 3,
+        "wiring the last input opens another"
+    );
     p.graph.connect(c, merge, 2).unwrap();
     p.run(merge, 1);
     assert_eq!(p.data(merge).names(), vec!["a", "b", "c"]);
@@ -236,6 +268,31 @@ fn rename_numbers_the_channels_it_matches() {
     p.run(r, 1);
 
     assert_eq!(p.data(r).names(), vec!["led1", "led2", "led3"]);
+}
+
+#[test]
+fn select_caret_drops_several_channels() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "src");
+    let sel = p.add("selectCHOP", "sel");
+    p.graph.connect(c, sel, 0).unwrap();
+    p.set(c, "name0", Value::Str("chan[1-4]".into()));
+    p.set(sel, "channames", Value::Str("* ^chan1 ^chan3".into()));
+    p.run(sel, 1);
+    assert_eq!(p.data(sel).names(), vec!["chan2", "chan4"]);
+
+    p.set(sel, "channames", Value::Str("^chan[1-2]".into()));
+    p.run(sel, 1);
+    assert_eq!(p.data(sel).names(), vec!["chan3", "chan4"]);
+
+    p.set(c, "name0", Value::Str("a/heartbeat 1/heartbeat campbel/batt keep".into()));
+    p.set(
+        sel,
+        "channames",
+        Value::Str("^?/heartbeat ^campbel/batt".into()),
+    );
+    p.run(sel, 1);
+    assert_eq!(p.data(sel).names(), vec!["keep"]);
 }
 
 #[test]

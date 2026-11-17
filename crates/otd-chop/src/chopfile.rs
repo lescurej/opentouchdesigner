@@ -82,7 +82,7 @@ pub fn serialize(data: &ChopData) -> String {
     );
     for ch in &data.channels {
         out.push_str(&ch.name);
-        for s in &ch.samples {
+        for s in ch.as_slice() {
             out.push(' ');
             out.push_str(&format_sample(*s));
         }

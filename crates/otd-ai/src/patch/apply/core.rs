@@ -98,10 +98,10 @@ pub fn apply(
     // rendered an empty frame. `is_path_ref` is the registry's own marker for
     // these, so operators added later are covered without a list here.
     //
-    // Plus the two that are deliberately *not* path refs: a Feedback TOP's
-    // `target` and a Select TOP's `top`. A path ref is a cook dependency, and
-    // a Feedback TOP that depends on its own target is the cycle the
-    // previous-frame read exists to avoid — so they hold a name and the
+    // Plus the ones that are deliberately *not* path refs: a Feedback
+    // operator's `target` and a Select TOP's `top`. A path ref is a cook
+    // dependency, and a Feedback operator that depends on its own target is
+    // the cycle the previous-frame read exists to avoid — so they hold a name and the
     // engine resolves it relatively. That is fine until the graph renames on
     // collision: a plan that adds `out1` to a network that already has one
     // gets `out2`, and a `target` still saying `out1` points at the old
@@ -111,7 +111,7 @@ pub fn apply(
     for id in touched {
         let op_type = graph.node(id).op_type.clone();
         let by_name = |key: &str| {
-            (op_type == "feedbackTOP" && key == "target")
+            ((op_type == "feedbackTOP" || op_type == "feedbackCHOP") && key == "target")
                 || (op_type == "selectTOP" && key == "top")
         };
         let refs: Vec<(String, String)> = graph

@@ -49,7 +49,7 @@ pub trait Cooker {
     /// have to propagate dirtiness and time dependence, so the backend
     /// declares them here and the engine treats them exactly like inputs.
     ///
-    /// A Feedback TOP deliberately does *not* declare its target: reading
+    /// A Feedback operator deliberately does *not* declare its target: reading
     /// last frame's result is the whole point, and declaring it would be a
     /// cycle.
     fn extra_inputs(&self, _graph: &Graph, _id: NodeId) -> Vec<NodeId> {

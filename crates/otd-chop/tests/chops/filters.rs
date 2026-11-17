@@ -22,6 +22,24 @@ fn filter_chop_despike_clamps_a_single_outlier() {
 }
 
 #[test]
+fn filter_highpass_passes_a_step_then_rejects_the_held_value() {
+    let mut p = Patch::new();
+    let c = p.add("constantCHOP", "const1");
+    let filt = p.add("filterCHOP", "filt1");
+    p.graph.connect(c, filt, 0).unwrap();
+    p.set(c, "value0", Value::Float(1.0));
+    p.set(filt, "type", Value::Str("highpass".into()));
+    p.set(filt, "width", Value::Float(0.2));
+
+    p.run(filt, 1);
+    let first = p.value(filt, "chan1");
+    assert!(first > 0.5, "the step passes: {first}");
+    p.run(filt, 120);
+    let settled = p.value(filt, "chan1");
+    assert!(settled.abs() < 0.05, "a held value decays out: {settled}");
+}
+
+#[test]
 fn a_lag_chop_approaches_its_input_instead_of_jumping() {
     let mut p = Patch::new();
     let c = p.add("constantCHOP", "const1");
@@ -52,6 +70,24 @@ fn a_speed_chop_integrates_its_input() {
     p.run(speed, 60);
     let v = p.value(speed, "chan1");
     assert!((v - 2.0).abs() < 0.05, "expected ~2.0, got {v}");
+}
+
+#[test]
+fn limit_identity_passes_input_buffers_through() {
+    use std::sync::Arc;
+
+    let mut p = Patch::new();
+    let pat = p.add("patternCHOP", "pat1");
+    let l = p.add("limitCHOP", "limit1");
+    p.graph.connect(pat, l, 0).unwrap();
+    p.set(pat, "length", Value::Int(64));
+
+    p.run(l, 1);
+    assert_eq!(
+        Arc::as_ptr(&p.data(pat).channels[0].samples),
+        Arc::as_ptr(&p.data(l).channels[0].samples),
+        "identity limit should share the input sample buffer"
+    );
 }
 
 #[test]
@@ -94,7 +130,9 @@ fn limit_normalises_each_channel_into_minus_one_to_one() {
     // Same ramp, opposite sign, so the two channels do not share a range.
     p.set(expr, "expr", Value::Str("v * (1 - 2 * c)".into()));
     p.set(l, "type", Value::Str("off".into()));
-    p.set(l, "normscale", Value::Float(1.0));
+    p.set(l, "norm", Value::Bool(true));
+    p.set(l, "min", Value::Float(-1.0));
+    p.set(l, "max", Value::Float(1.0));
     p.run(l, 1);
 
     // Ramp samples are 0, 0.25, 0.5, 0.75. Each channel's own ends land on ±1.
@@ -109,38 +147,32 @@ fn limit_normalises_each_channel_into_minus_one_to_one() {
         "high {high:?}"
     );
 
-    // Clamp first, then scale whatever survived. 0 and 0.25 both sit on the
-    // floor, so the normalised channel is two lows and two highs.
-    p.set(expr, "expr", Value::Str("v".into()));
-    p.set(l, "type", Value::Str("clamp".into()));
-    p.set(l, "min", Value::Float(0.25));
-    p.set(l, "max", Value::Float(0.5));
+    // A channel that only reaches 0.6 still fills Minimum..Maximum.
+    p.set(pat, "length", Value::Int(3));
+    p.set(expr, "expr", Value::Str("-1 + i * 0.8".into()));
     p.run(l, 1);
-    let clamped = &p.data(l).channel("low").unwrap().samples;
+    let partial = &p.data(l).channel("low").unwrap().samples;
     assert!(
-        (clamped[0] + 1.0).abs() < 1e-5
-            && (clamped[1] + 1.0).abs() < 1e-5
-            && (clamped[2] - 1.0).abs() < 1e-5
-            && (clamped[3] - 1.0).abs() < 1e-5,
-        "clamp then normalise {clamped:?}"
+        (partial[0] + 1.0).abs() < 1e-5 && (partial[2] - 1.0).abs() < 1e-5,
+        "peaks at 0.6 must land on maximum, got {partial:?}"
     );
 
-    // Half scale sits halfway between the source and a full -1..1 map.
-    p.set(pat, "amplitude", Value::Float(1.0));
-    p.set(pat, "offset", Value::Float(0.0));
-    p.set(expr, "expr", Value::Str("v * (1 - 2 * c)".into()));
-    p.set(l, "type", Value::Str("off".into()));
-    p.set(l, "normscale", Value::Float(0.5));
+    // The same samples fill whatever Minimum and Maximum are set to.
+    p.set(l, "min", Value::Float(0.0));
+    p.set(l, "max", Value::Float(1.0));
     p.run(l, 1);
-    let half = &p.data(l).channel("low").unwrap().samples;
+    let unit = &p.data(l).channel("low").unwrap().samples;
     assert!(
-        (half[0] + 0.5).abs() < 1e-5 && (half[3] - 0.875).abs() < 1e-5,
-        "half norm scale {half:?}"
+        unit[0].abs() < 1e-5 && (unit[2] - 1.0).abs() < 1e-5,
+        "output range follows minimum and maximum, got {unit:?}"
     );
 
     // A flat channel has no span, so normalise leaves the samples alone.
+    p.set(expr, "expr", Value::Str("v".into()));
     p.set(pat, "amplitude", Value::Float(0.0));
     p.set(pat, "offset", Value::Float(3.0));
+    p.set(l, "min", Value::Float(-1.0));
+    p.set(l, "max", Value::Float(1.0));
     p.set(l, "type", Value::Str("off".into()));
     p.run(l, 1);
     let flat = &p.data(l).channel("low").unwrap().samples;
@@ -155,9 +187,24 @@ fn limit_normalises_each_channel_into_minus_one_to_one() {
     p.graph.connect(c, one, 0).unwrap();
     p.set(c, "value0", Value::Float(1.75));
     p.set(one, "type", Value::Str("off".into()));
-    p.set(one, "normscale", Value::Float(1.0));
+    p.set(one, "norm", Value::Bool(true));
+    p.set(one, "min", Value::Float(-1.0));
+    p.set(one, "max", Value::Float(1.0));
     p.run(one, 1);
-    assert_eq!(p.value(one, "chan1"), 1.75, "a single sample is left alone");
+    assert_eq!(p.value(one, "chan1"), 1.75, "the first sample has no span yet");
+
+    p.set(one, "norm", Value::Bool(false));
+    p.run(one, 1);
+    p.set(one, "norm", Value::Bool(true));
+    p.set(c, "value0", Value::Float(-1.0));
+    p.run(one, 1);
+    p.set(c, "value0", Value::Float(0.6));
+    p.run(one, 1);
+    assert!(
+        (p.value(one, "chan1") - 1.0).abs() < 1e-5,
+        "a live peak of 0.6 maps onto maximum, got {}",
+        p.value(one, "chan1")
+    );
 }
 
 #[test]
@@ -171,7 +218,9 @@ fn limit_normalises_a_multi_sample_time_slice_per_channel() {
     p.set(n, "type", Value::Str("random".into()));
     p.set(n, "amplitude", Value::Float(4.0));
     p.set(l, "type", Value::Str("off".into()));
-    p.set(l, "normscale", Value::Float(1.0));
+    p.set(l, "norm", Value::Bool(true));
+    p.set(l, "min", Value::Float(-1.0));
+    p.set(l, "max", Value::Float(1.0));
     p.run(l, 1);
 
     let src = &p.data(n).nth(0).unwrap().samples;

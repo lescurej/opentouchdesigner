@@ -61,14 +61,13 @@ pub(crate) fn resolve_op_path(c: &ChopCtx, reference: &str) -> Option<NodeId> {
     }
 }
 
-pub(crate) fn wired_or_referenced_chop(c: &ChopCtx, wire: usize, chop_param: &str) -> ChopData {
-    let wired = c
-        .inputs
-        .get(wire)
-        .filter(|d| !d.channels.is_empty())
-        .map(|a| a.as_ref().clone());
-    if let Some(data) = wired {
-        return data;
+pub(crate) fn wired_or_referenced_input<'a>(
+    c: &'a ChopCtx<'_>,
+    wire: usize,
+    chop_param: &str,
+) -> &'a ChopData {
+    if let Some(data) = c.inputs.get(wire).filter(|d| !d.channels.is_empty()) {
+        return data.as_ref();
     }
     let reference = c.s(chop_param);
     if otd_core::operator_reference_is_pattern(&reference) {
@@ -79,15 +78,15 @@ pub(crate) fn wired_or_referenced_chop(c: &ChopCtx, wire: usize, chop_param: &st
             .next()
         {
             if let Some(data) = c.store.get(id) {
-                return data.clone();
+                return data;
             }
         }
     } else if let Some(id) = resolve_op_path(c, &reference) {
         if let Some(data) = c.store.get(id) {
-            return data.clone();
+            return data;
         }
     }
-    c.input(wire).clone()
+    c.input(wire)
 }
 
 pub(crate) fn script_param(c: &ChopCtx, key: &str) -> String {
@@ -105,14 +104,14 @@ pub(crate) fn map_samples(
         .channels
         .iter()
         .enumerate()
-        .map(|(ci, c)| Channel {
-            name: c.name.clone(),
-            samples: c
-                .samples
+        .map(|(ci, c)| {
+            let samples: Vec<f32> = c
+                .as_slice()
                 .iter()
                 .enumerate()
                 .map(|(si, v)| f(ci, si, *v))
-                .collect(),
+                .collect();
+            Channel::from_vec(c.name.clone(), samples)
         })
         .collect();
     ChopData::new(channels, input.sample_rate, input.time_sliced)

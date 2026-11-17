@@ -51,6 +51,7 @@ impl Patch {
             self.cook
                 .cook_frame(&self.graph, &[root], &self.time, &mut self.host)
                 .unwrap();
+            self.host.end_frame();
             self.time.advance_nominal_frame();
         }
     }

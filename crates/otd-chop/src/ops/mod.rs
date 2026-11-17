@@ -66,6 +66,14 @@ pub struct ChopCtx<'a> {
     /// Set by the audio worker: every CHOP in a compiled audio plan runs at
     /// the device rate, whatever its own Sample Rate parameter says.
     pub rate_override: Option<f64>,
+    /// Target channels captured at the end of the previous frame.
+    pub prev_frame: Option<Arc<ChopData>>,
+    /// Feedback writes the node whose output should be held for the next frame.
+    pub capture: Option<otd_core::NodeId>,
+    /// Feedback sets this when Reset should drop the held channels.
+    pub clear_prev: bool,
+    /// Reuse input `inputs[i]` as output without copying sample buffers.
+    pub passthrough_input: Option<usize>,
 }
 
 impl ChopCtx<'_> {

@@ -75,7 +75,7 @@ pub fn crossing_from_converter_param(
                 let data = channels.get(chop_id)?;
                 let names: Vec<String> = data.channels.iter().map(|c| c.name.clone()).collect();
                 let samples: Vec<Vec<f32>> =
-                    data.channels.iter().map(|c| c.samples.clone()).collect();
+                    data.channels.iter().map(|c| c.copy_samples()).collect();
                 let rows = otd_dat::chop_mirror::materialize_table(m, &names, &samples);
                 return Some(Crossing::Table(rows));
             }
@@ -114,7 +114,7 @@ pub fn crossing_from_converter_param(
             let data = channels.get(src)?;
             Some(Crossing::Channels {
                 names: data.channels.iter().map(|c| c.name.clone()).collect(),
-                samples: data.channels.iter().map(|c| c.samples.clone()).collect(),
+                samples: data.channels.iter().map(|c| c.copy_samples()).collect(),
                 sample_rate: data.sample_rate,
             })
         }
@@ -123,7 +123,7 @@ pub fn crossing_from_converter_param(
             let data = channels.get(src)?;
             Some(Crossing::Channels {
                 names: data.channels.iter().map(|c| c.name.clone()).collect(),
-                samples: data.channels.iter().map(|c| c.samples.clone()).collect(),
+                samples: data.channels.iter().map(|c| c.copy_samples()).collect(),
                 sample_rate: data.sample_rate,
             })
         }
@@ -144,7 +144,7 @@ fn ltc_timecode_crossing(
             let data = channels.get(src)?;
             Some(Crossing::Channels {
                 names: data.channels.iter().map(|c| c.name.clone()).collect(),
-                samples: data.channels.iter().map(|c| c.samples.clone()).collect(),
+                samples: data.channels.iter().map(|c| c.copy_samples()).collect(),
                 sample_rate: data.sample_rate,
             })
         }
@@ -256,7 +256,19 @@ pub(crate) fn push_output_line(
     match family {
         Family::Top => {
             if let Some(tex) = engines.top.output(graph, id) {
-                out.push(format!("Resolution: {}×{}", tex.key.width, tex.key.height));
+                let w = tex.key.width;
+                let h = tex.key.height;
+                let (format, bits, bytes_per_pixel) = top_pixel_format(tex.key.format);
+                out.push(format!("Resolution: {w}×{h}"));
+                out.push(format!("Aspect: {}", fmt_num(w as f64 / h.max(1) as f64)));
+                out.push(format!("Pixel Format: {format}"));
+                if bits > 0 {
+                    out.push(format!("Depth: {bits}-bit"));
+                }
+                if bytes_per_pixel > 0 {
+                    let mb = (w as f64) * (h as f64) * bytes_per_pixel as f64 / 1.0e6;
+                    out.push(format!("GPU Memory: {} MB", fmt_num(mb)));
+                }
             }
             let op = graph.node(id).op_type.as_str();
             if op == MOVIE_IN || op == VIDEO_DEVICE_IN {
@@ -279,18 +291,14 @@ pub(crate) fn push_output_line(
             let Some(data) = engines.channels.get(id) else {
                 return;
             };
-            let chs = data.num_channels();
             let samples = data.num_samples();
             let rate = data.sample_rate;
-            let mode = if data.time_sliced {
-                "time-sliced"
-            } else {
-                "buffer"
-            };
-            let ch_word = if chs == 1 { "channel" } else { "channels" };
-            out.push(format!(
-                "Output: {chs} {ch_word} · {samples} samples @ {rate:.0} Hz ({mode})"
-            ));
+            out.push(format!("Channels: {}", data.num_channels()));
+            out.push(format!("Samples: {samples}"));
+            out.push(format!("Sample Rate: {}", fmt_num(rate)));
+            if data.time_sliced {
+                out.push("Time Slice: on".into());
+            }
         }
         Family::Sop => {
             let Some(geo) = engines.geometry.get(id) else {
@@ -299,23 +307,30 @@ pub(crate) fn push_output_line(
             if geo.is_empty() {
                 out.push("Geometry: empty".into());
             } else {
-                out.push(format!(
-                    "Geometry: {} points · {} primitives · {} vertices",
-                    geo.num_points(),
-                    geo.num_primitives(),
-                    geo.num_vertices()
-                ));
+                out.push(format!("Points: {}", geo.num_points()));
+                out.push(format!("Primitives: {}", geo.num_primitives()));
+                out.push(format!("Vertices: {}", geo.num_vertices()));
             }
         }
         Family::Dat => {
             let Some(data) = engines.dats.get(id) else {
                 return;
             };
-            out.push(format!(
-                "Table: {} rows × {} cols",
-                data.num_rows(),
-                data.num_cols()
-            ));
+            if data.is_text {
+                let text = data.as_text();
+                let lines = if text.is_empty() {
+                    0
+                } else {
+                    text.lines().count()
+                };
+                out.push(format!(
+                    "Text: {lines} lines · {} characters",
+                    text.chars().count()
+                ));
+            } else {
+                out.push(format!("Rows: {}", data.num_rows()));
+                out.push(format!("Columns: {}", data.num_cols()));
+            }
         }
         Family::Comp => {
             let n = graph.children(id).len();
@@ -323,6 +338,30 @@ pub(crate) fn push_output_line(
             out.push(format!("Network: {n} {word} inside"));
         }
         Family::Mat => {}
+    }
+}
+
+fn fmt_num(v: f64) -> String {
+    if !v.is_finite() {
+        return "0".into();
+    }
+    if (v - v.round()).abs() < 1e-3 {
+        return format!("{}", v.round() as i64);
+    }
+    let s = format!("{v:.4}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn top_pixel_format(format: wgpu::TextureFormat) -> (&'static str, u32, u32) {
+    use wgpu::TextureFormat::*;
+    match format {
+        Rgba8Unorm | Rgba8UnormSrgb | Bgra8Unorm | Bgra8UnormSrgb => ("8-bit fixed (RGBA)", 8, 4),
+        Rgba16Unorm => ("16-bit fixed (RGBA)", 16, 8),
+        Rgba16Float => ("16-bit float (RGBA)", 16, 8),
+        Rgba32Float => ("32-bit float (RGBA)", 32, 16),
+        Rgb10a2Unorm => ("10-bit RGB 2-bit A", 10, 4),
+        Rg11b10Ufloat => ("11-bit float (RGB)", 11, 4),
+        _ => ("custom", 0, 0),
     }
 }
 

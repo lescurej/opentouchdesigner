@@ -65,8 +65,7 @@ impl Rig {
             .iter()
             .find(|c| c.name == name)
             .unwrap_or_else(|| panic!("no channel `{name}`"))
-            .samples
-            .clone()
+            .copy_samples()
     }
 
     /// `choptodatDAT` keeps an empty `rows` vec and mirrors the CHOP on demand.
@@ -85,7 +84,7 @@ fn materialize_dat_rows(graph: &Graph, engines: &Engines, d: &DatData) -> Vec<Ve
             .chop_data(chop_id)
             .expect("mirrored CHOP has cooked");
         let names: Vec<String> = data.channels.iter().map(|c| c.name.clone()).collect();
-        let samples: Vec<Vec<f32>> = data.channels.iter().map(|c| c.samples.clone()).collect();
+        let samples: Vec<Vec<f32>> = data.channels.iter().map(|c| c.copy_samples()).collect();
         return chop_mirror::materialize_table(m, &names, &samples);
     }
     d.rows.clone()

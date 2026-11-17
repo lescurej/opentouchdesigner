@@ -44,7 +44,21 @@ fn relative_mode(c: &ChopCtx) -> usize {
         "abs" | "Absolute" => 0,
         "rel" | "Relative to Start/End" => 1,
         "cur" | "Relative to Current Frame" => 2,
+        "slice" | "Current Time Slice" => 3,
         _ => c.menu("relative"),
+    }
+}
+
+fn discard_interior(c: &ChopCtx) -> bool {
+    let chosen = c
+        .node
+        .param("discard")
+        .map(|p| p.eval(c.eval).as_str())
+        .unwrap_or_default();
+    match chosen.as_str() {
+        "interior" | "Interior" => true,
+        "exterior" | "Exterior" => false,
+        _ => c.menu("discard") == 1,
     }
 }
 
@@ -138,48 +152,76 @@ fn scale_constant_area(src: &[f32], samples: &mut [f32]) {
     }
 }
 
-fn time_span(c: &ChopCtx, src_len: usize, src_rate: f64) -> (f64, f64) {
+fn trim_window(c: &ChopCtx, src_len: usize, src_rate: f64) -> (f64, f64) {
     let dur = src_len as f64 / src_rate.max(1e-6);
-    let mut start = unit_to_seconds(
+    let start = unit_to_seconds(
         c.f("start") as f64,
         c.menu("startunit"),
         src_rate,
         c.time.fps,
     );
-    let mut end = unit_to_seconds(c.f("end") as f64, c.menu("endunit"), src_rate, c.time.fps);
-    match relative_mode(c) {
-        1 => {
-            start = start.clamp(0.0, dur);
-            end = if end > 0.0 {
-                end.clamp(start, dur)
-            } else {
-                (dur + end).clamp(start, dur)
-            };
-        }
-        2 => {
-            let t = c.time.time;
-            start = (t + start).clamp(0.0, dur);
-            end = (t + end).clamp(start, dur);
-        }
-        _ => {
-            start = start.clamp(0.0, dur);
-            end = end.clamp(start, dur);
-        }
+    let end = unit_to_seconds(c.f("end") as f64, c.menu("endunit"), src_rate, c.time.fps);
+    let (start, mut end) = match relative_mode(c) {
+        1 => (start, dur + end),
+        _ => (start, end),
+    };
+    if start > end {
+        end = start;
     }
-    (start, end.max(start + 1e-9))
+    (start, end)
 }
 
-fn src_trim(src: &[f32], start_s: f64, end_s: f64, rate: f64) -> Vec<f32> {
+fn output_count(start: f64, end: f64, rate: f64) -> usize {
+    let n = ((end - start) * rate).round();
+    if !n.is_finite() {
+        return 1;
+    }
+    n.clamp(1.0, MAX_SLICE as f64) as usize
+}
+
+fn hold_at(src: &[f32], index: f64) -> f32 {
+    if src.is_empty() {
+        return 0.0;
+    }
+    if !index.is_finite() || index <= 0.0 {
+        return src[0];
+    }
+    let last = (src.len() - 1) as f64;
+    if index >= last {
+        return src[src.len() - 1];
+    }
+    src[index.round() as usize]
+}
+
+fn trim_exterior(src: &[f32], start: f64, end: f64, rate: f64) -> Vec<f32> {
+    if src.is_empty() {
+        return vec![0.0];
+    }
+    let count = output_count(start, end, rate);
+    let origin = start * rate;
+    (0..count)
+        .map(|i| hold_at(src, origin + i as f64))
+        .collect()
+}
+
+fn trim_interior(src: &[f32], start: f64, end: f64, rate: f64) -> Vec<f32> {
     let n = src.len();
     if n == 0 {
         return vec![0.0];
     }
-    if n == 1 {
-        return vec![src[0]];
+    let i0 = (start * rate).round() as isize;
+    let i1 = (end * rate).round() as isize;
+    let left_end = i0.clamp(0, n as isize) as usize;
+    let right_start = i1.clamp(0, n as isize) as usize;
+    let mut out = Vec::with_capacity(n);
+    out.extend_from_slice(&src[..left_end]);
+    if right_start < n {
+        out.extend_from_slice(&src[right_start..]);
     }
-    let i0 = (start_s * rate).floor() as usize;
-    let i1 = ((end_s * rate).ceil() as usize).min(n).max(i0 + 1);
-    src[i0..i1.min(n)].to_vec()
+    if out.is_empty() {
+        out.push(src[0]);
+    }
+    out
 }
 
 fn resample_channels<F>(c: &ChopCtx, input: &ChopData, out_n: usize, src_each: F) -> Vec<Channel>
@@ -222,11 +264,11 @@ pub(crate) fn params_last() -> IndexMap<String, Param> {
 
 /// One sample per channel: the most recent value in the buffer (or slice).
 pub(crate) fn cook_last(c: &mut ChopCtx) -> ChopData {
-    let input = c.input(0).clone();
+    let input = c.input(0);
     let channels: Vec<Channel> = input
         .channels
         .iter()
-        .map(|ch| Channel::new(ch.name.clone(), vec![ch.last()]))
+        .map(|ch| Channel::from_vec(ch.name.clone(), vec![ch.last()]))
         .collect();
     let time_sliced = c.b("timeslice") || input.time_sliced;
     ChopData::new(channels, input.sample_rate, time_sliced)
@@ -280,40 +322,76 @@ pub(crate) fn cook_samplerate(c: &mut ChopCtx) -> ChopData {
 pub(crate) fn params_trim() -> IndexMap<String, Param> {
     merge_param_maps(
         params! {
-            "relative" => Param::menu(
-                "Absolute",
+            "relative" => Param::select(
+                "rel",
                 &[
-                    "Absolute",
-                    "Relative to Start/End",
-                    "Relative to Current Frame",
+                    ("Absolute", "abs"),
+                    ("Relative to Start/End", "rel"),
+                    ("Relative to Current Frame", "cur"),
+                    ("Current Time Slice", "slice"),
                 ],
             )
             .with_label("Unit Values"),
             "start" => Param::float(0.0).with_label("Start"),
             "startunit" => Param::menu("seconds", &["seconds", "frames", "samples"])
                 .with_label("Start Unit"),
-            "end" => Param::float(1.0).with_label("End"),
+            "end" => Param::float(0.0).with_label("End"),
             "endunit" => Param::menu("seconds", &["seconds", "frames", "samples"])
                 .with_label("End Unit"),
+            "discard" => Param::select(
+                "exterior",
+                &[("Exterior", "exterior"), ("Interior", "interior")],
+            )
+            .with_label("Discard"),
         },
         chop_common_page_params(),
     )
 }
 
-/// Keep samples between start and end (seconds, frames or samples); rate unchanged.
 pub(crate) fn cook_trim(c: &mut ChopCtx) -> ChopData {
     let input = c.input(0).clone();
     let src_rate = input.sample_rate.max(1e-6);
-    let src_len = input.num_samples().max(1);
-    let (win_start, win_end) = time_span(c, src_len, src_rate);
-    let channels: Vec<Channel> = input
-        .channels
-        .iter()
-        .map(|ch| {
-            let samples = src_trim(&ch.samples, win_start, win_end, src_rate);
-            Channel::new(ch.name.clone(), samples)
-        })
-        .collect();
-    let time_sliced = c.b("timeslice") || input.time_sliced;
+    let src_len = input.num_samples();
+    let mode = relative_mode(c);
+    let channels = if mode == 2 {
+        input
+            .channels
+            .iter()
+            .map(|ch| {
+                let index = c.time.time * src_rate;
+                Channel::new(ch.name.clone(), vec![hold_at(&ch.samples, index)])
+            })
+            .collect()
+    } else if mode == 3 {
+        let n = crate::data::slice_len(src_rate, c.time);
+        let times: Vec<f64> = crate::data::slice_times(c.time, n).collect();
+        input
+            .channels
+            .iter()
+            .map(|ch| {
+                let samples = times
+                    .iter()
+                    .map(|t| hold_at(&ch.samples, t * src_rate))
+                    .collect();
+                Channel::new(ch.name.clone(), samples)
+            })
+            .collect()
+    } else {
+        let (start, end) = trim_window(c, src_len.max(1), src_rate);
+        let interior = discard_interior(c);
+        input
+            .channels
+            .iter()
+            .map(|ch| {
+                let samples = if interior {
+                    trim_interior(&ch.samples, start, end, src_rate)
+                } else {
+                    trim_exterior(&ch.samples, start, end, src_rate)
+                };
+                Channel::new(ch.name.clone(), samples)
+            })
+            .collect()
+    };
+    let time_sliced = mode == 3 || c.b("timeslice") || input.time_sliced;
     ChopData::new(channels, src_rate, time_sliced)
 }

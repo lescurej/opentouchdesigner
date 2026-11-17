@@ -151,7 +151,7 @@ pub fn cook_clock(c: &mut ChopCtx) -> ChopData {
 
         let push = |channels: &mut Vec<Channel>, name: &str, val: f32| {
             if let Some(ch) = channels.iter_mut().find(|ch| ch.name == name) {
-                ch.samples.push(val);
+                ch.samples_mut().push(val);
             } else {
                 channels.push(Channel::new(name, vec![val]));
             }
@@ -210,7 +210,7 @@ pub fn cook_clock(c: &mut ChopCtx) -> ChopData {
     for ch in &mut channels {
         if ch.samples.len() < n {
             let last = ch.last();
-            ch.samples.resize(n, last);
+            ch.samples_mut().resize(n, last);
         }
     }
 

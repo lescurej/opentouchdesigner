@@ -7,8 +7,8 @@ use super::{ChopCtx, ChopSpec};
 
 pub(crate) fn params() -> IndexMap<String, Param> {
     params! {
-        "lagup" => Param::float(0.1).with_label("Lag Up (s)").with_range(0.0, 2.0),
-        "lagdown" => Param::float(0.1).with_label("Lag Down (s)").with_range(0.0, 2.0),
+        "lagup" => Param::float(0.1).with_label("Lag Up (s)").with_range(0.0, 60.0),
+        "lagdown" => Param::float(0.1).with_label("Lag Down (s)").with_range(0.0, 60.0),
     }
 }
 
@@ -32,7 +32,7 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     for (ci, ch) in input.channels.iter().enumerate() {
         let mut y = c.state.f[ci];
         let samples: Vec<f32> = ch
-            .samples
+            .as_slice()
             .iter()
             .map(|x| {
                 let alpha = if *x > y { a_up } else { a_down };

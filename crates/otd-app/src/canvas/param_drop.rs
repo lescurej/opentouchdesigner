@@ -207,7 +207,7 @@ fn assignable_params(app: &OtdApp, target: NodeId, source: NodeId) -> Vec<String
 
 fn is_op_reference_param(op_type: &str, key: &str, path_ref: bool) -> bool {
     path_ref
-        || (op_type == "feedbackTOP" && key == "target")
+        || ((op_type == "feedbackTOP" || op_type == "feedbackCHOP") && key == "target")
         || (op_type == "selectTOP" && key == "top")
 }
 
@@ -223,6 +223,7 @@ fn param_accepts_source(graph: &otd_core::Graph, op_type: &str, key: &str, sourc
         ("geometryCOMP", "sop") => fam == Family::Sop,
         ("geometryCOMP", "material") => fam == Family::Mat,
         ("feedbackTOP", "target") | ("selectTOP", "top") => fam == Family::Top,
+        ("feedbackCHOP", "target") => fam == Family::Chop,
         (_, "timecodeop") => fam == Family::Chop || fam == Family::Dat,
         (_, "chop") => fam == Family::Chop,
         (_, "callbacks") => fam == Family::Dat,

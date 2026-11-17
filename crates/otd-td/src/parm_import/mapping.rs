@@ -20,6 +20,7 @@ pub fn map_parm_key(otd_op: &str, td_key: &str) -> String {
         ("parameterexecuteDAT", "pars") => "parameters".into(),
         ("baseCOMP", "Displaymode") => "displaymode".into(),
         ("feedbackTOP", "top") => "target".into(),
+        ("feedbackCHOP", "chop") => "target".into(),
         ("noiseTOP", "harmon") => "harmonics".into(),
         ("noiseTOP", "exp") => "exponent".into(),
         ("reorderTOP", "outputredchan") => "red".into(),

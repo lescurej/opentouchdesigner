@@ -269,9 +269,9 @@ pub(crate) fn cook(c: &mut ChopCtx) -> ChopData {
     let mod_samples: Option<Vec<f32>> = if mod_in.num_channels() == 0 {
         None
     } else if let Some(ch) = mod_in.channel("cutofffrequency") {
-        Some(ch.samples.clone())
+        Some(ch.as_slice().to_vec())
     } else {
-        mod_in.channels.first().map(|ch| ch.samples.clone())
+        mod_in.channels.first().map(|ch| ch.as_slice().to_vec())
     };
     let base_fc = cutoff_hz(c, fs, None);
 

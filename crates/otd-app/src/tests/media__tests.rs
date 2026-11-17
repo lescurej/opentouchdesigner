@@ -114,10 +114,12 @@ use super::*;
     #[test]
     fn feedbacks_target_is_not_a_cook_dependency() {
         let registry = otd_engine::registry();
-        let def = registry.get(otd_gpu::ops::FEEDBACK).unwrap();
-        let params = (def.params)();
-        assert!(
-            !params["target"].is_path_ref(),
-            "feedbackTOP.target became a path ref, which makes the loop a cycle"
-        );
+        for op in [otd_gpu::ops::FEEDBACK, "feedbackCHOP"] {
+            let def = registry.get(op).unwrap();
+            let params = (def.params)();
+            assert!(
+                !params["target"].is_path_ref(),
+                "{op}.target became a path ref, which makes the loop a cycle"
+            );
+        }
     }

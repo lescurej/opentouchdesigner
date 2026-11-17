@@ -112,7 +112,7 @@ fn an_expression_chop_sees_the_sample_and_its_position() {
     // `v` is the incoming sample.
     p.set(e, "expr", Value::Str("v * 2 + 1".into()));
     p.run(e, 1);
-    let src = p.data(pat).nth(0).unwrap().samples.clone();
+    let src = p.data(pat).nth(0).unwrap().copy_samples();
     let out = &p.data(e).nth(0).unwrap().samples;
     for (i, v) in src.iter().enumerate() {
         assert!((out[i] - (v * 2.0 + 1.0)).abs() < 1e-4, "sample {i}");
