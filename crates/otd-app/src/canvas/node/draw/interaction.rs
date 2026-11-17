@@ -1,4 +1,4 @@
-use egui::{Pos2, Rect, Sense, Vec2};
+use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use otd_core::{Family, NodeId};
 
 use crate::app::OtdApp;
@@ -47,6 +47,32 @@ pub(crate) fn handle_node_interaction(
         egui::Id::new(("node_name", id)),
         Sense::click_and_drag(),
     );
+    let grip = resize_grip_rect(main_rect, zoom);
+    let grip_resp = if locked {
+        None
+    } else {
+        let resp = ui
+            .interact(grip, egui::Id::new(("node_resize", id)), Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeNwSe)
+            .on_hover_text("Resize");
+        if resp.drag_started() {
+            if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+                let world = app.canvas.view.to_world(origin, pointer);
+                let size = crate::canvas::callback_embed::main_node_world_size(app, id);
+                app.canvas.drag = Some(DragState::Resize {
+                    id,
+                    start_pointer: world,
+                    start_size: size,
+                });
+            }
+        }
+        Some(resp)
+    };
+    let grip_hot = grip_resp.as_ref().is_some_and(|r| r.hovered())
+        || matches!(app.canvas.drag, Some(DragState::Resize { id: rid, .. }) if rid == id);
+    if !locked && zoom > 0.4 {
+        paint_resize_grip(ui, grip, zoom, grip_hot);
+    }
     let footer_click = handle_footer_flag_clicks(app, ui, id, footer, locked, zoom, family);
     let (chop_blocks, cmd_over_channel) = if family == Family::Chop {
         chop_tile_channel_handles(app, ui, id, body, zoom, viewer_operate)
@@ -145,18 +171,33 @@ pub(crate) fn handle_node_interaction(
             }
         }
     }
-    if body_resp.hovered() {
+    if body_resp.hovered() || name_resp.hovered() {
+        let summary = app
+            .registry
+            .get(op_label)
+            .map(|d| d.summary.to_string())
+            .unwrap_or_default();
+        let mut tip = {
+            let rt = app.engine_rt();
+            otd_engine::node_infotip(
+                &rt.engines,
+                &rt.cook,
+                &rt.graph,
+                id,
+                rt.time.frame,
+                &summary,
+            )
+        };
         if viewer_operate {
-            body_resp.on_hover_text(
-                "Viewer Active — operate the viewer (TOP: drag/scroll; DAT: drag/scroll table or text; CHOP: drag channels; panels: click widgets). Drag the name bar to move.",
+            tip.push_str(
+                "\nViewer Active — operate the viewer. Drag the name bar to move.",
             );
-        } else {
-            let summary = app
-                .registry
-                .get(op_label)
-                .map(|d| d.summary)
-                .unwrap_or_default();
-            body_resp.on_hover_text(format!("{op_label}\n{summary}"));
+        }
+        if body_resp.hovered() {
+            body_resp.on_hover_text(&tip);
+        }
+        if name_resp.hovered() {
+            name_resp.on_hover_text(tip);
         }
     }
     if let Some(DragState::Node { id: drag_id, grab }) = app.canvas.drag {
@@ -178,6 +219,24 @@ pub(crate) fn handle_node_interaction(
                     app.graph.node_mut_quiet(other).pos = [p[0] + delta.x, p[1] + delta.y];
                 }
                 app.graph.node_mut_quiet(id).pos = snapped;
+            }
+        }
+    }
+    if let Some(DragState::Resize {
+        id: drag_id,
+        start_pointer,
+        start_size,
+    }) = app.canvas.drag
+    {
+        if drag_id == id && !locked {
+            if let Some(pointer) = ui.ctx().pointer_latest_pos() {
+                app.edit(&format!("resize:{id:?}"));
+                let world = app.canvas.view.to_world(origin, pointer);
+                let delta = world - start_pointer;
+                let w = (start_size.x + delta.x).max(crate::canvas::types::MIN_NODE_W);
+                let h = (start_size.y + delta.y).max(crate::canvas::types::MIN_NODE_H);
+                app.graph.node_mut_quiet(id).size = Some([w, h]);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
             }
         }
     }
@@ -221,5 +280,34 @@ pub(crate) fn handle_node_interaction(
     if crate::canvas::callback_embed::node_has_callback(app, id) {
         let strip = fold_strip_rect(rect, main_h_world, zoom);
         let _ = draw_fold_control(app, ui, id, strip, zoom);
+    }
+}
+
+fn resize_grip_rect(main_rect: Rect, zoom: f32) -> Rect {
+    let g = (14.0 * zoom).clamp(12.0, 20.0);
+    Rect::from_min_max(
+        Pos2::new(main_rect.max.x - g, main_rect.max.y - g),
+        main_rect.max,
+    )
+}
+
+fn paint_resize_grip(ui: &egui::Ui, grip: Rect, zoom: f32, hot: bool) {
+    let color = if hot {
+        Color32::from_rgb(210, 214, 222)
+    } else {
+        Color32::from_rgb(120, 124, 134)
+    };
+    let stroke = Stroke::new((1.25 * zoom).clamp(1.0, 1.6), color);
+    let inset = (3.0 * zoom).clamp(2.0, 5.0);
+    let step = (3.2 * zoom).clamp(2.4, 4.0);
+    for i in 0..3 {
+        let o = inset + i as f32 * step;
+        ui.painter().line_segment(
+            [
+                Pos2::new(grip.max.x - inset, grip.min.y + o),
+                Pos2::new(grip.min.x + o, grip.max.y - inset),
+            ],
+            stroke,
+        );
     }
 }

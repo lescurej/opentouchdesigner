@@ -4,7 +4,7 @@ use otd_core::{ParamMode, Value};
 use crate::app::OtdApp;
 
 use super::{channel_expr_snippet, format_value, migrate_legacy_modes};
-use super::channels::{chop_input_channel_picker, wired_input_chop_channel_names};
+use super::channels::{chop_input_channel_picker, select_source_channel_names};
 use super::component::{component_links, custom_param_editor};
 use super::constant_chop::constant_chop_rows;
 use super::curve::curve_editor;
@@ -271,16 +271,14 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                             (Value::Float(_) | Value::Int(_), Some(_)) => {
                                 crate::inspector::td_slider_field(ui, &key, &mut value, range)
                             }
-                            _ if op_type == "selectCHOP" && key == "channels" => {
-                                {
-                                    let names = wired_input_chop_channel_names(app, id);
-                                    chop_input_channel_picker(
-                                        ui,
-                                        &format!("{id:?}:channels"),
-                                        &mut value,
-                                        &names,
-                                    )
-                                }
+                            _ if op_type == "selectCHOP" && key == "channames" => {
+                                let names = select_source_channel_names(app, id);
+                                chop_input_channel_picker(
+                                    ui,
+                                    &format!("{id:?}:channames"),
+                                    &mut value,
+                                    &names,
+                                )
                             }
                             _ => crate::inspector::value_widget_basic(
                                 ui,

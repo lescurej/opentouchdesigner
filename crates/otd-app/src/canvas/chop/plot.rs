@@ -134,8 +134,12 @@ pub(crate) fn x_plot_x(plot: Rect, index: usize, last: usize) -> f32 {
     plot.min.x + t * plot.width()
 }
 
-pub(crate) fn chop_plot_layout(body: Rect, zoom: f32) -> (Rect, Rect, Rect) {
-    let left = (28.0 * zoom).clamp(22.0, 36.0);
+pub(crate) fn chop_plot_layout(body: Rect, zoom: f32, y_axis: bool) -> (Rect, Rect, Rect) {
+    let left = if y_axis {
+        (28.0 * zoom).clamp(22.0, 36.0)
+    } else {
+        (4.0 * zoom).clamp(2.0, 6.0)
+    };
     let bottom = (12.0 * zoom).clamp(10.0, 16.0);
     let y_axis = Rect::from_min_max(body.min, Pos2::new(body.min.x + left, body.max.y - bottom));
     let x_axis = Rect::from_min_max(Pos2::new(body.min.x + left, body.max.y - bottom), body.max);
@@ -238,6 +242,70 @@ pub(crate) fn displayed_sample_count(data: &ChopData) -> usize {
     data.num_samples().min(super::viewer_limits().max_samples_scan)
 }
 
+pub(crate) fn pad_value_bounds(min_v: f32, max_v: f32) -> (f32, f32) {
+    if !min_v.is_finite() || !max_v.is_finite() {
+        return (-1.0, 1.0);
+    }
+    if (max_v - min_v).abs() < 1e-12 {
+        let c = min_v;
+        let pad = c.abs().max(1.0) * 0.05 + 0.01;
+        return (c - pad, c + pad);
+    }
+    let pad = (max_v - min_v) * 0.08;
+    (min_v - pad, max_v + pad)
+}
+
+pub(crate) fn lane_span(
+    samples: &[f32],
+    columns: usize,
+    max_scan: usize,
+) -> Option<(f32, f32, Vec<(f32, f32)>)> {
+    let n = samples.len();
+    if n == 0 || columns == 0 {
+        return None;
+    }
+    let cols = columns.min(n).max(1);
+    let step = (n / max_scan.max(cols)).max(1);
+    let mut lo = f32::INFINITY;
+    let mut hi = f32::NEG_INFINITY;
+    let mut out = Vec::with_capacity(cols);
+    for c in 0..cols {
+        let start = c * n / cols;
+        let end = if c + 1 == cols {
+            n
+        } else {
+            ((c + 1) * n / cols).max(start + 1)
+        };
+        let mut cmin = f32::INFINITY;
+        let mut cmax = f32::NEG_INFINITY;
+        let mut i = start;
+        while i < end {
+            let v = samples[i];
+            if v.is_finite() {
+                cmin = cmin.min(v);
+                cmax = cmax.max(v);
+            }
+            i = i.saturating_add(step);
+        }
+        let v = samples[end - 1];
+        if v.is_finite() {
+            cmin = cmin.min(v);
+            cmax = cmax.max(v);
+        }
+        if !cmin.is_finite() {
+            cmin = 0.0;
+            cmax = 0.0;
+        }
+        lo = lo.min(cmin);
+        hi = hi.max(cmax);
+        out.push((cmin, cmax));
+    }
+    if !lo.is_finite() {
+        return None;
+    }
+    Some((lo, hi, out))
+}
+
 pub(crate) fn chop_value_bounds_channels(
     data: &ChopData,
     channel_indices: &[usize],
@@ -257,16 +325,24 @@ pub(crate) fn chop_value_bounds_channels(
             }
         }
     }
-    if !min_v.is_finite() {
-        return (-1.0, 1.0);
+    pad_value_bounds(min_v, max_v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lane_span;
+
+    #[test]
+    fn lane_span_keeps_each_end_of_a_long_buffer() {
+        let mut samples = vec![0.0; 10_000];
+        samples[0] = -5.0;
+        samples[9_999] = 8.0;
+        let (lo, hi, cols) = lane_span(&samples, 8, 64).unwrap();
+        assert!((lo - -5.0).abs() < 1e-5);
+        assert!((hi - 8.0).abs() < 1e-5);
+        assert!(cols.first().unwrap().0 <= -5.0 + 1e-5);
+        assert!(cols.last().unwrap().1 >= 8.0 - 1e-5);
     }
-    if (max_v - min_v).abs() < 1e-12 {
-        let c = min_v;
-        let pad = c.abs().max(1.0) * 0.05 + 0.01;
-        return (c - pad, c + pad);
-    }
-    let pad = (max_v - min_v) * 0.08;
-    (min_v - pad, max_v + pad)
 }
 
 pub(crate) fn chop_bipolar_peak(data: &ChopData, channels: usize, samples: usize) -> f32 {

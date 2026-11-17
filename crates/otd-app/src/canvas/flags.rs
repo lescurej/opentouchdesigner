@@ -61,9 +61,13 @@ pub(crate) fn node_drag_rect(node: Rect, flag_strip: Rect, footer: Rect, zoom: f
 
 pub(crate) fn footer_status_rects(footer: Rect, zoom: f32) -> (Rect, Rect, Rect) {
     let pad = 2.0 * zoom;
+    let grip = (12.0 * zoom).clamp(10.0, 16.0);
     let inner = Rect::from_min_max(
         Pos2::new(footer.min.x + pad, footer.min.y + pad),
-        Pos2::new(footer.max.x - pad, footer.max.y - pad),
+        Pos2::new(
+            (footer.max.x - pad - grip).max(footer.min.x + pad),
+            footer.max.y - pad,
+        ),
     );
     let cell = (14.0 * zoom).clamp(10.0, 18.0);
     let gap = (3.0 * zoom).clamp(2.0, 5.0);
@@ -78,7 +82,10 @@ pub(crate) fn footer_status_rects(footer: Rect, zoom: f32) -> (Rect, Rect, Rect)
         ),
         Vec2::splat(cell),
     );
-    let name = Rect::from_min_max(inner.min, Pos2::new(display.min.x - gap, inner.max.y));
+    let name = Rect::from_min_max(
+        inner.min,
+        Pos2::new((display.min.x - gap).max(inner.min.x), inner.max.y),
+    );
     (name, display, viewer_active)
 }
 

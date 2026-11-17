@@ -26,7 +26,7 @@ fn chop_tile_row_rects(body: Rect, zoom: f32, data: &ChopData) -> Vec<Rect> {
             .collect();
     }
     let lanes = nc;
-    let (_, _, plot) = chop_plot_layout(body, zoom);
+    let (_, _, plot) = chop_plot_layout(body, zoom, data.channels.len() <= 1);
     let lane_h = plot.height() / lanes as f32;
     (0..lanes)
         .map(|li| {

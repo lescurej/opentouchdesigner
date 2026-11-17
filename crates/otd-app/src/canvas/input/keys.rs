@@ -32,17 +32,24 @@ pub(crate) fn handle_keys(app: &mut OtdApp, ui: &egui::Ui, _origin: Pos2, _rect:
     }
 
     if ui.ctx().input(|i| i.pointer.any_released()) {
-        if let Some(DragState::Node { id, .. }) = app.canvas.drag {
-            let ids = crate::canvas::node::node_drag_group(app, id);
-            for nid in ids {
-                if app.graph.contains(nid) && !app.graph.node(nid).flags.lock {
-                    let p = app.graph.node(nid).pos;
-                    app.graph.node_mut_quiet(nid).pos = app.snap_world_pos(p);
+        match app.canvas.drag {
+            Some(DragState::Node { id, .. }) => {
+                let ids = crate::canvas::node::node_drag_group(app, id);
+                for nid in ids {
+                    if app.graph.contains(nid) && !app.graph.node(nid).flags.lock {
+                        let p = app.graph.node(nid).pos;
+                        app.graph.node_mut_quiet(nid).pos = app.snap_world_pos(p);
+                    }
                 }
+                app.canvas.node_drag_start = None;
+                app.canvas.drag = None;
+                app.document.history.end_gesture();
             }
-            app.canvas.node_drag_start = None;
-            app.canvas.drag = None;
-            app.document.history.end_gesture();
+            Some(DragState::Resize { .. }) => {
+                app.canvas.drag = None;
+                app.document.history.end_gesture();
+            }
+            _ => {}
         }
     }
 

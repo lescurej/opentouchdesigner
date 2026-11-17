@@ -1,8 +1,13 @@
-use egui::{Color32, Pos2, Shape, Stroke, Vec2};
+use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2};
+
+pub(crate) fn segment_intersects_canvas(canvas: Rect, a: Pos2, b: Pos2) -> bool {
+    canvas.intersects(Rect::from_two_pos(a, b))
+}
 
 pub(crate) fn dist_to_bezier(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let pts = bezier_points(a, b);
-    let steps = 32;
+    let chord = (a - b).length();
+    let steps = ((chord / 16.0).ceil() as usize).clamp(12, 24);
     let mut best = f32::INFINITY;
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
@@ -44,8 +49,9 @@ pub(crate) fn bezier(a: Pos2, b: Pos2, stroke: Stroke) -> Shape {
 
 pub(crate) fn dashed_bezier(a: Pos2, b: Pos2, stroke: Stroke) -> Shape {
     let pts = bezier_points(a, b);
-    let steps = 48;
-    let mut shapes = Vec::new();
+    let chord = (a - b).length();
+    let steps = ((chord / 14.0).ceil() as usize).clamp(8, 20);
+    let mut shapes = Vec::with_capacity(steps / 2);
     let mut prev = sample_cubic(pts, 0.0);
     for i in 1..=steps {
         let t = i as f32 / steps as f32;

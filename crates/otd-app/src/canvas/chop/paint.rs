@@ -106,34 +106,54 @@ fn draw_chop_single_sample(painter: &egui::Painter, data: &ChopData, body: Rect,
     }
 }
 
-fn waveform_points(samples: &[f32], plot: Rect, lo: f32, hi: f32) -> Vec<Pos2> {
-    let n = samples.len();
-    if n == 0 {
-        return Vec::new();
+fn draw_lane_curve(
+    painter: &egui::Painter,
+    plot: Rect,
+    columns: &[(f32, f32)],
+    lo: f32,
+    hi: f32,
+    color: Color32,
+    zoom: f32,
+) {
+    if columns.is_empty() || plot.height() < 1.0 || plot.width() < 1.0 {
+        return;
     }
+    let (lo, hi) = pad_value_bounds(lo, hi);
     let span = (hi - lo).max(1e-12);
     let y_of = |v: f32| plot.max.y - ((v - lo) / span).clamp(0.0, 1.0) * plot.height();
-    if n == 1 {
-        return vec![Pos2::new(plot.center().x, y_of(samples[0]))];
+    if lo < 0.0 && hi > 0.0 {
+        let y = y_of(0.0);
+        painter.line_segment(
+            [Pos2::new(plot.min.x, y), Pos2::new(plot.max.x, y)],
+            Stroke::new(1.0, Color32::from_rgb(48, 50, 56)),
+        );
     }
-    let px = (plot.width().ceil().max(2.0) as usize).min(super::viewer_limits().max_waveform_px.max(2));
-    if n <= px {
-        let step = plot.width() / (n - 1) as f32;
-        return samples
-            .iter()
-            .enumerate()
-            .map(|(i, v)| Pos2::new(plot.min.x + i as f32 * step, y_of(*v)))
-            .collect();
+    let n = columns.len();
+    let x_of = |i: usize| {
+        if n == 1 {
+            plot.center().x
+        } else {
+            plot.min.x + i as f32 * plot.width() / (n - 1) as f32
+        }
+    };
+    let stroke = Stroke::new((1.1 * zoom).clamp(0.8, 1.6), color);
+    for (i, (mn, mx)) in columns.iter().enumerate() {
+        if (mx - mn).abs() <= span * 0.02 {
+            continue;
+        }
+        let x = x_of(i);
+        painter.line_segment([Pos2::new(x, y_of(*mn)), Pos2::new(x, y_of(*mx))], stroke);
     }
-    (0..px)
-        .map(|pi| {
-            let i = pi * (n - 1) / px.saturating_sub(1).max(1);
-            Pos2::new(
-                plot.min.x + pi as f32 * plot.width() / (px - 1).max(1) as f32,
-                y_of(samples[i]),
-            )
-        })
-        .collect()
+    let points: Vec<Pos2> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, (mn, mx))| Pos2::new(x_of(i), y_of((*mn + *mx) * 0.5)))
+        .collect();
+    if points.len() >= 2 {
+        painter.add(egui::Shape::line(points, stroke));
+    } else if let Some(p) = points.first() {
+        painter.circle_filled(*p, (2.2 * zoom).clamp(1.8, 3.2), color);
+    }
 }
 
 fn draw_chop_multisample(painter: &egui::Painter, data: &ChopData, body: Rect, zoom: f32) {
@@ -141,26 +161,39 @@ fn draw_chop_multisample(painter: &egui::Painter, data: &ChopData, body: Rect, z
     if lanes.is_empty() {
         return;
     }
-    let ns = displayed_sample_count(data);
+    let ns = data.num_samples();
     if ns < 2 {
         return;
     }
-    let lane_indices: Vec<usize> = lanes.iter().map(|(ci, _)| *ci).collect();
-    let (lo, hi) = chop_value_bounds_channels(data, &lane_indices, ns);
-    let (y_axis, x_axis, plot_area) = chop_plot_layout(body, zoom);
+    let shared_axis = lanes.len() == 1;
+    let (y_axis, x_axis, plot_area) = chop_plot_layout(body, zoom, shared_axis);
     painter.rect_filled(plot_area, 0.0, Color32::from_rgb(18, 19, 22));
+    let px = (plot_area.width().ceil().max(2.0) as usize)
+        .min(super::viewer_limits().max_waveform_px.max(2));
+    let max_scan = super::viewer_limits().max_samples_scan;
+    let spans: Vec<_> = lanes
+        .iter()
+        .map(|(_, ch)| lane_span(&ch.samples, px, max_scan))
+        .collect();
     let last = ns.saturating_sub(1);
     let max_x_ticks =
         ((plot_area.width() / (36.0 * zoom).clamp(28.0, 44.0)).floor() as usize).clamp(3, 8);
     let x_indices = sample_index_ticks(ns, max_x_ticks);
-    let y_ticks = nice_value_ticks(lo, hi, 5);
-    draw_chop_plot_grid(painter, plot_area, &y_ticks, &x_indices, last, lo, hi);
-    draw_chop_y_axis(painter, y_axis, plot_area, lo, hi, zoom);
+    if shared_axis {
+        if let Some((lo, hi, _)) = spans.first().and_then(|s| s.as_ref()) {
+            let (lo, hi) = pad_value_bounds(*lo, *hi);
+            let y_ticks = nice_value_ticks(lo, hi, 5);
+            draw_chop_plot_grid(painter, plot_area, &y_ticks, &x_indices, last, lo, hi);
+            draw_chop_y_axis(painter, y_axis, plot_area, lo, hi, zoom);
+        }
+    } else {
+        draw_chop_plot_grid(painter, plot_area, &[], &x_indices, last, 0.0, 1.0);
+    }
     draw_chop_x_axis(painter, x_axis, plot_area, ns, zoom);
 
     let lane_h = plot_area.height() / lanes.len() as f32;
     let divider = Color32::from_rgb(44, 46, 52);
-    for (li, (ci, ch)) in lanes.iter().enumerate() {
+    for (li, ((ci, ch), span)) in lanes.iter().zip(spans.iter()).enumerate() {
         let lane = Rect::from_min_max(
             Pos2::new(plot_area.min.x, plot_area.min.y + li as f32 * lane_h),
             Pos2::new(
@@ -185,24 +218,16 @@ fn draw_chop_multisample(painter: &egui::Painter, data: &ChopData, body: Rect, z
         } else {
             lane.shrink2(Vec2::new(0.0, 1.0))
         };
-        let color = channel_color(*ci);
-        let slice = if ch.samples.is_empty() {
-            &[0.0][..]
-        } else {
-            &ch.samples[..ns.min(ch.samples.len())]
-        };
-        let points = waveform_points(slice, wave_rect, lo, hi);
-        let dot_r = (2.2 * zoom).clamp(1.8, 3.2);
-        if points.len() >= 2 {
-            painter.add(egui::Shape::line(
-                points.clone(),
-                Stroke::new((1.1 * zoom).clamp(0.8, 1.6), color),
-            ));
-            for p in [points.first(), points.last()].into_iter().flatten() {
-                painter.circle_filled(*p, dot_r, color);
-            }
-        } else if points.len() == 1 {
-            painter.circle_filled(points[0], dot_r, color);
+        if let Some((lo, hi, columns)) = span {
+            draw_lane_curve(
+                painter,
+                wave_rect,
+                columns,
+                *lo,
+                *hi,
+                channel_color(*ci),
+                zoom,
+            );
         }
         if label_h > 0.0 {
             let label_strip =
@@ -214,7 +239,7 @@ fn draw_chop_multisample(painter: &egui::Painter, data: &ChopData, body: Rect, z
             );
             let font = chop_lane_label_font(zoom);
             let name: String = ch.name.chars().take(16).collect();
-            let last_v = slice.last().copied().unwrap_or(0.0);
+            let last_v = ch.samples.last().copied().unwrap_or(0.0);
             paint_chop_text(
                 painter,
                 label_strip.min + Vec2::new(4.0 * zoom, 1.0),

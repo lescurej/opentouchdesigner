@@ -72,9 +72,7 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
 
             handle_view_input(app, ui, &response, rect);
             app.input_state = sample_input(ui, rect);
-            if !app.transport.playing {
-                draw_viewer_backdrops(app, ui, rect);
-            }
+            draw_viewer_backdrops(app, ui, rect);
             draw_grid(
                 ui,
                 rect,
@@ -107,11 +105,17 @@ pub fn show(app: &mut OtdApp, ui: &mut egui::Ui) {
                 .map(|(id, _)| *id)
                 .collect();
 
-            draw_wires(app, ui, &response, origin, &node_rects);
+            let on_screen: Vec<(NodeId, Rect)> = node_rects
+                .iter()
+                .filter(|(_, r)| rect.intersects(*r))
+                .copied()
+                .collect();
+
+            draw_wires(app, ui, &response, origin, rect, &node_rects);
             viewer_active::prune_viewer_state(app);
-            draw_callback_dat_links(app, ui, &node_rects);
-            draw_channel_expression_links(app, ui, &node_rects);
-            for (id, node_rect) in &node_rects {
+            draw_callback_dat_links(app, ui, rect, &node_rects);
+            draw_channel_expression_links(app, ui, rect, &node_rects);
+            for (id, node_rect) in &on_screen {
                 draw_node(app, ui, *id, *node_rect, origin);
             }
             draw_pending_wire(app, ui, origin, &node_rects);

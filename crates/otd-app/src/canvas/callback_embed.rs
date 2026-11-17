@@ -4,7 +4,7 @@ use otd_core::{Family, NodeId};
 use crate::app::OtdApp;
 use crate::canvas::input::release_param_focus;
 
-use super::types::{BODY_H, CALLBACK_FOLD_H, FOOTER_H};
+use super::types::{CALLBACK_FOLD_H, MIN_NODE_H, MIN_NODE_W, NODE_H, NODE_W};
 
 pub(crate) fn owner_callback_dat(app: &OtdApp, owner: NodeId) -> Option<NodeId> {
     app.graph
@@ -40,13 +40,15 @@ pub(crate) fn callback_extra_height(app: &OtdApp, owner: NodeId) -> f32 {
     }
 }
 
-pub(crate) fn main_node_world_height(app: &OtdApp, id: NodeId) -> f32 {
-    if app.graph.node(id).family == Family::Chop {
-        if let Some(data) = app.snapshot_chop(id) {
-            return super::chop::chop_node_world_height(data);
-        }
+pub(crate) fn main_node_world_size(app: &OtdApp, id: NodeId) -> Vec2 {
+    match app.graph.node(id).size {
+        Some([w, h]) => Vec2::new(w.max(MIN_NODE_W), h.max(MIN_NODE_H)),
+        None => Vec2::new(NODE_W, NODE_H),
     }
-    BODY_H + FOOTER_H
+}
+
+pub(crate) fn main_node_world_height(app: &OtdApp, id: NodeId) -> f32 {
+    main_node_world_size(app, id).y
 }
 
 pub(crate) fn fold_strip_rect(full_rect: Rect, main_h_world: f32, zoom: f32) -> Rect {

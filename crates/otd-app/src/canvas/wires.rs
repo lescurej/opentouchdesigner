@@ -1,6 +1,6 @@
 use egui::{Color32, Pos2, Rect, Stroke};
 
-use super::wire_curve::{bezier, dashed_bezier, dist_to_bezier};
+use super::wire_curve::{bezier, dashed_bezier, dist_to_bezier, segment_intersects_canvas};
 use otd_core::NodeId;
 
 use crate::app::OtdApp;
@@ -10,7 +10,12 @@ use super::palette::family_color;
 use super::ports::{output_port_count, output_port_family};
 use super::types::DragState;
 
-pub(crate) fn draw_callback_dat_links(app: &OtdApp, ui: &egui::Ui, rects: &[(NodeId, Rect)]) {
+pub(crate) fn draw_callback_dat_links(
+    app: &OtdApp,
+    ui: &egui::Ui,
+    canvas: Rect,
+    rects: &[(NodeId, Rect)],
+) {
     let painter = ui.painter();
     let find = |id: NodeId| rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
     let zoom = app.canvas.view.zoom;
@@ -25,12 +30,20 @@ pub(crate) fn draw_callback_dat_links(app: &OtdApp, ui: &egui::Ui, rects: &[(Nod
         let Some(dat_rect) = find(dat) else { continue };
         let a = Pos2::new(owner_rect.center().x, owner_rect.bottom());
         let b = Pos2::new(dat_rect.center().x, dat_rect.top());
+        if !segment_intersects_canvas(canvas, a, b) {
+            continue;
+        }
         let stroke = Stroke::new((1.25 * zoom).clamp(1.0, 2.0), color);
         painter.add(dashed_bezier(a, b, stroke));
     }
 }
 
-pub(crate) fn draw_channel_expression_links(app: &OtdApp, ui: &egui::Ui, rects: &[(NodeId, Rect)]) {
+pub(crate) fn draw_channel_expression_links(
+    app: &OtdApp,
+    ui: &egui::Ui,
+    canvas: Rect,
+    rects: &[(NodeId, Rect)],
+) {
     let painter = ui.painter();
     let find = |id: NodeId| rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
     let zoom = app.canvas.view.zoom;
@@ -40,6 +53,9 @@ pub(crate) fn draw_channel_expression_links(app: &OtdApp, ui: &egui::Ui, rects: 
         let Some(dst_rect) = find(dst) else { continue };
         let a = src_rect.center();
         let b = dst_rect.center();
+        if !segment_intersects_canvas(canvas, a, b) {
+            continue;
+        }
         let animated = app.engine.is_time_dependent(src);
         let stroke = Stroke::new(
             (1.25 * zoom).clamp(1.0, 2.0),
@@ -58,6 +74,7 @@ pub(crate) fn draw_wires(
     ui: &egui::Ui,
     response: &egui::Response,
     _origin: Pos2,
+    canvas: Rect,
     rects: &[(NodeId, Rect)],
 ) {
     let hover = hovered_wire(app, ui, response, rects);
@@ -73,6 +90,9 @@ pub(crate) fn draw_wires(
             let Some((a, b)) = wire_endpoints(app, *dst, i, *src, *dst_rect, &find) else {
                 continue;
             };
+            if !segment_intersects_canvas(canvas, a, b) {
+                continue;
+            }
             let animated = app.engine.is_time_dependent(*src);
             let family = family_color(node.input_families.get(i).copied().unwrap_or(node.family));
             let selected = app.canvas.selected_wire == Some((*dst, i));
@@ -121,6 +141,7 @@ pub(crate) fn pick_wire(
     pointer: Pos2,
     rects: &[(NodeId, Rect)],
 ) -> Option<(NodeId, usize)> {
+    let canvas = app.canvas.canvas_rect;
     let find = |id: NodeId| rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
     let threshold = (10.0 * app.canvas.view.zoom).clamp(8.0, 18.0);
     let mut best: Option<(NodeId, usize, f32)> = None;
@@ -131,6 +152,9 @@ pub(crate) fn pick_wire(
             let Some((a, b)) = wire_endpoints(app, *dst, i, *src, *dst_rect, &find) else {
                 continue;
             };
+            if !canvas.is_positive() || !segment_intersects_canvas(canvas, a, b) {
+                continue;
+            }
             let d = dist_to_bezier(pointer, a, b);
             if d <= threshold && best.map(|(_, _, bd)| d < bd).unwrap_or(true) {
                 best = Some((*dst, i, d));

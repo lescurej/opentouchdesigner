@@ -4,6 +4,8 @@ pub const NODE_W: f32 = 176.0;
 pub const BODY_H: f32 = 99.0;
 pub const FOOTER_H: f32 = 18.0;
 pub const NODE_H: f32 = BODY_H + FOOTER_H;
+pub const MIN_NODE_W: f32 = 104.0;
+pub const MIN_NODE_H: f32 = 52.0;
 pub const CALLBACK_FOLD_H: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -69,5 +71,10 @@ pub enum DragState {
     Marquee {
         start: Pos2,
         additive: bool,
+    },
+    Resize {
+        id: otd_core::NodeId,
+        start_pointer: Vec2,
+        start_size: Vec2,
     },
 }

@@ -53,6 +53,26 @@ impl OtdApp {
                 return true;
             }
         }
+        self.network_bg_display_thumbnail(id)
+    }
+
+    fn network_bg_display_thumbnail(&self, id: NodeId) -> bool {
+        if !self.graph.contains(self.canvas.current) {
+            return false;
+        }
+        for bg in crate::canvas::comp_display::background_display_nodes(
+            &self.graph,
+            self.canvas.current,
+        ) {
+            if bg == id {
+                return true;
+            }
+            if self.graph.node(bg).family == otd_core::Family::Mat
+                && self.graph.resolve_output(bg) == Some(id)
+            {
+                return true;
+            }
+        }
         false
     }
 
