@@ -190,6 +190,47 @@ use super::*;
     }
 
     #[test]
+    fn caret_excludes_one_or_many_channels() {
+        assert!(!pattern_matches_channel("^chan1", "chan1"));
+        assert!(pattern_matches_channel("^chan1", "chan2"));
+        assert!(!pattern_matches_channel("* ^chan1 ^chan3", "chan1"));
+        assert!(!pattern_matches_channel("* ^chan1 ^chan3", "chan3"));
+        assert!(pattern_matches_channel("* ^chan1 ^chan3", "chan2"));
+        assert!(!pattern_matches_channel("^chan1 ^chan3", "chan1"));
+        assert!(!pattern_matches_channel("^chan1 ^chan3", "chan3"));
+        assert!(pattern_matches_channel("^chan1 ^chan3", "chan2"));
+        assert!(pattern_matches_channel("chan* ^chan1 ^chan2", "chan3"));
+        assert!(!pattern_matches_channel("chan* ^chan1 ^chan2", "chan1"));
+        assert!(!pattern_matches_channel("chan* ^chan1 ^chan2", "other"));
+        assert!(!pattern_matches_channel("chan[1-4] ^chan[2-3]", "chan2"));
+        assert!(!pattern_matches_channel("chan[1-4] ^chan[2-3]", "chan3"));
+        assert!(pattern_matches_channel("chan[1-4] ^chan[2-3]", "chan1"));
+        assert!(pattern_matches_channel("chan[1-4] ^chan[2-3]", "chan4"));
+        assert!(!pattern_matches_channel("^t[xy]", "tx"));
+        assert!(!pattern_matches_channel("^t[xy]", "ty"));
+        assert!(pattern_matches_channel("^t[xy]", "tz"));
+        assert!(!pattern_matches_channel("^chan*", "chan9"));
+        assert!(pattern_matches_channel("^chan*", "other"));
+        assert!(pattern_matches_channel("chan?", "chan1"));
+        assert!(!pattern_matches_channel("chan?", "chan"));
+        assert!(!pattern_matches_channel("chan?", "chan12"));
+        assert!(!pattern_matches_channel("^?/heartbeat", "a/heartbeat"));
+        assert!(!pattern_matches_channel("^?/heartbeat", "1/heartbeat"));
+        assert!(pattern_matches_channel("^?/heartbeat", "ab/heartbeat"));
+        assert!(pattern_matches_channel("^?/heartbeat", "node/heartbeat"));
+        assert!(!pattern_matches_channel("^*/heartbeat", "node/heartbeat"));
+        assert!(!pattern_matches_channel("^*/heartbeat", "a/b/heartbeat"));
+        assert!(pattern_matches_channel("^*/heartbeat", "heartbeat"));
+        assert!(!pattern_matches_channel("^?/heartbeat ^campbel/batt", "a/heartbeat"));
+        assert!(!pattern_matches_channel("^?/heartbeat ^campbel/batt", "1/heartbeat"));
+        assert!(!pattern_matches_channel("^?/heartbeat ^campbel/batt", "campbel/batt"));
+        assert!(pattern_matches_channel("^?/heartbeat ^campbel/batt", "ab/heartbeat"));
+        assert!(pattern_matches_channel("^?/heartbeat ^campbel/batt", "keep"));
+        assert!(!pattern_matches_channel("^campbel/batt", "campbel/batt"));
+        assert!(pattern_matches_channel("campbel/batt", "campbel/batt"));
+    }
+
+    #[test]
     fn expand_non_pattern_token_appends_indices() {
         assert_eq!(
             expand_channel_names("tail", 3),
@@ -223,4 +264,8 @@ use super::*;
         assert!(!pattern_matches_operator("", "dmx", "/comp/dmx"));
         assert!(pattern_matches_operator("comp/dmx", "other", "/comp/dmx"));
         assert!(pattern_matches_operator("chan[1-2]", "chan1", "/x"));
+        assert!(!pattern_matches_operator("^comp", "other", "/x/other"));
+        assert!(!pattern_matches_operator("^comp", "comp", "/x/comp"));
+        assert!(pattern_matches_operator("dmx ^other", "dmx", "/x/dmx"));
+        assert!(!pattern_matches_operator("dmx ^dmx", "dmx", "/x/dmx"));
     }

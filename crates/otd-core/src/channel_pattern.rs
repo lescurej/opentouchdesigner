@@ -227,16 +227,55 @@ pub fn component_pattern_matches(pattern: &ComponentPattern<'_>, channel: &str) 
     pattern.components.chars().any(|c| mid == c.to_string())
 }
 
-pub fn pattern_matches_channel(pattern: &str, channel: &str) -> bool {
-    pattern.split_whitespace().any(|pat| {
-        if let Some(np) = parse_numbered_pattern(pat) {
-            numbered_pattern_matches(&np, channel)
-        } else if let Some(cp) = parse_component_pattern(pat) {
-            component_pattern_matches(&cp, channel)
-        } else {
-            glob_match(pat, channel)
+fn pattern_token_matches(pat: &str, channel: &str) -> bool {
+    if let Some(np) = parse_numbered_pattern(pat) {
+        numbered_pattern_matches(&np, channel)
+    } else if let Some(cp) = parse_component_pattern(pat) {
+        component_pattern_matches(&cp, channel)
+    } else {
+        glob_match(pat, channel)
+    }
+}
+
+fn is_exclude_token(pat: &str) -> bool {
+    pat.len() > 1 && pat.starts_with('^')
+}
+
+fn exclusion_only(pattern: &str) -> bool {
+    let mut any = false;
+    for pat in pattern.split_whitespace() {
+        any = true;
+        if !is_exclude_token(pat) {
+            return false;
         }
-    })
+    }
+    any
+}
+
+pub fn pattern_matches_channel(pattern: &str, channel: &str) -> bool {
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    for pat in pattern.split_whitespace() {
+        if let Some(exclude) = pat.strip_prefix('^') {
+            if !exclude.is_empty() {
+                excludes.push(exclude);
+            }
+        } else {
+            includes.push(pat);
+        }
+    }
+    if excludes
+        .iter()
+        .any(|pat| pattern_token_matches(pat, channel))
+    {
+        return false;
+    }
+    if includes.is_empty() {
+        return !excludes.is_empty();
+    }
+    includes
+        .iter()
+        .any(|pat| pattern_token_matches(pat, channel))
 }
 
 pub fn rename_to_at(template: &str, index: usize, keep_original: &str) -> String {
@@ -261,12 +300,32 @@ pub fn rename_to_at(template: &str, index: usize, keep_original: &str) -> String
 }
 
 fn glob_match(pattern: &str, name: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == name,
-        Some(("", suffix)) => name.ends_with(suffix),
-        Some((prefix, "")) => name.starts_with(prefix),
-        Some((prefix, suffix)) => name.starts_with(prefix) && name.ends_with(suffix),
+    let pat: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let mut pi = 0;
+    let mut ni = 0;
+    let mut star_p: Option<usize> = None;
+    let mut star_n = 0;
+    while ni < name.len() {
+        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == name[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if pi < pat.len() && pat[pi] == '*' {
+            star_p = Some(pi);
+            star_n = ni;
+            pi += 1;
+        } else if let Some(sp) = star_p {
+            star_n += 1;
+            ni = star_n;
+            pi = sp + 1;
+        } else {
+            return false;
+        }
     }
+    while pi < pat.len() && pat[pi] == '*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 pub fn operator_reference_is_pattern(reference: &str) -> bool {
@@ -282,7 +341,8 @@ pub fn pattern_matches_operator(pattern: &str, name: &str, path: &str) -> bool {
     if pattern.is_empty() || pattern == "*" {
         return false;
     }
-    if pattern_matches_channel(pattern, name) {
+    let exclude_only = exclusion_only(pattern);
+    if !exclude_only && pattern_matches_channel(pattern, name) {
         return true;
     }
     let path_rel = path.trim_start_matches('/');
@@ -301,7 +361,7 @@ pub fn pattern_matches_operator(pattern: &str, name: &str, path: &str) -> bool {
             return true;
         }
     }
-    pattern_matches_channel(pattern, path_rel)
+    !exclude_only && pattern_matches_channel(pattern, path_rel)
 }
 
 #[cfg(test)]
