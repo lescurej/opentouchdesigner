@@ -1,20 +1,29 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use otd_audio::{AudioKernel, BlockCtx};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::data::ChopData;
 
-const BACKLOG_BLOCKS: usize = 8;
+const BACKLOG_BLOCKS: usize = 40;
+/// Below this a time-sliced source is a control signal: the worker holds its
+/// latest value instead of playing its few samples as audio.
+const STREAM_MIN_RATE: f64 = 8_000.0;
+
+const HOLD: u8 = 0;
+const STREAM: u8 = 1;
+const WHOLE: u8 = 2;
 
 struct Shared {
-    streaming: AtomicBool,
+    mode: AtomicU8,
     hold: Vec<AtomicU32>,
+    whole: Mutex<Option<Arc<ChopData>>>,
 }
 
-/// Frame-thread end of a bridge: streams a frame CHOP's time slices into the
-/// worker FIFO, or holds a constant when the source is not a stream.
+/// How a frame-cooked source crosses into the worker, decided per publish:
+/// audio-rate slices stream through a FIFO, control slices hold their latest
+/// value, and a standalone buffer (a wavetable) is handed over whole.
 pub struct BridgeFeed {
     producer: Producer<f32>,
     shared: Arc<Shared>,
@@ -32,12 +41,26 @@ pub struct BridgeKernel {
     max_backlog: usize,
 }
 
+/// Lets a worker kernel read a bridged source's whole buffer.
+#[derive(Clone)]
+pub struct BridgeLink(Arc<Shared>);
+
+impl BridgeLink {
+    pub fn whole(&self) -> Option<Arc<ChopData>> {
+        if self.0.mode.load(Ordering::Acquire) != WHOLE {
+            return None;
+        }
+        self.0.whole.lock().ok()?.clone()
+    }
+}
+
 pub fn bridge(channels: usize, capacity_frames: usize) -> (BridgeFeed, BridgeKernel) {
     let channels = channels.max(1);
     let (producer, consumer) = RingBuffer::new(capacity_frames.max(1) * channels);
     let shared = Arc::new(Shared {
-        streaming: AtomicBool::new(false),
+        mode: AtomicU8::new(HOLD),
         hold: (0..channels).map(|_| AtomicU32::new(0)).collect(),
+        whole: Mutex::new(None),
     });
     (
         BridgeFeed {
@@ -57,22 +80,37 @@ pub fn bridge(channels: usize, capacity_frames: usize) -> (BridgeFeed, BridgeKer
 }
 
 impl BridgeFeed {
-    pub fn publish(&mut self, data: &ChopData) {
+    pub fn link(&self) -> BridgeLink {
+        BridgeLink(self.shared.clone())
+    }
+
+    pub fn publish(&mut self, data: &Arc<ChopData>) {
         let src_ch = data.num_channels();
         if src_ch == 0 {
             return;
         }
         let frames = data.num_samples();
-        let ch = self.channels;
         let pick = |c: usize| &data.channels[c.min(src_ch - 1)].samples;
-        if !(data.time_sliced && frames > 1) {
-            for (c, hold) in self.shared.hold.iter().enumerate() {
-                let v = pick(c).last().copied().unwrap_or(0.0);
-                hold.store(v.to_bits(), Ordering::Relaxed);
-            }
-            self.shared.streaming.store(false, Ordering::Release);
+        for (c, hold) in self.shared.hold.iter().enumerate() {
+            let v = pick(c).last().copied().unwrap_or(0.0);
+            hold.store(v.to_bits(), Ordering::Relaxed);
+        }
+        if frames <= 1 {
+            self.shared.mode.store(HOLD, Ordering::Release);
             return;
         }
+        if !data.time_sliced {
+            if let Ok(mut whole) = self.shared.whole.lock() {
+                *whole = Some(data.clone());
+            }
+            self.shared.mode.store(WHOLE, Ordering::Release);
+            return;
+        }
+        if data.sample_rate < STREAM_MIN_RATE {
+            self.shared.mode.store(HOLD, Ordering::Release);
+            return;
+        }
+        let ch = self.channels;
         let fit = frames.min(self.producer.slots() / ch);
         self.scratch.clear();
         for fi in 0..fit {
@@ -81,7 +119,7 @@ impl BridgeFeed {
             }
         }
         let _ = self.producer.push_partial_slice(&self.scratch);
-        self.shared.streaming.store(true, Ordering::Release);
+        self.shared.mode.store(STREAM, Ordering::Release);
     }
 }
 
@@ -92,7 +130,7 @@ impl AudioKernel for BridgeKernel {
 
     fn process(&mut self, ctx: &BlockCtx, _: &[&[f32]], output: &mut [f32]) {
         let ch = self.channels;
-        if !self.shared.streaming.load(Ordering::Acquire) {
+        if self.shared.mode.load(Ordering::Acquire) != STREAM {
             for (i, s) in output.iter_mut().enumerate() {
                 *s = f32::from_bits(self.shared.hold[i % ch].load(Ordering::Relaxed));
             }

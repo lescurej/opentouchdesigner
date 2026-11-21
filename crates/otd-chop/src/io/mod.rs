@@ -29,13 +29,13 @@ mod osc;
 mod panel;
 
 pub use audio::{
-    clamp_audio_latency_ms, ensure_rt_reaper_sender, AUDIO_LATENCY_DEFAULT_MS, AUDIO_LATENCY_MAX_MS,
-    AUDIO_LATENCY_MIN_MS, AUDIO_MOVIE,
+    AUDIO_LATENCY_DEFAULT_MS, AUDIO_LATENCY_MAX_MS, AUDIO_LATENCY_MIN_MS, AUDIO_MOVIE,
+    clamp_audio_latency_ms,
 };
 pub(crate) use audio::{
-    cook_audio_file, cook_audio_file_out, cook_audio_in, cook_audio_out,
-    cook_reaper_out, cook_spectrum, params_audio_file, params_audio_file_out, params_audio_in,
-    params_audio_out, params_reaper_out, params_spectrum,
+    cook_audio_file, cook_audio_file_out, cook_audio_in, cook_audio_out, cook_reaper_out,
+    cook_spectrum, params_audio_file, params_audio_file_out, params_audio_in, params_audio_out,
+    params_reaper_out, params_spectrum,
 };
 pub(crate) use devices::device_name;
 pub(crate) use dmx::{cook_dmx_in, cook_dmx_out, params_dmx_in, params_dmx_out};
@@ -211,6 +211,14 @@ impl Io {
 
     pub fn set_audio_rt_armed(&mut self, armed: bool) {
         self.rt_audio_armed = armed;
+    }
+
+    /// Closes the frame-paced ReaStream senders of Reaper Outs the audio
+    /// worker now streams, so no operator is ever sent twice.
+    pub fn release_frame_reaper_outs(&mut self, paths: &[String]) {
+        for path in paths {
+            self.reaper_out.remove(path);
+        }
     }
 
     pub(crate) fn rt_audio_armed(&self) -> bool {

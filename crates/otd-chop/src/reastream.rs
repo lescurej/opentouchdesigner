@@ -13,6 +13,65 @@ pub const DEFAULT_PORT: u16 = 58710;
 pub const MAX_AUDIO_BYTES: usize = 1200;
 
 const MAGIC: &[u8; 4] = b"MRSR";
+const HEADER_BYTES: usize = 4 + 4 + 32 + 1 + 4 + 2;
+pub const MAX_CHANNELS: usize = 64;
+
+/// `host:58710`, with `localhost` and an empty field meaning this machine.
+pub fn target(host: &str) -> Result<SocketAddr, String> {
+    let host = host.trim();
+    let host = if host.eq_ignore_ascii_case("localhost") || host.is_empty() {
+        "127.0.0.1"
+    } else {
+        host
+    };
+    format!("{host}:{DEFAULT_PORT}")
+        .parse()
+        .map_err(|_| format!("bad ReaStream address `{host}`"))
+}
+
+fn identifier_pad(identifier: &str) -> Result<[u8; 32], String> {
+    if identifier.len() >= 32 {
+        return Err("identifier must be shorter than 32 characters".into());
+    }
+    let mut id_pad = [0u8; 32];
+    id_pad[..identifier.len()].copy_from_slice(identifier.as_bytes());
+    Ok(id_pad)
+}
+
+fn frames_per_packet(nch: usize) -> Result<usize, String> {
+    if nch > MAX_CHANNELS {
+        return Err(format!(
+            "ReaStream supports at most {MAX_CHANNELS} channels (got {nch})"
+        ));
+    }
+    match MAX_AUDIO_BYTES / (nch.max(1) * 4) {
+        0 => Err("too many channels for one ReaStream block".into()),
+        n => Ok(n),
+    }
+}
+
+fn write_packet(
+    buf: &mut Vec<u8>,
+    id_pad: &[u8; 32],
+    sample_rate: u32,
+    channels: &[&[f32]],
+    offset: usize,
+    chunk: usize,
+) {
+    let sblocklen = chunk * channels.len() * 4;
+    buf.clear();
+    buf.extend_from_slice(MAGIC);
+    buf.extend_from_slice(&((HEADER_BYTES + sblocklen) as u32).to_le_bytes());
+    buf.extend_from_slice(id_pad);
+    buf.push(channels.len() as u8);
+    buf.extend_from_slice(&sample_rate.to_le_bytes());
+    buf.extend_from_slice(&(sblocklen as u16).to_le_bytes());
+    for ch in channels {
+        for sample in &ch[offset..offset + chunk] {
+            buf.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+}
 
 /// Build one or more ReaStream audio packets from non-interleaved channel slices
 /// (`channels[0]` then `channels[1]`, … per packet).
@@ -24,46 +83,15 @@ pub fn encode_audio_packets(
     if channels.is_empty() {
         return Ok(Vec::new());
     }
-    let nch = channels.len();
-    if nch > 64 {
-        return Err(format!("ReaStream supports at most 64 channels (got {nch})"));
-    }
-    if identifier.len() >= 32 {
-        return Err("identifier must be shorter than 32 characters".into());
-    }
+    let per_packet = frames_per_packet(channels.len())?;
+    let id_pad = identifier_pad(identifier)?;
     let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
-    if n == 0 {
-        return Ok(Vec::new());
-    }
-
-    let bytes_per_frame = nch * 4;
-    let max_samples_per_chunk = MAX_AUDIO_BYTES / bytes_per_frame;
-    if max_samples_per_chunk == 0 {
-        return Err("too many channels for one ReaStream block".into());
-    }
-
-    let mut id_pad = [0u8; 32];
-    id_pad[..identifier.len()].copy_from_slice(identifier.as_bytes());
-
     let mut packets = Vec::new();
     let mut offset = 0usize;
     while offset < n {
-        let chunk = (n - offset).min(max_samples_per_chunk);
-        let sblocklen = chunk * bytes_per_frame;
-        let packet_size = 4 + 4 + 32 + 1 + 4 + 2 + sblocklen;
-        let mut buf = Vec::with_capacity(packet_size);
-        buf.extend_from_slice(MAGIC);
-        buf.extend_from_slice(&(packet_size as u32).to_le_bytes());
-        buf.extend_from_slice(&id_pad);
-        buf.push(nch as u8);
-        buf.extend_from_slice(&sample_rate.to_le_bytes());
-        buf.extend_from_slice(&(sblocklen as u16).to_le_bytes());
-        for ch in channels {
-            for sample in &ch[offset..offset + chunk] {
-                buf.extend_from_slice(&sample.to_le_bytes());
-            }
-        }
-        debug_assert_eq!(buf.len(), packet_size);
+        let chunk = (n - offset).min(per_packet);
+        let mut buf = Vec::with_capacity(HEADER_BYTES + chunk * channels.len() * 4);
+        write_packet(&mut buf, &id_pad, sample_rate, channels, offset, chunk);
         packets.push(buf);
         offset += chunk;
     }
@@ -76,13 +104,120 @@ pub fn send_packets(socket: &UdpSocket, target: SocketAddr, packets: &[Vec<u8>])
     }
 }
 
+/// A non-blocking ReaStream socket for a caller that already runs at the
+/// sample clock: every block goes out as soon as it is rendered, so the
+/// stream is paced by whoever renders it and never by a second timer.
+pub struct ReaStreamLink {
+    socket: UdpSocket,
+    target: SocketAddr,
+    id_pad: [u8; 32],
+    sample_rate: u32,
+}
+
+impl ReaStreamLink {
+    pub fn open(host: &str, identifier: &str, sample_rate: u32) -> Result<Self, String> {
+        let target = target(host)?;
+        let id_pad = identifier_pad(identifier)?;
+        let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+            .map_err(|e| format!("ReaStream bind: {e}"))?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| format!("ReaStream socket: {e}"))?;
+        Ok(Self {
+            socket,
+            target,
+            id_pad,
+            sample_rate: sample_rate.max(1),
+        })
+    }
+
+    /// Sends one block; `packet` is reused between calls. False when the
+    /// network refused a packet, which is a dropped block, not a stall.
+    pub fn send(&self, channels: &[&[f32]], packet: &mut Vec<u8>) -> bool {
+        let Ok(per_packet) = frames_per_packet(channels.len()) else {
+            return false;
+        };
+        let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
+        let mut offset = 0usize;
+        let mut sent = true;
+        while offset < n {
+            let chunk = (n - offset).min(per_packet);
+            write_packet(
+                packet,
+                &self.id_pad,
+                self.sample_rate,
+                channels,
+                offset,
+                chunk,
+            );
+            sent &= self.socket.send_to(packet, self.target).is_ok();
+            offset += chunk;
+        }
+        sent
+    }
+}
+
 const QUEUE_CAP_SAMPLES: usize = 64_000;
 pub const JITTER_BUFFER_MS_DEFAULT: u32 = 30;
+
+enum Pace {
+    Buffer,
+    Wait(f64),
+    Send(usize),
+    Resync,
+}
+
+fn lead_samples(rate: u32, jitter_samples: u64) -> u64 {
+    let twenty_ms = u64::from(rate.max(1)).saturating_mul(20) / 1000;
+    twenty_ms.clamp(64, jitter_samples.max(64) / 2)
+}
+
+fn cushion_samples(jitter_samples: u64, last_block: usize, rate: u32) -> u64 {
+    let from_block = (last_block as u64).saturating_mul(2);
+    let one_sec = u64::from(rate.max(1));
+    jitter_samples.max(from_block).clamp(64, one_sec)
+}
+
+fn pace(
+    playing: bool,
+    samples_sent: u64,
+    elapsed_secs: f64,
+    pending: usize,
+    rate: u32,
+    cushion: u64,
+    finite: bool,
+) -> Pace {
+    let lead = lead_samples(rate, cushion);
+    let rate_f = f64::from(rate.max(1));
+    if !playing {
+        let primed = pending > 0 && (finite || pending as u64 >= cushion);
+        return if primed {
+            Pace::Send(lead as usize)
+        } else {
+            Pace::Buffer
+        };
+    }
+    let elapsed_samples = (elapsed_secs.max(0.0) * rate_f).floor() as u64;
+    if !finite && elapsed_samples.saturating_sub(samples_sent) > cushion {
+        return Pace::Resync;
+    }
+    if pending == 0 {
+        return Pace::Wait(0.001);
+    }
+    let target = elapsed_samples.saturating_add(lead);
+    if samples_sent >= target {
+        let wake_at = samples_sent.saturating_sub(lead) as f64 / rate_f;
+        let wait = (wake_at - elapsed_secs).clamp(1.0 / rate_f, 0.005);
+        return Pace::Wait(wait);
+    }
+    Pace::Send((target - samples_sent) as usize)
+}
 
 struct ReaStreamQueue {
     channels: Vec<VecDeque<f32>>,
     finite: bool,
     epoch: u64,
+    last_block: usize,
 }
 
 impl ReaStreamQueue {
@@ -99,6 +234,7 @@ impl ReaStreamQueue {
                 q.pop_front();
             }
         }
+        self.last_block = n;
         self.finite = false;
     }
 
@@ -113,6 +249,7 @@ impl ReaStreamQueue {
             .iter()
             .map(|ch| ch.iter().take(n).copied().collect())
             .collect();
+        self.last_block = n;
         self.finite = true;
         self.epoch = self.epoch.wrapping_add(1);
     }
@@ -121,8 +258,17 @@ impl ReaStreamQueue {
         for ch in &mut self.channels {
             ch.clear();
         }
+        self.last_block = 0;
         self.finite = false;
         self.epoch = self.epoch.wrapping_add(1);
+    }
+
+    fn trim_to(&mut self, keep: usize) {
+        for ch in &mut self.channels {
+            while ch.len() > keep {
+                ch.pop_front();
+            }
+        }
     }
 
     fn take_send_block(&mut self, limit: usize) -> Option<Vec<Vec<f32>>> {
@@ -185,6 +331,7 @@ impl ReaStreamSender {
             channels: (0..channels.max(1)).map(|_| VecDeque::new()).collect(),
             finite: false,
             epoch: 0,
+            last_block: 0,
         }));
         let rate = Arc::new(AtomicU32::new(sample_rate));
         let jitter = Arc::new(AtomicU32::new(jitter_ms.max(1)));
@@ -206,7 +353,7 @@ impl ReaStreamSender {
                     let jitter_ms = jitter_in.load(Ordering::Relaxed).max(1);
                     let jitter_samples =
                         (u64::from(rate_val) * u64::from(jitter_ms) / 1000).max(64);
-                    let ready = {
+                    let (pending, finite, last_block) = {
                         let Ok(q) = queue_in.lock() else {
                             return;
                         };
@@ -215,52 +362,71 @@ impl ReaStreamSender {
                             clock_on = false;
                             samples_sent = 0;
                         }
-                        let pending = q.pending_samples() as u64;
-                        pending > 0 && (q.finite || pending >= jitter_samples)
+                        (q.pending_samples(), q.finite, q.last_block)
                     };
-                    if !ready {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                        continue;
-                    }
-                    if !clock_on {
-                        start = std::time::Instant::now();
-                        samples_sent = 0;
-                        clock_on = true;
-                    }
-                    let elapsed = start.elapsed().as_secs_f64();
-                    let budget = (elapsed * f64::from(rate_val)).floor() as u64 + jitter_samples;
-                    let ahead_limit = budget.saturating_sub(jitter_samples / 2);
-                    if samples_sent >= ahead_limit {
-                        let wake_at = samples_sent.saturating_sub(jitter_samples / 2) as f64
-                            / f64::from(rate_val);
-                        let wait = (wake_at - elapsed).clamp(1.0 / f64::from(rate_val), 0.05);
-                        std::thread::sleep(std::time::Duration::from_secs_f64(wait));
-                        continue;
-                    }
-                    let due = (ahead_limit - samples_sent) as usize;
-                    let block = {
-                        let Ok(mut q) = queue_in.lock() else {
-                            return;
-                        };
-                        if q.epoch != local_epoch {
+                    let cushion = cushion_samples(jitter_samples, last_block, rate_val);
+                    let elapsed = if clock_on {
+                        start.elapsed().as_secs_f64()
+                    } else {
+                        0.0
+                    };
+                    match pace(
+                        clock_on,
+                        samples_sent,
+                        elapsed,
+                        pending,
+                        rate_val,
+                        cushion,
+                        finite,
+                    ) {
+                        Pace::Buffer => {
+                            std::thread::sleep(std::time::Duration::from_millis(1));
                             continue;
                         }
-                        let pending = q.pending_samples();
-                        if pending == 0 || (!q.finite && (pending as u64) < jitter_samples) {
-                            None
-                        } else {
-                            q.take_send_block(due)
+                        Pace::Resync => {
+                            start = std::time::Instant::now();
+                            samples_sent = 0;
+                            clock_on = true;
+                            if let Ok(mut q) = queue_in.lock() {
+                                q.trim_to(cushion as usize);
+                            }
+                            continue;
                         }
-                    };
-                    let Some(bufs) = block else {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                        continue;
-                    };
-                    let chunk = bufs.first().map(|b| b.len()).unwrap_or(0) as u64;
-                    let refs: Vec<&[f32]> = bufs.iter().map(|s| s.as_slice()).collect();
-                    if let Ok(packets) = encode_audio_packets(&identifier, rate_val, &refs) {
-                        send_packets(&socket, target, &packets);
-                        samples_sent += chunk;
+                        Pace::Wait(wait) => {
+                            std::thread::sleep(std::time::Duration::from_secs_f64(wait));
+                            continue;
+                        }
+                        Pace::Send(due) => {
+                            if !clock_on {
+                                start = std::time::Instant::now();
+                                samples_sent = 0;
+                                clock_on = true;
+                            }
+                            let block = {
+                                let Ok(mut q) = queue_in.lock() else {
+                                    return;
+                                };
+                                if q.epoch != local_epoch {
+                                    continue;
+                                }
+                                if q.pending_samples() == 0 {
+                                    None
+                                } else {
+                                    q.take_send_block(due)
+                                }
+                            };
+                            let Some(bufs) = block else {
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                                continue;
+                            };
+                            let chunk = bufs.first().map(|b| b.len()).unwrap_or(0) as u64;
+                            let refs: Vec<&[f32]> = bufs.iter().map(|s| s.as_slice()).collect();
+                            if let Ok(packets) = encode_audio_packets(&identifier, rate_val, &refs)
+                            {
+                                send_packets(&socket, target, &packets);
+                                samples_sent += chunk;
+                            }
+                        }
                     }
                 }
             })

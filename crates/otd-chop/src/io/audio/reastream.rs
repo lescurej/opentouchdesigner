@@ -38,7 +38,11 @@ fn reaper_enqueue(out: &mut ReaStreamOut, input: &ChopData, end: f64) {
             oscvoice::PushDecision::Append if !out.was_sliced => out.sender.clear(),
             oscvoice::PushDecision::Append => {}
         }
-        let refs: Vec<&[f32]> = input.channels.iter().map(|ch| ch.samples.as_slice()).collect();
+        let refs: Vec<&[f32]> = input
+            .channels
+            .iter()
+            .map(|ch| ch.samples.as_slice())
+            .collect();
         out.sender.push(&refs);
         out.last_end = end;
         out.content_hash = None;
@@ -51,7 +55,11 @@ fn reaper_enqueue(out: &mut ReaStreamOut, input: &ChopData, end: f64) {
         oscvoice::PushDecision::Skip => (),
         oscvoice::PushDecision::Append if same && !out.was_sliced => (),
         oscvoice::PushDecision::Seek | oscvoice::PushDecision::Append => {
-            let refs: Vec<&[f32]> = input.channels.iter().map(|ch| ch.samples.as_slice()).collect();
+            let refs: Vec<&[f32]> = input
+                .channels
+                .iter()
+                .map(|ch| ch.samples.as_slice())
+                .collect();
             out.sender.replace(&refs);
             out.last_end = end;
             out.content_hash = Some(hash);
@@ -60,56 +68,9 @@ fn reaper_enqueue(out: &mut ReaStreamOut, input: &ChopData, end: f64) {
     }
 }
 
-pub fn ensure_rt_reaper_sender(
-    slot: &mut crate::rt::ReaperStreamSlot,
-    net: &str,
-    identifier: &str,
-    rate: u32,
-    channels: usize,
-    jitter_ms: u32,
-) -> Result<(), String> {
-    let key = format!("{net}|{identifier}|{channels}");
-    if slot.target != key {
-        slot.sender = None;
-    }
-    if slot.sender.is_none() {
-        let target = reastream_target(net)?;
-        let nch = channels.clamp(1, crate::rt::MAX_REASTREAM_CHANNELS);
-        let sender = reastream_socket().and_then(|socket| {
-            crate::reastream::ReaStreamSender::open(
-                socket,
-                target,
-                identifier.to_string(),
-                rate,
-                nch,
-                jitter_ms,
-            )
-        })?;
-        slot.sender = Some(sender);
-        slot.target = key;
-    }
-    if let Some(s) = slot.sender.as_ref() {
-        s.set_sample_rate(rate);
-        s.set_jitter_ms(jitter_ms);
-    }
-    Ok(())
-}
-
 fn reastream_socket() -> Result<UdpSocket, String> {
     let addr = SocketAddr::from(([0, 0, 0, 0], 0));
     UdpSocket::bind(addr).map_err(|e| format!("ReaStream bind: {e}"))
-}
-
-fn reastream_target(host: &str) -> Result<SocketAddr, String> {
-    let host = host.trim();
-    let host = if host.eq_ignore_ascii_case("localhost") || host.is_empty() {
-        "127.0.0.1"
-    } else {
-        host
-    };
-    format!("{host}:{}", crate::reastream::DEFAULT_PORT)
-        .parse()
-        .map_err(|_| format!("bad ReaStream address `{host}`"))
 }
 
 pub(crate) fn params_reaper_out() -> IndexMap<String, Param> {
@@ -145,7 +106,7 @@ pub(crate) fn cook_reaper_out(c: &mut ChopCtx) -> ChopData {
     let sample_rate = otd_core::canonical_project_sample_rate(rate_f);
     let rate_u32 = sample_rate.round().max(1.0) as u32;
 
-    let target = match reastream_target(&net) {
+    let target = match crate::reastream::target(&net) {
         Ok(t) => t,
         Err(e) => {
             c.io.note(&path, e);
@@ -153,12 +114,11 @@ pub(crate) fn cook_reaper_out(c: &mut ChopCtx) -> ChopData {
         }
     };
 
-    let needs_open = c
-        .io
-        .reaper_out
-        .get(&path)
-        .map(|o| o.target != target || o.identifier != identifier)
-        .unwrap_or(true);
+    let needs_open =
+        c.io.reaper_out
+            .get(&path)
+            .map(|o| o.target != target || o.identifier != identifier)
+            .unwrap_or(true);
     if needs_open {
         c.io.reaper_out.remove(&path);
         let nch = input.num_channels().clamp(1, 64);

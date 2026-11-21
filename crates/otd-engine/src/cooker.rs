@@ -1,15 +1,11 @@
 //! Cross-family cook implementation for [`crate::Engines`].
 
-
 use otd_chop::engine::{ChannelStore, Network};
 use otd_chop::ops::{INFO, PARAMETER};
-use otd_core::{
-    CookContext, CookError, Cooker, EvalContext, Family, Graph, NodeId,
-};
+use otd_core::{CookContext, CookError, Cooker, EvalContext, Family, Graph, NodeId};
 use otd_dat::DatStore;
 use otd_gpu::TopEngine;
 use otd_sop::GeometryStore;
-
 
 use crate::info;
 
@@ -197,7 +193,6 @@ impl Cooker for Engines {
                 if crate::audio_partition::skip_frame_chop_cook(
                     &self.audio_partition,
                     self.audio_rt.is_armed(),
-                    graph,
                     id,
                 ) {
                     if let Some(data) = self.audio_rt.tap_chop(id) {

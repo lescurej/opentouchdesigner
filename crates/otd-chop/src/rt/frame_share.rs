@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use otd_core::{CookContext, Graph};
 
+use crate::engine::ChannelStore;
 use crate::io::Io;
 
 /// What the frame thread hands to the audio worker each frame. The worker
@@ -10,6 +11,7 @@ use crate::io::Io;
 /// the graph is republished only when its content changes.
 pub struct FrameShare {
     graph: Mutex<Arc<Graph>>,
+    channels: Mutex<Arc<ChannelStore>>,
     time: Mutex<CookContext>,
     io: Mutex<Io>,
     io_generation: AtomicU64,
@@ -19,6 +21,7 @@ impl FrameShare {
     pub fn new(graph: Arc<Graph>) -> Arc<Self> {
         Arc::new(Self {
             graph: Mutex::new(graph),
+            channels: Mutex::new(Arc::new(ChannelStore::default())),
             time: Mutex::new(CookContext::default()),
             io: Mutex::new(Io::default()),
             io_generation: AtomicU64::new(0),
@@ -28,6 +31,14 @@ impl FrameShare {
     pub fn publish_graph(&self, graph: Arc<Graph>) {
         if let Ok(mut slot) = self.graph.lock() {
             *slot = graph;
+        }
+    }
+
+    /// The frame cook's channels, for parameter expressions and operators
+    /// that name another CHOP.
+    pub fn publish_channels(&self, channels: Arc<ChannelStore>) {
+        if let Ok(mut slot) = self.channels.lock() {
+            *slot = channels;
         }
     }
 
@@ -47,6 +58,10 @@ impl FrameShare {
 
     pub(crate) fn graph(&self) -> Option<Arc<Graph>> {
         self.graph.lock().ok().map(|g| g.clone())
+    }
+
+    pub(crate) fn channels(&self) -> Arc<ChannelStore> {
+        self.channels.lock().map(|c| c.clone()).unwrap_or_default()
     }
 
     pub(crate) fn time(&self) -> CookContext {

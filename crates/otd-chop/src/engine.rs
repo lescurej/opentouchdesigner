@@ -19,7 +19,7 @@ use crate::io::{Io, PanelInteractionStore, is_panel_widget_op};
 use crate::ops::{self, ChopCtx, OpState};
 
 /// Every CHOP's most recent output.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ChannelStore {
     data: SecondaryMap<NodeId, Arc<ChopData>>,
 }

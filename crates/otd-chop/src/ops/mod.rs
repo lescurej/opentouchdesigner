@@ -24,12 +24,12 @@ include!(concat!(env!("OUT_DIR"), "/registry_generated.rs"));
 
 pub(crate) use filein::cook_file_in_shared;
 
-pub(crate) use lfo::wave;
 pub use constant::{CONSTANT, CONSTANT_MAX_ROWS};
 pub use info::INFO;
+pub(crate) use lfo::wave;
+pub(crate) use null::cook as cook_null;
 pub use parameter::PARAMETER;
 pub use perform::PERFORM;
-pub(crate) use null::cook as cook_null;
 
 use crate::data::ChopData;
 use crate::engine::ChannelStore;
@@ -133,15 +133,14 @@ pub struct ChopSpec {
     pub def: OpDef,
     pub cook: fn(&mut ChopCtx) -> crate::data::ChopData,
     pub rt_safe: bool,
-    /// Side-effect audio sink (Reaper Out, …) — always frame-cooked.
+    /// A terminal the audio worker drives: Audio Device Out or Reaper Out.
     pub rt_audio_sink: bool,
-    /// Lower wins when several worker sinks exist; walk order breaks ties.
     pub rt_audio_sink_priority: u8,
 }
 
-/// `Audio Device Out` — the only sink the RT worker drives.
+/// `Audio Device Out` — owns the device clock; one per plan.
 pub const RT_AUDIO_SINK_DEVICE: u8 = 0;
-/// `Reaper Out` — frame-cooked ReaStream; not an RT worker terminal.
+/// `Reaper Out` — streams on the worker clock; any number per plan.
 pub const RT_AUDIO_SINK_REAPER: u8 = 1;
 
 pub(crate) fn mark_rt_audio_sink(mut s: ChopSpec, priority: u8) -> ChopSpec {
@@ -214,44 +213,9 @@ pub fn is_rt_audio_sink(type_name: &str) -> bool {
     spec_for(type_name).is_some_and(|s| s.rt_audio_sink)
 }
 
-pub fn is_rt_worker_sink(type_name: &str) -> bool {
-    spec_for(type_name).is_some_and(|s| {
-        s.rt_audio_sink && s.rt_audio_sink_priority == RT_AUDIO_SINK_DEVICE
-    })
-}
-
-fn rt_audio_sink_priority(type_name: &str) -> Option<u8> {
+pub fn is_rt_device_sink(type_name: &str) -> bool {
     spec_for(type_name)
-        .filter(|s| s.rt_audio_sink && s.rt_audio_sink_priority == RT_AUDIO_SINK_DEVICE)
-        .map(|s| s.rt_audio_sink_priority)
-}
-
-/// The `Audio Device Out` the RT worker drives (walk order if several).
-pub fn primary_rt_audio_sink(
-    graph: &otd_core::Graph,
-    audio_nodes: &std::collections::HashSet<otd_core::NodeId>,
-) -> Option<otd_core::NodeId> {
-    let mut best: Option<(otd_core::NodeId, u8)> = None;
-    for id in graph.walk() {
-        if !audio_nodes.contains(&id) {
-            continue;
-        }
-        if graph.node(id).flags.bypass {
-            continue;
-        }
-        let op = graph.node(id).op_type.as_str();
-        let Some(priority) = rt_audio_sink_priority(op) else {
-            continue;
-        };
-        let replace = match best {
-            None => true,
-            Some((_, bp)) => priority < bp,
-        };
-        if replace {
-            best = Some((id, priority));
-        }
-    }
-    best.map(|(id, _)| id)
+        .is_some_and(|s| s.rt_audio_sink && s.rt_audio_sink_priority == RT_AUDIO_SINK_DEVICE)
 }
 
 /// The In and Out operators that give a component its channel connectors.

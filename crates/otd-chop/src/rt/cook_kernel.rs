@@ -1,14 +1,23 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use otd_audio::{AudioKernel, BlockCtx, ControlPort};
 use otd_core::{CookContext, Crossings, EvalContext, NodeId};
 
 use crate::data::{Channel, ChopData};
-use crate::engine::ChannelStore;
+use crate::engine::Network;
 use crate::io::Io;
-use crate::ops::{is_rt_safe_chop, spec_for, ChopCtx, OpState, NULL};
+use crate::ops::{ChopCtx, NULL, OpState, is_rt_safe_chop, spec_for};
 
+use super::bridge::BridgeLink;
 use super::frame_share::FrameShare;
+
+/// Where one plan input lands on the operator: its wired position, and the
+/// bridge behind it when the source is frame-cooked.
+pub struct KernelInput {
+    pub position: usize,
+    pub bridge: Option<BridgeLink>,
+}
 
 /// Runs a frame CHOP's cook function once per audio block on the worker.
 /// Input `ChopData` buffers are reused in place; the cook's own output still
@@ -19,19 +28,27 @@ pub struct CookWrapKernel {
     cook: fn(&mut ChopCtx) -> ChopData,
     state: OpState,
     path: String,
-    input_count: usize,
-    store: ChannelStore,
+    wiring: Vec<KernelInput>,
     share: Arc<FrameShare>,
     io: Io,
     io_generation: u64,
     inputs: Vec<Arc<ChopData>>,
     clock: Option<CookContext>,
+    produced: Arc<AtomicUsize>,
 }
 
 const CLOCK_RESYNC_SECONDS: f64 = 0.5;
 
 impl CookWrapKernel {
-    pub fn build(graph: &otd_core::Graph, id: NodeId, share: Arc<FrameShare>) -> Option<Self> {
+    /// `produced` receives the channel count each block really cooks, so the
+    /// frame thread can resize the plan when its first guess was wrong.
+    pub fn build(
+        graph: &otd_core::Graph,
+        id: NodeId,
+        share: Arc<FrameShare>,
+        wiring: Vec<KernelInput>,
+        produced: Arc<AtomicUsize>,
+    ) -> Option<Self> {
         let node = graph.get(id)?;
         let op = node.op_type.as_str();
         if op == crate::io::AUDIO_OUT || op == crate::io::REAPER_OUT {
@@ -40,19 +57,20 @@ impl CookWrapKernel {
         if !(op == NULL || is_rt_safe_chop(op)) {
             return None;
         }
-        let input_count = node.inputs.len();
         Some(Self {
             id,
             cook: spec_for(op)?.cook,
             state: OpState::default(),
             path: graph.path(id),
-            input_count,
-            store: ChannelStore::default(),
+            wiring,
             share,
             io: Io::default(),
             io_generation: u64::MAX,
-            inputs: (0..input_count).map(|_| Arc::new(ChopData::empty())).collect(),
+            inputs: (0..node.inputs.len())
+                .map(|_| Arc::new(ChopData::empty()))
+                .collect(),
             clock: None,
+            produced,
         })
     }
 
@@ -105,10 +123,23 @@ impl AudioKernel for CookWrapKernel {
             self.share.refresh_io(&mut self.io);
             self.io_generation = generation;
         }
-        for (i, slot) in self.inputs.iter_mut().enumerate().take(self.input_count) {
-            let buf = inputs.get(i).copied().unwrap_or(&[]);
-            fill_chop(slot, buf, n, ctx.sample_rate);
+        for (k, wire) in self.wiring.iter().enumerate() {
+            let Some(slot) = self.inputs.get_mut(wire.position) else {
+                continue;
+            };
+            if let Some(whole) = wire.bridge.as_ref().and_then(BridgeLink::whole) {
+                *slot = whole;
+                continue;
+            }
+            fill_chop(
+                slot,
+                inputs.get(k).copied().unwrap_or(&[]),
+                n,
+                ctx.sample_rate,
+            );
         }
+        let channels = self.share.channels();
+        let net = Network::new(&graph, &channels);
         let time = self.advance_clock(n, ctx.sample_rate);
         let (t, abs, frame) = graph.local_clock_at(self.id, &time);
         let eval = EvalContext {
@@ -116,7 +147,7 @@ impl AudioKernel for CookWrapKernel {
             time: t,
             abs_time: abs,
             fps: time.fps,
-            channels: None,
+            channels: Some(&net),
             path: Some(&self.path),
             locals: &[],
         };
@@ -131,7 +162,7 @@ impl AudioKernel for CookWrapKernel {
             state: &mut self.state,
             io: &mut self.io,
             path: &self.path,
-            store: &self.store,
+            store: &channels,
             rate_override: Some(ctx.sample_rate),
             prev_frame: None,
             capture: None,
@@ -140,6 +171,8 @@ impl AudioKernel for CookWrapKernel {
         };
         let cooked = (self.cook)(&mut chop_ctx);
         self.inputs = std::mem::take(&mut chop_ctx.inputs);
+        self.produced
+            .store(cooked.num_channels(), Ordering::Relaxed);
         write_interleaved(&cooked, output, n);
     }
 }

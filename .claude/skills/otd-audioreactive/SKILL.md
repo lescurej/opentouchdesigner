@@ -88,7 +88,7 @@ For long-running shows (Reaper, QLab, etc.), prefer **one sample clock**:
 1. `audiodeviceoutCHOP` → **BlackHole** or **Loopback** (virtual device).
 2. Reaper (or the DAW) records from the same virtual device.
 
-`reaperoutCHOP` / ReaStream is fine for quick tests; UDP + two clocks can drift over hours. Raise **Audio / ReaStream buffer (ms)** in editor settings (20–300) if you must use ReaStream.
+`reaperoutCHOP` / ReaStream needs no virtual device: it is a sink of the audio worker, which renders its chain (through components) and sends every block as it is rendered, so the stream runs at the sample rate regardless of the frame rate. With an `audiodeviceoutCHOP` in the patch both share the device clock; alone, the worker runs its own clock. Operators that are not RT-safe still feed it, through a bridge from the frame cook. Over hours the worker clock and Reaper's device clock can still drift a little; ReaStream's receive buffer absorbs it.
 
 ## Output too
 
