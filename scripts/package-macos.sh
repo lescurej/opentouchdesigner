@@ -3,11 +3,12 @@
 #
 #   scripts/package-macos.sh [version]
 #
-# The app is *unsigned*. Signing needs a paid Apple Developer account, and
-# pretending otherwise would be worse than saying so: Gatekeeper will refuse
-# the first launch, and the README tells people how to get past it. Everything
-# here is reproducible from a clean checkout — no assets are committed that
-# this script cannot regenerate.
+# Signed with scripts/codesign/OpenTouchDesignerLocal.p12. That certificate
+# is not an Apple Developer ID, so Gatekeeper still refuses the first launch.
+# It exists so the code identity stays put across builds: macOS keys Local
+# Network and camera grants to the signing certificate, and an ad-hoc
+# signature changes hash every build, after which a double-clicked app is
+# denied without being asked again.
 set -euo pipefail
 
 VERSION="${1:-0.1.0}"
@@ -115,6 +116,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <string>The Audio Device In CHOP listens to an input so patches can react to sound.</string>
   <key>NSCameraUsageDescription</key>
   <string>The Video Device In TOP reads a camera as a texture.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>OSC In receives messages from other machines on the local network.</string>
   <key>UTExportedTypeDeclarations</key>
   <array>
     <dict>
@@ -180,10 +183,27 @@ fi
 echo "==> default media"
 cp "$ROOT/examples/media/apple.png" "$APP/Contents/Resources/apple.png"
 
-echo "==> signing (ad-hoc)"
-codesign --force --deep --sign - \
-    --identifier dev.opentouchdesigner.editor \
-    "$APP"
+SIGN_IDENTITY="OpenTouchDesigner Local"
+SIGN_P12="$ROOT/scripts/codesign/OpenTouchDesignerLocal.p12"
+SIGN_P12_PASSWORD="opentouchdesigner"
+if ! security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1; then
+  KEYCHAIN="$(security default-keychain -d user | tr -d '"' | awk '{$1=$1; print}')"
+  if [ -f "$SIGN_P12" ] && [ -n "$KEYCHAIN" ] && [ -f "$KEYCHAIN" ]; then
+    security import "$SIGN_P12" -k "$KEYCHAIN" -P "$SIGN_P12_PASSWORD" -A -T /usr/bin/codesign
+  fi
+fi
+if security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1; then
+  echo "==> signing ($SIGN_IDENTITY)"
+  codesign --force --deep --sign "$SIGN_IDENTITY" \
+      --identifier dev.opentouchdesigner.editor \
+      "$APP"
+else
+  echo "==> signing (ad-hoc — $SIGN_IDENTITY is not in the keychain)"
+  echo "    Local Network and camera grants will not survive the next build."
+  codesign --force --deep --sign - \
+      --identifier dev.opentouchdesigner.editor \
+      "$APP"
+fi
 codesign --verify --deep --strict "$APP" && echo "    sealed"
 
 echo "==> dmg"

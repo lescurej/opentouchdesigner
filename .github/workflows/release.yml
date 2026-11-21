@@ -1,9 +1,9 @@
 # Cut a macOS .dmg on a tag.
 #
-# Unsigned: signing and notarising need a paid Apple Developer account. The
-# DMG carries a READ ME FIRST explaining how to get past Gatekeeper, and the
-# README says the same. Pretending a build is signed when it is not would be
-# worse than the extra right-click.
+# Self-signed, not notarised. A Developer ID needs a paid Apple account.
+# The project certificate only keeps the code identity stable so macOS
+# privacy grants survive the next build. Gatekeeper still refuses the first
+# launch; the DMG carries a READ ME FIRST for that.
 name: release
 
 on:

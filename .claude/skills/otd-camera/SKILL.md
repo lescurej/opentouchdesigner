@@ -13,9 +13,9 @@ invent a segmentation or pose operator.
 
 - `videodeviceinTOP`: `device` blank = default camera; `resw`/`resh`/`fps` are
   *requests* negotiated to a real mode.
-- macOS: the first use raises the permission prompt, and an ad-hoc-signed
-  rebuild asks again. A camera that was refused is silent; the node says so
-  after a few seconds.
+- macOS: the first use raises the permission prompt. A packaged build keeps
+  that grant across rebuilds; an unsigned or ad-hoc binary asks again. A
+  camera that was refused is silent; the node says so after a few seconds.
 - For analysis, **downsample first**: `resolutionTOP` `resw: 160`, `resh: 90`.
   Full-resolution readback or flow is wasted work and noisier.
 

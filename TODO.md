@@ -109,11 +109,12 @@ cargo run -p otd-ai --example scenarios
 
 ## Camera and packaging
 
-- [ ] **Ad-hoc signing means the camera permission is asked for again after
-      every rebuild.** macOS keys the grant to the code identity, and an
-      ad-hoc signature changes hash on every build (`Failed to match existing
-      code requirement`). A Developer ID would fix it and costs an Apple
-      account. Not a bug — worth writing down so it is not re-debugged.
+- [x] **Ad-hoc signing means the camera permission is asked for again after
+      every rebuild.** `package-macos.sh` now signs with
+      `scripts/codesign/OpenTouchDesignerLocal.p12`, so the designated
+      requirement is the certificate leaf and stays put across builds. An
+      unsigned `cargo run` binary is still a new identity every time. A
+      Developer ID would also clear Gatekeeper; it costs an Apple account.
 
 - [ ] **Depth *estimation* is not implemented.** `renderTOP` gained a depth
       output, which is real geometric distance from the camera, but that only

@@ -29,9 +29,10 @@
 
 **macOS** — [**download the .dmg**](https://github.com/Ar9av/opentouchdesigner/releases/latest) · Apple Silicon
 
-It is unsigned, so the first launch is refused. Right-click → Open, or
-`xattr -dr com.apple.quarantine /Applications/OpenTouchDesigner.app`. Signing
-needs a paid Apple Developer account; saying so beats pretending otherwise.
+It is not notarised, so the first launch is refused. Right-click → Open, or
+`xattr -dr com.apple.quarantine /Applications/OpenTouchDesigner.app`. An Apple
+Developer ID would remove that warning; it needs a paid account. The build is
+self-signed so Local Network and camera grants survive the next version.
 
 Intel Macs build from source — a universal binary needs a universal Python for
 PyO3 to link against, which a stock Homebrew install is not.
