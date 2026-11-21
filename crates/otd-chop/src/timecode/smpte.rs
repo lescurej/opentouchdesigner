@@ -69,7 +69,14 @@ pub(crate) fn smpte_from_drop_frames(frames: i64) -> Smpte {
     }
 }
 
-pub(crate) fn labels_to_total(hour: u32, min: u32, sec: u32, frame: u32, fps: f64, drop: bool) -> i64 {
+pub(crate) fn labels_to_total(
+    hour: u32,
+    min: u32,
+    sec: u32,
+    frame: u32,
+    fps: f64,
+    drop: bool,
+) -> i64 {
     if drop {
         let nominal = ((hour as i64 * 60 + min as i64) * 60 + sec as i64) * 30 + frame as i64;
         let minutes = hour as i64 * 60 + min as i64;
@@ -220,4 +227,3 @@ pub fn decode_ltc_frame(bits: &[u8; 80], fps: f64) -> Option<Smpte> {
         total_frames: 0,
     })
 }
-

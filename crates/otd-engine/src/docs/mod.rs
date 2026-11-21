@@ -18,7 +18,6 @@ mod pages;
 
 pub use pages::*;
 
-
 #[cfg(test)]
 #[path = "../tests/docs__tests.rs"]
 mod tests;

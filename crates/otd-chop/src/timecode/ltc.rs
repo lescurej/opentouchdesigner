@@ -1,6 +1,6 @@
 use super::smpte::{
-    decode_ltc_frame, encode_ltc_frame_user, labels_to_total, smpte_from_drop_frames,
-    smpte_non_drop_frames, Smpte, SYNC,
+    SYNC, Smpte, decode_ltc_frame, encode_ltc_frame_user, labels_to_total, smpte_from_drop_frames,
+    smpte_non_drop_frames,
 };
 
 fn bmc_sign(bits: &[u8; 80], bit_index: usize, second_half: bool) -> f32 {

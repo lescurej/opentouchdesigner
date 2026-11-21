@@ -319,4 +319,3 @@ pub(crate) fn cook_dmx_in(c: &mut ChopCtx) -> ChopData {
     }
     ChopData::new(channels, rate, true)
 }
-

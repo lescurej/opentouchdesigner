@@ -89,7 +89,9 @@ enum MoviePoll {
     Ready(Arc<Mutex<crate::ops::audiomovie::MovieTransport>>),
 }
 
-fn poll_movie(slot: &Mutex<Option<Arc<Mutex<crate::ops::audiomovie::MovieTransport>>>>) -> MoviePoll {
+fn poll_movie(
+    slot: &Mutex<Option<Arc<Mutex<crate::ops::audiomovie::MovieTransport>>>>,
+) -> MoviePoll {
     let Ok(guard) = slot.try_lock() else {
         return MoviePoll::Busy;
     };

@@ -13,4 +13,3 @@ pub(crate) fn sanitise(raw: &str) -> String {
         cleaned
     }
 }
-

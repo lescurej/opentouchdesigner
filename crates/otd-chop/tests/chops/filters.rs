@@ -191,7 +191,11 @@ fn limit_normalises_each_channel_into_minus_one_to_one() {
     p.set(one, "min", Value::Float(-1.0));
     p.set(one, "max", Value::Float(1.0));
     p.run(one, 1);
-    assert_eq!(p.value(one, "chan1"), 1.75, "the first sample has no span yet");
+    assert_eq!(
+        p.value(one, "chan1"),
+        1.75,
+        "the first sample has no span yet"
+    );
 
     p.set(one, "norm", Value::Bool(false));
     p.run(one, 1);

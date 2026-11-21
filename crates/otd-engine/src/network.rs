@@ -9,7 +9,6 @@ use otd_py::PyEngine;
 
 use otd_dat::DatData;
 
-
 pub(crate) struct FullNetwork<'a> {
     pub(crate) chops: Network<'a>,
     pub(crate) dats: &'a DatStore,
@@ -71,7 +70,11 @@ pub(crate) fn dat_content_param_at(graph: &Graph, op_path: &str) -> &'static str
         .unwrap_or("text")
 }
 
-pub(crate) fn dat_rows_at(graph: &Graph, dats: &DatStore, op_path: &str) -> Option<Vec<Vec<String>>> {
+pub(crate) fn dat_rows_at(
+    graph: &Graph,
+    dats: &DatStore,
+    op_path: &str,
+) -> Option<Vec<Vec<String>>> {
     dat_data_at(graph, dats, op_path).map(|d| d.rows)
 }
 

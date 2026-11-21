@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use super::io::parse;
-use super::types::{PreparedWav, Wav, DECODED_RATE};
+use super::types::{DECODED_RATE, PreparedWav, Wav};
 
 pub fn load(path: &Path) -> Result<Wav, String> {
     load_for_rate(path, DECODED_RATE).map(|prepared| prepared.wav)

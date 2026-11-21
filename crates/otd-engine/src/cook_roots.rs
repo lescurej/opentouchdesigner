@@ -54,11 +54,7 @@ pub fn is_side_effect_op(op_type: &str) -> bool {
     )
 }
 
-fn node_is_output_root(
-    graph: &Graph,
-    id: NodeId,
-    watched: &HashSet<NodeId>,
-) -> bool {
+fn node_is_output_root(graph: &Graph, id: NodeId, watched: &HashSet<NodeId>) -> bool {
     let node = graph.node(id);
     node.flags.render
         || node.flags.cook

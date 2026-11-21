@@ -87,7 +87,6 @@ impl AudioIn {
         out.resize(want, pad);
         out
     }
-
 }
 
 pub(crate) fn params_audio_in() -> IndexMap<String, Param> {
@@ -152,9 +151,6 @@ pub(crate) fn cook_audio_in(c: &mut ChopCtx) -> ChopData {
     };
     let rate = audio.sample_rate;
     let n = slice_len(rate, c.time);
-    let samples: Vec<f32> = audio.take(n)
-    .into_iter()
-    .map(|s| s * volume)
-    .collect();
+    let samples: Vec<f32> = audio.take(n).into_iter().map(|s| s * volume).collect();
     ChopData::new(vec![Channel::new("chan1", samples)], rate, true)
 }

@@ -5,8 +5,6 @@ use std::cell::RefCell;
 use otd_dat::ScriptHost;
 use otd_py::PyEngine;
 
-
-
 pub(crate) struct PythonScripts<'a> {
     pub(crate) python: &'a RefCell<PyEngine>,
 }

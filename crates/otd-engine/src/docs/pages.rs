@@ -5,7 +5,6 @@ use otd_core::{Family, OpRegistry, Param, Value};
 
 use super::notes::NOTES;
 
-
 /// One operator's page.
 pub fn operator_page(def: &otd_core::OpDef) -> String {
     let mut out = String::new();
@@ -179,4 +178,3 @@ pub fn family_summary(family: Family) -> &'static str {
         Family::Comp => "Components — containers, and the 3D scene objects.",
     }
 }
-

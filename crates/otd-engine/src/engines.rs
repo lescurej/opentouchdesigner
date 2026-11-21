@@ -4,9 +4,7 @@ use std::cell::RefCell;
 
 use otd_chop::InputState;
 use otd_chop::engine::{ChannelStore, ChopEngine, Network};
-use otd_core::{
-    ChannelSource, CookContext, CookEngine, CookError, Graph, NodeId,
-};
+use otd_core::{ChannelSource, CookContext, CookEngine, CookError, Graph, NodeId};
 use otd_dat::{DatEngine, DatStore};
 use otd_gpu::{GpuContext, TopEngine};
 use otd_py::PyEngine;
@@ -121,9 +119,7 @@ impl Engines {
             let Some(src) = self.top.output(graph, blit.top_id).cloned() else {
                 continue;
             };
-            let _ = self
-                .top
-                .blit_to_rgba8_unorm(graph, &src, &blit.dst, time);
+            let _ = self.top.blit_to_rgba8_unorm(graph, &src, &blit.dst, time);
         }
     }
 

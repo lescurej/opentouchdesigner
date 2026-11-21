@@ -8,14 +8,14 @@ pub mod anim;
 pub mod bclip;
 pub mod chopfile;
 pub mod data;
-mod perform;
 pub mod dmx;
 pub mod engine;
 pub mod io;
 pub mod ops;
-pub mod rt;
 mod oscvoice;
+mod perform;
 mod reastream;
+pub mod rt;
 pub use otd_audio::thread_qos;
 mod timecode;
 mod tracking;
@@ -23,13 +23,13 @@ pub mod wav;
 
 pub use anim::{Curve, Curves, Interp, Key};
 pub use data::{CONTROL_RATE, Channel, ChopData};
-pub use perform::PerformFrameStats;
 pub use engine::{ChannelStore, ChopEngine, ChopHost, Network};
 pub use io::{
     AUDIO_LATENCY_DEFAULT_MS, AUDIO_LATENCY_MAX_MS, AUDIO_LATENCY_MIN_MS, InputState, Io,
     PanelInteractionSample, PanelInteractionStore, PerformPanelInput, RecordBuffer,
     clamp_audio_latency_ms,
 };
+pub use perform::PerformFrameStats;
 pub use timecode::chop_timecode_frame_index;
 
 pub fn register_all(registry: &mut otd_core::OpRegistry) {

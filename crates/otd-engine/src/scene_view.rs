@@ -29,4 +29,3 @@ impl otd_gpu::scene::Scene for SceneView<'_> {
         )
     }
 }
-

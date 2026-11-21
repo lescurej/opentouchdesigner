@@ -70,12 +70,7 @@ impl EngineClient {
         time: CookContext,
         gpu: GpuContext,
     ) -> Result<Self, String> {
-        let runtime = Arc::new(Mutex::new(ProjectRuntime::new(
-            graph,
-            registry,
-            time,
-            gpu,
-        )));
+        let runtime = Arc::new(Mutex::new(ProjectRuntime::new(graph, registry, time, gpu)));
         let control = Arc::new(LoopControl {
             hint: Mutex::new(TickHint {
                 fps: time.fps,

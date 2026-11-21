@@ -1,6 +1,6 @@
+use otd_core::NodeId;
 use otd_core::Param;
 use otd_core::indexmap::IndexMap;
-use otd_core::NodeId;
 
 use crate::data::{CONTROL_RATE, Channel, ChopData};
 use crate::ops::ChopCtx;

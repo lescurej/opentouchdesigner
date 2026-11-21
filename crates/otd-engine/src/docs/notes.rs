@@ -1,6 +1,3 @@
-
-
-
 /// Hand-written notes for operators that need more than a one-line summary.
 ///
 /// Deliberately not exhaustive. A Constant TOP does not need a paragraph; the

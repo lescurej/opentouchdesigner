@@ -10,20 +10,20 @@
 //! while a node is cooking, the freshly cooked channels can be read
 //! immutably by the parameters of whatever cooks next.
 
+pub mod audio_partition;
+mod audio_runtime;
 pub mod comp;
 pub mod container;
 mod cook_roots;
-pub mod audio_partition;
-mod audio_runtime;
 pub use audio_partition::{
-    graph_audio_generation, partition_audio_domain, skip_frame_chop_cook, AudioPartition,
-    node_in_audio_domain,
+    AudioPartition, graph_audio_generation, node_in_audio_domain, partition_audio_domain,
+    skip_frame_chop_cook,
 };
 pub use audio_runtime::AudioRuntime;
+mod background_cook;
 pub mod demo;
 pub mod docs;
-mod background_cook;
-pub use background_cook::{background_cook_loop, CookHint, CookReport};
+pub use background_cook::{CookHint, CookReport, background_cook_loop};
 pub mod engine_client;
 pub mod execute;
 pub mod geotext_comp;
@@ -57,16 +57,15 @@ pub use info::node_infotip;
 pub use node_message::{NodeMessage, NodeMessageLevel, classify_node_message};
 pub use otd_py::{LintSeverity, PythonLint};
 pub use project_runtime::{
-    clip_frame_dt, CallbackFrameStats, EguiDisplayBlit, FrameConfig, FrameResult, FrameTiming,
-    GraphSyncStats, PlaybackState, ProjectRuntime, summarize, tick_frame_state,
+    CallbackFrameStats, EguiDisplayBlit, FrameConfig, FrameResult, FrameTiming, GraphSyncStats,
+    PlaybackState, ProjectRuntime, clip_frame_dt, summarize, tick_frame_state,
 };
 
-
-mod network;
-mod script_host;
-mod scene_view;
-mod engines;
 mod cooker;
+mod engines;
+mod network;
+mod scene_view;
+mod script_host;
 
 pub use comp::{network_output_port_count, network_output_port_family};
 pub use engines::Engines;

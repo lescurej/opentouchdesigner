@@ -1,6 +1,9 @@
 use otd_chop::io::AUDIO_OUT;
 use otd_core::{Graph, OpRegistry};
-use otd_engine::{app_cook_roots, editor_roots, output_roots, CookRootsRequest, EditorRootsRequest, OutputRootsRequest};
+use otd_engine::{
+    CookRootsRequest, EditorRootsRequest, OutputRootsRequest, app_cook_roots, editor_roots,
+    output_roots,
+};
 
 fn registry() -> OpRegistry {
     let mut r = OpRegistry::new();

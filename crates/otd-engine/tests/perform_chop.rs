@@ -1,7 +1,7 @@
-use otd_chop::data::{slice_len, CONTROL_RATE};
+use otd_chop::data::{CONTROL_RATE, slice_len};
 use otd_chop::ops::PERFORM;
 use otd_core::{CookContext, CookEngine, Graph, OpRegistry};
-use otd_engine::{Engines, clip_frame_dt, registry, tick_frame_state, FrameConfig, PlaybackState};
+use otd_engine::{Engines, FrameConfig, PlaybackState, clip_frame_dt, registry, tick_frame_state};
 use otd_gpu::GpuContext;
 
 fn add(graph: &mut Graph, reg: &OpRegistry, op: &str, name: &str) -> otd_core::NodeId {
@@ -54,7 +54,10 @@ fn perform_chop_reports_time_slice_and_cookrate() {
     let msec = data.channel("msec").unwrap().last();
 
     assert!((cookrate - 60.0).abs() < 0.01);
-    assert!((step - 2.0).abs() < 0.01, "30fps project 1/30s slice => 2 frames at 60");
+    assert!(
+        (step - 2.0).abs() < 0.01,
+        "30fps project 1/30s slice => 2 frames at 60"
+    );
     assert!(msec >= 0.0);
     assert_eq!(data.num_samples(), slice_len(CONTROL_RATE, &time));
 }

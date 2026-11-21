@@ -75,7 +75,10 @@ impl Channel {
     }
 
     pub fn min(&self) -> f32 {
-        self.as_slice().iter().copied().fold(f32::INFINITY, f32::min)
+        self.as_slice()
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min)
     }
 
     pub fn max(&self) -> f32 {

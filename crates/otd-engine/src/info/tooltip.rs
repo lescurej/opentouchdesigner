@@ -7,7 +7,10 @@ use crate::DatStore;
 use crate::Engines;
 use crate::GeometryStore;
 
-use super::resolve::{chop_info, cook_channels, dat_info, push, push_cook_line, push_output_line, resolve_op_from, sop_info};
+use super::resolve::{
+    chop_info, cook_channels, dat_info, push, push_cook_line, push_output_line, resolve_op_from,
+    sop_info,
+};
 
 fn push_flag_line(node: &Node, out: &mut Vec<String>) {
     let mut flags = Vec::new();

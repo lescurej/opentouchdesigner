@@ -1,7 +1,7 @@
 use otd_chop::io::AUDIO_OUT;
 use otd_core::{CookContext, CookEngine, Graph, NodeId, OpRegistry};
 use otd_engine::{
-    app_cook_roots, output_roots, registry, CookRootsRequest, Engines, OutputRootsRequest,
+    CookRootsRequest, Engines, OutputRootsRequest, app_cook_roots, output_roots, registry,
 };
 use otd_gpu::GpuContext;
 
@@ -55,7 +55,12 @@ fn hidden_playback_excludes_editor_viewer_roots() {
     assert_eq!(hidden, output_only);
 }
 
-fn cook_frames(graph: &Graph, roots: &[NodeId], watch: NodeId, frames: i64) -> Option<Vec<Vec<f32>>> {
+fn cook_frames(
+    graph: &Graph,
+    roots: &[NodeId],
+    watch: NodeId,
+    frames: i64,
+) -> Option<Vec<Vec<f32>>> {
     let gpu = GpuContext::headless().ok()?;
     let mut engines = Engines::new(gpu);
     let mut cook = CookEngine::new();
@@ -66,7 +71,12 @@ fn cook_frames(graph: &Graph, roots: &[NodeId], watch: NodeId, frames: i64) -> O
         cook.cook_frame(graph, roots, &time, &mut engines).unwrap();
         engines.end_frame(graph);
         let data = engines.channels.get(watch)?;
-        out.push(data.channels.iter().flat_map(|c| c.copy_samples()).collect());
+        out.push(
+            data.channels
+                .iter()
+                .flat_map(|c| c.copy_samples())
+                .collect(),
+        );
         time.advance(time.dt);
     }
     Some(out)

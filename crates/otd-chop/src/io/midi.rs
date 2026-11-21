@@ -356,4 +356,3 @@ pub(crate) fn cook_midi_in(c: &mut ChopCtx) -> ChopData {
     }
     ChopData::new(channels, rate, true)
 }
-

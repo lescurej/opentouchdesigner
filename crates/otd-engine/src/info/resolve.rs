@@ -364,4 +364,3 @@ fn top_pixel_format(format: wgpu::TextureFormat) -> (&'static str, u32, u32) {
         _ => ("custom", 0, 0),
     }
 }
-

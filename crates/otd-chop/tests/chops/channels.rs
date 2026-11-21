@@ -285,7 +285,11 @@ fn select_caret_drops_several_channels() {
     p.run(sel, 1);
     assert_eq!(p.data(sel).names(), vec!["chan3", "chan4"]);
 
-    p.set(c, "name0", Value::Str("a/heartbeat 1/heartbeat campbel/batt keep".into()));
+    p.set(
+        c,
+        "name0",
+        Value::Str("a/heartbeat 1/heartbeat campbel/batt keep".into()),
+    );
     p.set(
         sel,
         "channames",

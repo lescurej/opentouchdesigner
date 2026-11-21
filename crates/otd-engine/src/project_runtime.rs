@@ -200,8 +200,7 @@ pub fn tick_frame_state(
     let replicated = replicator::sync(graph, &engines.dats);
     let clones_synced = graph.sync_clones(registry);
     let generation = graph.audio_topology_generation();
-    engines.audio_partition =
-        crate::audio_partition::partition_audio_domain(graph, generation);
+    engines.audio_partition = crate::audio_partition::partition_audio_domain(graph, generation);
     engines.audio_rt.tick(
         graph,
         &engines.audio_partition,
